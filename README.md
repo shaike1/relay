@@ -24,6 +24,17 @@ Phone
 
 ---
 
+## How it works
+
+Telegram's [forum topics](https://telegram.org/blog/topics-in-groups-collectible-usernames) give each thread a unique `message_thread_id`. This repo uses that ID as the key for everything:
+
+- **One topic = one project.** Each Telegram topic maps to exactly one tmux session running Claude Code in a specific directory. Messages stay isolated — no cross-talk between projects.
+- **One long-poll, many consumers.** Telegram returns `409 Conflict` if two processes call `getUpdates` with the same bot token. The routing bot (`bot.py`) holds the single long-poll and writes each incoming message to a queue file named after the topic's thread ID: `/tmp/tg-queue-{THREAD_ID}.jsonl`. Each MCP server instance reads only its own file — no conflicts, no duplicated API calls.
+- **Queue files as the handoff.** The queue file decouples the routing bot from Claude's lifecycle. If Claude restarts mid-session, the routing bot keeps running and the queue keeps filling. When Claude comes back up, the MCP server resumes tailing from where it left off.
+- **`sessions.json` as the source of truth.** The mapping of `thread_id → session name → project path → host` lives in `sessions.json`. This is what makes the whole routing table work — add a line and the bot knows which tmux session to write to and which queue file to update.
+
+---
+
 ## What's in this repo
 
 | Path | What it is |
