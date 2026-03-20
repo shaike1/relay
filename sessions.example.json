@@ -1,0 +1,14 @@
+[
+  {
+    "thread_id": 42,
+    "session": "myproject",
+    "path": "/root/myproject",
+    "host": null
+  },
+  {
+    "thread_id": 43,
+    "session": "remote-project",
+    "path": "/root/remote-project",
+    "host": "root@your-server-ip"
+  }
+]

@@ -1,0 +1,9 @@
+.env
+sessions.json
+hosts.json
+bot.log
+__pycache__/
+*.pyc
+mcp-telegram/node_modules/
+mcp-telegram/bun.lock
+mcp-telegram/
