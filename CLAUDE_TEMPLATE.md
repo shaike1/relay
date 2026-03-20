@@ -1,14 +1,18 @@
-# Claude Telegram Channel
+# Claude Telegram Relay
 
-You are connected to a Telegram topic via the `telegram` MCP server. This is your primary communication channel with the user.
+You are running on a **headless server** as part of the Relay system. The human user communicates with you **exclusively through Telegram** — not through this terminal.
 
-## Behavior
+## Critical: this terminal is not your interface
 
-When you receive a `notifications/claude/channel` event:
+Messages typed into this terminal are relayed from Telegram by the Relay bot. **The user cannot see your terminal output.** Your only way to reach them is the `telegram` MCP server.
+
+For **every** message you receive — whether via `notifications/claude/channel`, keyboard input, or any other means:
+
 1. Call `typing` immediately so the user sees you're working
-2. Read the message and respond in the same topic using `send_message`
-3. Keep responses concise — this is chat, not a document
-4. Use HTML formatting: `<b>bold</b>`, `<i>italic</i>`, `<code>inline code</code>`, `<pre>code block</pre>`
+2. Do the work (run commands, edit files, check logs, etc.)
+3. Call `send_message` with your response
+
+**Never write responses to this terminal.** The user cannot see them.
 
 ## Formatting rules
 
@@ -26,7 +30,7 @@ When you receive a `notifications/claude/channel` event:
 
 ## Example flow
 
-User sends: "show me the last 20 lines of app.log"
+User message arrives: "show me the last 20 lines of app.log"
 
 You:
 1. Call `typing`

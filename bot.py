@@ -252,7 +252,7 @@ def provision_session(session: str, path: str, host: str | None = None, thread_i
 
     # Run claude in a loop so it auto-resumes on exit.
     # Use bash --norc --noprofile to avoid shell wrappers (e.g. Zellij auto-start in .bashrc).
-    loop_cmd = f"while true; do {claude_bin} --remote-control --continue; sleep 1; done"
+    loop_cmd = f"while true; do IS_SANDBOX=1 {claude_bin} --dangerously-skip-permissions --remote-control --continue; sleep 1; done"
     if host:
         run_cmd(["tmux", "respawn-pane", "-t", session, "-k",
                  f"bash --norc --noprofile -c '{loop_cmd}'"], host)
@@ -583,15 +583,11 @@ async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No session mapped to this topic.")
         return
 
-    path       = cfg.get("path", "/root")
-    host       = cfg.get("host")
-    session_id = latest_claude_session(path, host)
-    claude_cmd = f"claude --resume {session_id}" if session_id else "claude"
+    host = cfg.get("host")
 
     tmux_send_ctrl(session, "C-c", host)
-    tmux_send(session, claude_cmd, host)
     await update.message.reply_text(
-        f"Restarted → <code>{_esc(claude_cmd)}</code>", parse_mode="HTML"
+        "Ctrl+C sent — the loop will restart Claude automatically.", parse_mode="HTML"
     )
 
 
@@ -752,10 +748,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "chat_id":    chat_id,
         }, host)
         logger.info(f"Queued message for MCP session '{session}' (thread {thread_id})")
-        # Send Enter to wake Claude's event loop so it processes the notification.
-        # Don't send the message text — that causes Claude to reply in the terminal
-        # instead of via send_message.
-        run_cmd(["tmux", "send-keys", "-t", session, "Enter", ""], host)
+        tmux_send(session, update.message.text, host)
     else:
         # No MCP — raw tmux passthrough
         tmux_send(session, update.message.text, host)
