@@ -752,9 +752,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "chat_id":    chat_id,
         }, host)
         logger.info(f"Queued message for MCP session '{session}' (thread {thread_id})")
-        # Also send the raw message to the tmux pane to trigger Claude's attention
-        # (notifications/claude/channel doesn't reliably wake Claude at idle prompt)
-        tmux_send(session, update.message.text, host)
     else:
         # No MCP — raw tmux passthrough
         tmux_send(session, update.message.text, host)
