@@ -4,6 +4,19 @@ Control Claude Code from Telegram — no SSH, no terminal babysitting.
 
 Send a message from your phone. Claude thinks inside the project directory. Replies with formatted code, logs, diffs — right back in the same Telegram topic.
 
+## The problem this solves
+
+Running Claude Code on a remote server is powerful but fragile:
+
+- You SSH in, attach to tmux, start a session
+- You step away — your SSH connection drops, or you close your laptop
+- You come back, SSH in again, find tmux, figure out where things left off
+- The server reboots — everything is gone, you rebuild from scratch
+
+This is the normal remote dev workflow. It works, but it's constant overhead: maintaining connections, babysitting sessions, manually restarting things after downtime.
+
+**tmux-telegram removes that entirely.** Your projects run as persistent tmux sessions managed by a systemd service. Claude auto-resumes its last conversation on restart. You interact through Telegram — which is always open on your phone anyway. A dropped SSH connection changes nothing. A server reboot? The service comes back up, Claude resumes, your Telegram topic is right where you left it.
+
 ```
 Phone
   ↓
@@ -140,6 +153,8 @@ systemctl start tmux-telegram
 journalctl -u tmux-telegram -f
 ```
 
+With systemd, the routing bot survives reboots and restarts automatically if it crashes. Claude sessions run in tmux and auto-resume their last conversation (`claude --resume`) each time they start — so a reboot or disconnect doesn't lose your context.
+
 ### 6. Add the MCP server to a project
 
 In your project folder, create `.mcp.json`:
@@ -177,6 +192,8 @@ claude
 ```
 
 Claude loads the MCP server automatically, connects to the Telegram topic, and starts listening. Send a message — you'll see the typing indicator, then a reply.
+
+> **Tip: use `/new` instead of steps 6–8.** The bot command `/new /path/to/project` handles creating the topic, tmux session, `.mcp.json`, and launching Claude in one step. Steps 6–8 are for wiring up an existing project manually.
 
 ---
 
