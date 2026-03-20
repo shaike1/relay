@@ -1,55 +1,63 @@
 # tmux-telegram
 
-A Telegram→Claude Code bridge that routes messages from Telegram forum topics to Claude Code tmux sessions. Companion to [github.com/shaike1/claude-telegram-channel](https://github.com/shaike1/claude-telegram-channel).
+Control Claude Code from Telegram — no SSH, no terminal babysitting.
 
-Send a message from your phone → Claude thinks in the project directory → replies formatted in the same Telegram topic. No SSH. No terminal babysitting.
-
----
-
-## What it does
-
-**One Telegram topic per project.** Each topic is wired to a tmux session running Claude Code in that project's directory. The bot holds a single `getUpdates` long-poll (avoiding Telegram 409 Conflict errors) and fans messages out to per-topic queue files. The MCP server in each Claude session reads its queue file and delivers messages as `notifications/claude/channel` events.
+Send a message from your phone. Claude thinks inside the project directory. Replies with formatted code, logs, diffs — right back in the same Telegram topic.
 
 ```
+Phone
+  ↓
 Telegram topic (one per project)
   ↓
 tmux-telegram bot (single getUpdates long-poll)
   ↓
 /tmp/tg-queue-{THREAD_ID}.jsonl
   ↓
-claude-telegram-channel MCP server (tails queue file)
+MCP server · mcp-telegram/ (tails queue file)
   ↓
 Claude Code (running in project directory)
   ↓
-send_message tool → Telegram topic
+send_message → Telegram topic
+  ↓
+Phone
 ```
 
 ---
 
-## Features
+## What's in this repo
 
-- **Multi-server SSH support** — manage projects on remote hosts alongside local ones
-- **Auto-provision new sessions** — `/new` creates a Telegram topic, tmux session, and `.mcp.json` in one command
-- **`/discover`** — scan all servers for existing Claude project history not yet wired to a topic, with one-tap connect buttons
-- **Auto-resume on restart** — Claude always resumes the latest session via `claude --resume`
-- **One topic per project** — clean separation, no cross-talk
-- **Persistent config** — sessions survive bot restarts via `sessions.json`
+| Path | What it is |
+|------|-----------|
+| `bot.py` | Routing bot — runs once, globally. Holds the Telegram long-poll, fans messages to queue files, provisions tmux sessions. |
+| `mcp-telegram/` | MCP server — one instance per project. Tails its queue file and delivers messages to Claude as `notifications/claude/channel` events. |
+| `CLAUDE_TEMPLATE.md` | Paste into your project's `CLAUDE.md` to tell Claude how to behave on Telegram. |
 
 ---
 
 ## Prerequisites
 
-- Python 3.10+
-- `python-telegram-bot[job-queue]` v21
+- Python 3.10+ and `pip`
+- [Bun](https://bun.sh) — `curl -fsSL https://bun.sh/install | bash`
 - `tmux`
-- SSH key auth for any remote hosts (no password prompts)
 - A Telegram bot token from [@BotFather](https://t.me/BotFather)
-- A Telegram Supergroup with Topics enabled
-- The [claude-telegram-channel](https://github.com/shaike1/claude-telegram-channel) MCP server (for Claude to reply via Telegram)
+- A Telegram **Supergroup** with **Topics** enabled
+- SSH key auth for any remote hosts (no password prompts)
+
+> **Critical: bun must be in system PATH**
+>
+> Claude Code spawns MCP servers with a minimal environment. If bun is only in `~/.bun/bin` the MCP server silently fails to start.
+>
+> Fix:
+> ```bash
+> sudo ln -sf ~/.bun/bin/bun /usr/local/bin/bun
+> which bun  # should return /usr/local/bin/bun
+> ```
 
 ---
 
-## Install
+## Setup
+
+### 1. Clone and install
 
 ```bash
 git clone https://github.com/shaike1/tmux-telegram
@@ -57,31 +65,155 @@ cd tmux-telegram
 pip install python-telegram-bot[job-queue]==21.6
 ```
 
-Copy the example config files:
+### 2. Create your Telegram bot
+
+- Open [@BotFather](https://t.me/BotFather), send `/newbot`, follow the steps, copy the token
+- Disable privacy mode: BotFather → `/mybots` → your bot → **Bot Settings → Group Privacy → Turn off**
+
+### 3. Set up your Supergroup
+
+- Create a Telegram group → Settings → **Topics: Enable**
+- Add your bot as **Admin** with "Manage Topics" permission
+
+### 4. Configure the routing bot
 
 ```bash
 cp .env.example .env
-cp sessions.example.json sessions.json   # or start fresh with []
-cp hosts.example.json hosts.json         # or start fresh with []
+cp sessions.example.json sessions.json
+cp hosts.example.json hosts.json
 ```
 
-Edit `.env` with your values:
-
+Edit `.env`:
 ```env
-TELEGRAM_BOT_TOKEN=your_bot_token_here
+TELEGRAM_BOT_TOKEN=your_token_here
 OWNER_ID=your_telegram_user_id
 GROUP_CHAT_ID=-1001234567890
 ```
 
-To find your `OWNER_ID`, send `/start` to [@userinfobot](https://t.me/userinfobot). For `GROUP_CHAT_ID`, add the bot to your supergroup and call `getUpdates` — look for `chat.id` (a large negative number).
+To find your `OWNER_ID`, send `/start` to [@userinfobot](https://t.me/userinfobot).
+To find `GROUP_CHAT_ID`, add the bot to your group and call `getUpdates` — look for `chat.id` (a large negative number).
+
+### 5. Start the routing bot
+
+```bash
+python bot.py
+```
+
+Or as a systemd service (recommended):
+
+```ini
+# /etc/systemd/system/tmux-telegram.service
+[Unit]
+Description=tmux-telegram routing bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/tmux-telegram
+EnvironmentFile=/root/tmux-telegram/.env
+ExecStart=/usr/bin/python3 /root/tmux-telegram/bot.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+systemctl daemon-reload
+systemctl enable tmux-telegram
+systemctl start tmux-telegram
+journalctl -u tmux-telegram -f
+```
+
+### 6. Add the MCP server to a project
+
+In your project folder, create `.mcp.json`:
+```json
+{
+  "mcpServers": {
+    "telegram": {
+      "command": "bun",
+      "args": ["run", "--cwd", "/path/to/tmux-telegram/mcp-telegram", "--silent", "start"],
+      "env": {
+        "TELEGRAM_THREAD_ID": "YOUR_THREAD_ID"
+      }
+    }
+  }
+}
+```
+
+Replace `/path/to/tmux-telegram` with where you cloned this repo. `TELEGRAM_THREAD_ID` is the `message_thread_id` for this project's Telegram topic (run `getUpdates` and look in the message object).
+
+The MCP server reads its credentials from `~/.claude/channels/telegram/.env`:
+```env
+TELEGRAM_BOT_TOKEN=your_token_here
+TELEGRAM_CHAT_ID=-1001234567890
+```
+
+### 7. Add CLAUDE.md to your project
+
+Copy `CLAUDE_TEMPLATE.md` to your project root as `CLAUDE.md` (or append it to an existing one). This tells Claude to respond via `send_message` instead of the terminal.
+
+### 8. Launch Claude
+
+```bash
+cd /your/project
+claude
+```
+
+Claude loads the MCP server automatically, connects to the Telegram topic, and starts listening. Send a message — you'll see the typing indicator, then a reply.
 
 ---
 
-## Configuration
+## Bot commands
 
-### sessions.json
+All commands are restricted to `OWNER_ID`.
 
-Each entry maps a Telegram topic to a tmux session:
+### Provisioning
+
+| Command | Description |
+|---------|-------------|
+| `/new [user@host] /path/to/project [name]` | Create a topic, tmux session, and `.mcp.json`. Host optional (defaults to local). Name optional (defaults to dir name). |
+| `/discover` | Scan all known hosts for Claude project history not yet connected to a topic. Inline buttons to connect each one. |
+| `/addhost [user@]host` | Register a host for `/discover` scans. Tests SSH connectivity first. |
+| `/removehost [user@]host` | Remove a host. With no args, lists current hosts. |
+
+### Session control (send from within a topic)
+
+| Command | Description |
+|---------|-------------|
+| `/claude` | Start or resume Claude in this topic's tmux session |
+| `/restart` | Ctrl+C then re-launch Claude (resumes latest session) |
+| `/kill` | Send Ctrl+C to the session |
+| `/snap` | Snapshot the last 50 lines of the tmux pane |
+
+### Info
+
+| Command | Description |
+|---------|-------------|
+| `/sessions` | List all configured sessions |
+| `/status` | Show topic↔session mappings |
+
+---
+
+## MCP tools available to Claude
+
+| Tool | Description |
+|------|-------------|
+| `send_message` | Send text to the topic (HTML: `<b>`, `<i>`, `<code>`, `<pre>`) |
+| `edit_message` | Edit a previously sent message |
+| `typing` | Show typing indicator (~5s) |
+| `fetch_messages` | Get recent message history from this session |
+
+---
+
+## Multi-server setup
+
+`sessions.json` supports remote hosts via SSH:
 
 ```json
 [
@@ -100,144 +232,42 @@ Each entry maps a Telegram topic to a tmux session:
 ]
 ```
 
-- `thread_id` — Telegram topic (forum thread) ID
-- `session` — tmux session name
-- `path` — project directory on the host
-- `host` — SSH target (`user@host`) or `null` for local
-
-### hosts.json
-
-List of SSH hosts to include in `/discover` scans:
-
-```json
-["root@your-server-ip"]
-```
-
-Hosts already referenced in `sessions.json` are scanned automatically. This file is for additional hosts you want to include.
+The routing bot SSHes to write queue files and provision sessions on remote hosts. SSH key auth required (no password prompts).
 
 ---
 
-## Bot commands
+## Troubleshooting
 
-All commands are restricted to the `OWNER_ID` set in `.env`.
+### MCP server fails to start (`telegram · ✘ failed`)
 
-### Provisioning
+**Cause:** `bun` is not in the system PATH Claude uses when spawning MCP servers.
 
-| Command | Description |
-|---------|-------------|
-| `/new [user@host] /path/to/project [name]` | Create a new topic, tmux session, and `.mcp.json`. Host is optional (defaults to local). Name is optional (defaults to directory basename). |
-| `/discover` | Scan all known hosts for Claude project history not yet connected to a topic. Shows inline buttons to connect each orphan. |
-| `/addhost [user@]host` | Register a host for `/discover` scans. Tests SSH connectivity first. |
-| `/removehost [user@]host` | Remove a host from the registered list. With no args, lists current hosts. |
-
-### Session control (send from within a topic)
-
-| Command | Description |
-|---------|-------------|
-| `/claude` | Start or resume Claude in this topic's tmux session |
-| `/restart` | Send Ctrl+C then re-launch Claude (resume latest session) |
-| `/kill` | Send Ctrl+C to the session |
-| `/snap` | Snapshot the last 50 lines of the tmux pane |
-
-### Info
-
-| Command | Description |
-|---------|-------------|
-| `/sessions` | List all configured sessions with host and path |
-| `/status` | Show topic↔session mappings (thread ID → session name) |
-
----
-
-## Running
-
-### Directly
-
+**Fix:**
 ```bash
-cd /root/tmux-telegram
-source .env  # or use dotenv
-python bot.py
+sudo ln -sf ~/.bun/bin/bun /usr/local/bin/bun
+which bun  # should show /usr/local/bin/bun
 ```
 
-Or load the `.env` inline:
+### 409 Conflict errors
 
-```bash
-env $(cat .env | xargs) python bot.py
-```
+**Cause:** Two processes are calling `getUpdates` with the same token.
 
-### As a systemd service
+**Fix:** Only the routing bot (`bot.py`) should poll. The MCP server reads queue files only — it never calls `getUpdates`.
 
-Create `/etc/systemd/system/tmux-telegram.service`:
+### Messages not arriving
 
-```ini
-[Unit]
-Description=tmux-telegram Telegram routing bot
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/root/tmux-telegram
-EnvironmentFile=/root/tmux-telegram/.env
-ExecStart=/usr/bin/python3 /root/tmux-telegram/bot.py
-Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable and start:
-
-```bash
-systemctl daemon-reload
-systemctl enable tmux-telegram
-systemctl start tmux-telegram
-systemctl status tmux-telegram
-```
-
-View logs:
-
-```bash
-journalctl -u tmux-telegram -f
-```
-
----
-
-## How it pairs with claude-telegram-channel
-
-This bot is the **routing layer**. It:
-1. Holds the single Telegram `getUpdates` long-poll
-2. Writes each incoming message to `/tmp/tg-queue-{THREAD_ID}.jsonl` on the appropriate host
-3. Provisions `.mcp.json` in each project directory pointing to the [claude-telegram-channel](https://github.com/shaike1/claude-telegram-channel) MCP server
-
-The MCP server ([claude-telegram-channel](https://github.com/shaike1/claude-telegram-channel)) runs inside each Claude Code session and:
-1. Tails its queue file for new messages
-2. Fires `notifications/claude/channel` events into Claude
-3. Exposes `send_message`, `typing`, `edit_message`, and `fetch_messages` tools
-
-Together they form the full pipeline. Neither works without the other.
-
-### Quick pairing example
-
-After running `/new /root/myproject` in Telegram:
-
-1. A new topic is created in your group
-2. A tmux session `myproject` is started locally at `/root/myproject`
-3. `.mcp.json` is written to `/root/myproject/` pointing the MCP server at this topic's `TELEGRAM_THREAD_ID`
-4. Claude starts in the tmux session with the MCP server loaded
-5. You can now message the topic and Claude responds
-
-For `/new root@192.168.1.10 /root/myproject`, the same happens on the remote host via SSH.
+1. Is the routing bot running? `systemctl status tmux-telegram` or `tmux ls`
+2. Does the queue file exist? `ls /tmp/tg-queue-*.jsonl`
+3. Is `TELEGRAM_THREAD_ID` in `.mcp.json` correct?
+4. Did you restart Claude after changing `.mcp.json`?
 
 ---
 
 ## Security
 
-- Only `OWNER_ID` can issue bot commands or have messages routed
+- Only `OWNER_ID` can issue commands or have messages routed — everyone else is silently ignored
 - Keep `.env` private — never commit it (it's in `.gitignore`)
-- Use a private Telegram group, not a public one
+- Use a private Telegram group
 - Queue files in `/tmp/` are ephemeral and local to each machine
 
 ---
