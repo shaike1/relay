@@ -252,7 +252,13 @@ def provision_session(session: str, path: str, host: str | None = None, thread_i
 
     # Run claude in a loop so it auto-resumes on exit.
     # Use bash --norc --noprofile to avoid shell wrappers (e.g. Zellij auto-start in .bashrc).
-    loop_cmd = f"while true; do IS_SANDBOX=1 {claude_bin} --dangerously-skip-permissions --remote-control --continue; sleep 1; done"
+    # Try --continue first; fall back to fresh start if no prior session exists
+    loop_cmd = (
+        f"while true; do "
+        f"IS_SANDBOX=1 {claude_bin} --dangerously-skip-permissions --remote-control --continue "
+        f"|| IS_SANDBOX=1 {claude_bin} --dangerously-skip-permissions --remote-control; "
+        f"sleep 1; done"
+    )
     if host:
         run_cmd(["tmux", "respawn-pane", "-t", session, "-k",
                  f"bash --norc --noprofile -c '{loop_cmd}'"], host)
