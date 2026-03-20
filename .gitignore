@@ -6,4 +6,5 @@ __pycache__/
 *.pyc
 mcp-telegram/node_modules/
 mcp-telegram/bun.lock
-mcp-telegram/
+REDDIT_POST.md
+VIRAL_POST.md
