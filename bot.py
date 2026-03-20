@@ -250,17 +250,16 @@ def provision_session(session: str, path: str, host: str | None = None, thread_i
     else:
         claude_bin = "claude"
 
-    # Run claude in a loop so it auto-resumes on exit
-    proj_dir = f"~/.claude/projects/-{path_to_claude_dir(path)}"
-    loop_cmd = (
-        f"while true; do "
-        f"  LATEST=$(ls -t {proj_dir}/*.jsonl 2>/dev/null | head -1 | xargs -I{{}} basename {{}} .jsonl); "
-        f"  if [ -n \"$LATEST\" ]; then {claude_bin} --resume \"$LATEST\"; "
-        f"  else {claude_bin}; fi; "
-        f"  sleep 1; "
-        f"done"
-    )
-    tmux_send(session, loop_cmd, host)
+    # Run claude in a loop so it auto-resumes on exit.
+    # Use bash --norc --noprofile to avoid shell wrappers (e.g. Zellij auto-start in .bashrc).
+    loop_cmd = f"while true; do {claude_bin} --continue; sleep 1; done"
+    if host:
+        run_cmd(["tmux", "respawn-pane", "-t", session, "-k",
+                 f"bash --norc --noprofile -c '{loop_cmd}'"], host)
+    else:
+        subprocess.run(["tmux", "respawn-pane", "-t", session, "-k",
+                        f"bash --norc --noprofile -c '{loop_cmd}'"],
+                       capture_output=True)
     logger.info(f"Provisioned '{session}' on {host or 'local'} at {path} (auto-resume loop)")
     return "claude --resume <latest>"
 
@@ -711,8 +710,9 @@ def write_queue(thread_id: int, message: dict, host: str | None = None):
     entry = json.dumps({**message, "ts": time.time()})
     qf = queue_file(thread_id)
     if host:
-        escaped = entry.replace("'", "'\\''")
-        run_cmd(["bash", "-c", f"echo '{escaped}' >> {qf}"], host)
+        # Pipe via stdin to avoid SSH multi-arg quoting issues
+        ssh = ssh_prefix(host) + [f"cat >> {qf}"]
+        subprocess.run(ssh, input=entry + "\n", text=True, capture_output=True)
     else:
         with open(qf, "a") as f:
             f.write(entry + "\n")
