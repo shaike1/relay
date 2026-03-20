@@ -15,7 +15,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-OWNER_ID      = int(os.environ.get("OWNER_ID", "126556312"))
+OWNER_ID      = int(os.environ.get("OWNER_ID", "0"))
 GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID", "0"))
 TOKEN         = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 
