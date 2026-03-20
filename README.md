@@ -81,13 +81,17 @@ Telegram's [forum topics](https://telegram.org/blog/topics-in-groups-collectible
 
 ## Setup
 
-### 1. Clone and install
+### 1. Clone and run the install script
 
 ```bash
 git clone https://github.com/shaike1/relay
 cd relay
-pip install python-telegram-bot[job-queue]==21.6
+bash install.sh
 ```
+
+The script installs Python deps, installs/symlinks Bun, writes your `.env`, sets up MCP credentials, and installs the systemd service — prompting only for what's missing.
+
+To install manually instead, expand the steps below.
 
 ### 2. Create your Telegram bot
 
