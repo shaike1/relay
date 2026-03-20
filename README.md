@@ -17,6 +17,14 @@ This is the normal remote dev workflow. It works, but it's constant overhead: ma
 
 **Relay removes that entirely.** Your projects run as persistent tmux sessions managed by a systemd service. Claude auto-resumes its last conversation on restart. You interact through Telegram — which is always open on your phone anyway. A dropped SSH connection changes nothing. A server reboot? The service comes back up, Claude resumes, your Telegram topic is right where you left it.
 
+To add a new project, send one command in Telegram:
+
+```
+/new /path/to/project
+```
+
+Relay creates the Telegram topic, starts the tmux session, writes `.mcp.json`, and launches Claude — all automatically. The topic is live and ready to use in seconds.
+
 ```
 Phone
   ↓
