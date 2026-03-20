@@ -208,7 +208,7 @@ def write_mcp_json(path: str, thread_id: int, host: str | None = None):
         "mcpServers": {
             "telegram": {
                 "command": "/root/.bun/bin/bun",
-                "args": ["run", "--cwd", "/root/tmux-telegram/mcp-telegram", "--silent", "start"],
+                "args": ["run", "--cwd", "/root/relay/mcp-telegram", "--silent", "start"],
                 "env": {
                     "TELEGRAM_THREAD_ID": str(thread_id)
                 }
@@ -354,7 +354,7 @@ def _session_from_update(update: Update) -> tuple[str | None, dict]:
 @owner_only
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "<b>tmux-telegram bridge</b>\n\n"
+        "<b>Relay</b>\n\n"
         "<b>Provision:</b>\n"
         "/new [host] &lt;path&gt; — create session + topic\n"
         "/discover — find all Claude projects with history not yet connected\n\n"

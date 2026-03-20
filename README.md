@@ -1,4 +1,4 @@
-# tmux-telegram
+# Relay
 
 Control Claude Code from Telegram — no SSH, no terminal babysitting.
 
@@ -15,14 +15,14 @@ Running Claude Code on a remote server is powerful but fragile:
 
 This is the normal remote dev workflow. It works, but it's constant overhead: maintaining connections, babysitting sessions, manually restarting things after downtime.
 
-**tmux-telegram removes that entirely.** Your projects run as persistent tmux sessions managed by a systemd service. Claude auto-resumes its last conversation on restart. You interact through Telegram — which is always open on your phone anyway. A dropped SSH connection changes nothing. A server reboot? The service comes back up, Claude resumes, your Telegram topic is right where you left it.
+**Relay removes that entirely.** Your projects run as persistent tmux sessions managed by a systemd service. Claude auto-resumes its last conversation on restart. You interact through Telegram — which is always open on your phone anyway. A dropped SSH connection changes nothing. A server reboot? The service comes back up, Claude resumes, your Telegram topic is right where you left it.
 
 ```
 Phone
   ↓
 Telegram topic (one per project)
   ↓
-tmux-telegram bot (single getUpdates long-poll)
+Relay bot (single getUpdates long-poll)
   ↓
 /tmp/tg-queue-{THREAD_ID}.jsonl
   ↓
@@ -39,12 +39,12 @@ Phone
 
 ## How it works
 
-Telegram's [forum topics](https://telegram.org/blog/topics-in-groups-collectible-usernames) give each thread a unique `message_thread_id`. This repo uses that ID as the key for everything:
+Telegram's [forum topics](https://telegram.org/blog/topics-in-groups-collectible-usernames) give each thread a unique `message_thread_id`. Relay uses that ID as the key for everything:
 
 - **One topic = one project.** Each Telegram topic maps to exactly one tmux session running Claude Code in a specific directory. Messages stay isolated — no cross-talk between projects.
-- **One long-poll, many consumers.** Telegram returns `409 Conflict` if two processes call `getUpdates` with the same bot token. The routing bot (`bot.py`) holds the single long-poll and writes each incoming message to a queue file named after the topic's thread ID: `/tmp/tg-queue-{THREAD_ID}.jsonl`. Each MCP server instance reads only its own file — no conflicts, no duplicated API calls.
-- **Queue files as the handoff.** The queue file decouples the routing bot from Claude's lifecycle. If Claude restarts mid-session, the routing bot keeps running and the queue keeps filling. When Claude comes back up, the MCP server resumes tailing from where it left off.
-- **`sessions.json` as the source of truth.** The mapping of `thread_id → session name → project path → host` lives in `sessions.json`. This is what makes the whole routing table work — add a line and the bot knows which tmux session to write to and which queue file to update.
+- **One long-poll, many consumers.** Telegram returns `409 Conflict` if two processes call `getUpdates` with the same bot token. The Relay bot holds the single long-poll and writes each incoming message to a queue file named after the topic's thread ID: `/tmp/tg-queue-{THREAD_ID}.jsonl`. Each MCP server instance reads only its own file — no conflicts, no duplicated API calls.
+- **Queue files as the handoff.** The queue file decouples the Relay bot from Claude's lifecycle. If Claude restarts mid-session, Relay keeps running and the queue keeps filling. When Claude comes back up, the MCP server resumes tailing from where it left off.
+- **`sessions.json` as the source of truth.** The mapping of `thread_id → session name → project path → host` lives in `sessions.json`. Add a line and Relay knows which tmux session to write to and which queue file to update.
 
 ---
 
@@ -52,7 +52,7 @@ Telegram's [forum topics](https://telegram.org/blog/topics-in-groups-collectible
 
 | Path | What it is |
 |------|-----------|
-| `bot.py` | Routing bot — runs once, globally. Holds the Telegram long-poll, fans messages to queue files, provisions tmux sessions. |
+| `bot.py` | Relay bot — runs once, globally. Holds the Telegram long-poll, fans messages to queue files, provisions tmux sessions. |
 | `mcp-telegram/` | MCP server — one instance per project. Tails its queue file and delivers messages to Claude as `notifications/claude/channel` events. |
 | `CLAUDE_TEMPLATE.md` | Paste into your project's `CLAUDE.md` to tell Claude how to behave on Telegram. |
 
@@ -84,8 +84,8 @@ Telegram's [forum topics](https://telegram.org/blog/topics-in-groups-collectible
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/shaike1/tmux-telegram
-cd tmux-telegram
+git clone https://github.com/shaike1/relay
+cd relay
 pip install python-telegram-bot[job-queue]==21.6
 ```
 
@@ -99,7 +99,7 @@ pip install python-telegram-bot[job-queue]==21.6
 - Create a Telegram group → Settings → **Topics: Enable**
 - Add your bot as **Admin** with "Manage Topics" permission
 
-### 4. Configure the routing bot
+### 4. Configure Relay
 
 ```bash
 cp .env.example .env
@@ -117,7 +117,7 @@ GROUP_CHAT_ID=-1001234567890
 To find your `OWNER_ID`, send `/start` to [@userinfobot](https://t.me/userinfobot).
 To find `GROUP_CHAT_ID`, add the bot to your group and call `getUpdates` — look for `chat.id` (a large negative number).
 
-### 5. Start the routing bot
+### 5. Start Relay
 
 ```bash
 python bot.py
@@ -126,17 +126,17 @@ python bot.py
 Or as a systemd service (recommended):
 
 ```ini
-# /etc/systemd/system/tmux-telegram.service
+# /etc/systemd/system/relay.service
 [Unit]
-Description=tmux-telegram routing bot
+Description=Relay — Telegram to Claude Code bridge
 After=network.target
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/tmux-telegram
-EnvironmentFile=/root/tmux-telegram/.env
-ExecStart=/usr/bin/python3 /root/tmux-telegram/bot.py
+WorkingDirectory=/root/relay
+EnvironmentFile=/root/relay/.env
+ExecStart=/usr/bin/python3 /root/relay/bot.py
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -148,12 +148,12 @@ WantedBy=multi-user.target
 
 ```bash
 systemctl daemon-reload
-systemctl enable tmux-telegram
-systemctl start tmux-telegram
-journalctl -u tmux-telegram -f
+systemctl enable relay
+systemctl start relay
+journalctl -u relay -f
 ```
 
-With systemd, the routing bot survives reboots and restarts automatically if it crashes. Claude sessions run in tmux and auto-resume their last conversation (`claude --resume`) each time they start — so a reboot or disconnect doesn't lose your context.
+With systemd, Relay survives reboots and restarts automatically if it crashes. Claude sessions run in tmux and auto-resume their last conversation (`claude --resume`) each time they start — so a reboot or disconnect doesn't lose your context.
 
 ### 6. Add the MCP server to a project
 
@@ -163,7 +163,7 @@ In your project folder, create `.mcp.json`:
   "mcpServers": {
     "telegram": {
       "command": "bun",
-      "args": ["run", "--cwd", "/path/to/tmux-telegram/mcp-telegram", "--silent", "start"],
+      "args": ["run", "--cwd", "/path/to/relay/mcp-telegram", "--silent", "start"],
       "env": {
         "TELEGRAM_THREAD_ID": "YOUR_THREAD_ID"
       }
@@ -172,7 +172,7 @@ In your project folder, create `.mcp.json`:
 }
 ```
 
-Replace `/path/to/tmux-telegram` with where you cloned this repo. `TELEGRAM_THREAD_ID` is the `message_thread_id` for this project's Telegram topic (run `getUpdates` and look in the message object).
+Replace `/path/to/relay` with where you cloned this repo. `TELEGRAM_THREAD_ID` is the `message_thread_id` for this project's Telegram topic (run `getUpdates` and look in the message object).
 
 The MCP server reads its credentials from `~/.claude/channels/telegram/.env`:
 ```env
@@ -260,7 +260,7 @@ All commands are restricted to `OWNER_ID`.
 ]
 ```
 
-The routing bot SSHes to write queue files and provision sessions on remote hosts. SSH key auth required (no password prompts).
+Relay SSHes to write queue files and provision sessions on remote hosts. SSH key auth required (no password prompts).
 
 ---
 
@@ -280,11 +280,11 @@ which bun  # should show /usr/local/bin/bun
 
 **Cause:** Two processes are calling `getUpdates` with the same token.
 
-**Fix:** Only the routing bot (`bot.py`) should poll. The MCP server reads queue files only — it never calls `getUpdates`.
+**Fix:** Only the Relay bot (`bot.py`) should poll. The MCP server reads queue files only — it never calls `getUpdates`.
 
 ### Messages not arriving
 
-1. Is the routing bot running? `systemctl status tmux-telegram` or `tmux ls`
+1. Is Relay running? `systemctl status relay` or `tmux ls`
 2. Does the queue file exist? `ls /tmp/tg-queue-*.jsonl`
 3. Is `TELEGRAM_THREAD_ID` in `.mcp.json` correct?
 4. Did you restart Claude after changing `.mcp.json`?
