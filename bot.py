@@ -252,7 +252,7 @@ def provision_session(session: str, path: str, host: str | None = None, thread_i
 
     # Run claude in a loop so it auto-resumes on exit.
     # Use bash --norc --noprofile to avoid shell wrappers (e.g. Zellij auto-start in .bashrc).
-    loop_cmd = f"while true; do {claude_bin} --continue; sleep 1; done"
+    loop_cmd = f"while true; do {claude_bin} --remote-control --continue; sleep 1; done"
     if host:
         run_cmd(["tmux", "respawn-pane", "-t", session, "-k",
                  f"bash --norc --noprofile -c '{loop_cmd}'"], host)
@@ -752,6 +752,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "chat_id":    chat_id,
         }, host)
         logger.info(f"Queued message for MCP session '{session}' (thread {thread_id})")
+        # Send Enter to wake Claude's event loop so it processes the notification.
+        # Don't send the message text — that causes Claude to reply in the terminal
+        # instead of via send_message.
+        run_cmd(["tmux", "send-keys", "-t", session, "Enter", ""], host)
     else:
         # No MCP — raw tmux passthrough
         tmux_send(session, update.message.text, host)
