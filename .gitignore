@@ -8,3 +8,5 @@ mcp-telegram/node_modules/
 mcp-telegram/bun.lock
 REDDIT_POST.md
 VIRAL_POST.md
+.mcp.json
+CLAUDE.md
