@@ -247,8 +247,8 @@ async function poll(): Promise<void> {
   // Deliver any message with message_id > lastDeliveredId, one per poll cycle
   let lastId = await loadLastId()
 
-  // Give Claude time to fully initialize before sending notifications
-  await Bun.sleep(3000)
+  // Brief pause to let the MCP handshake complete before first notification
+  await Bun.sleep(1000)
 
   while (true) {
     try {
