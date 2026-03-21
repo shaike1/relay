@@ -212,6 +212,26 @@ Claude loads the MCP server automatically, connects to the Telegram topic, and s
 
 ---
 
+## Three ways to interact with any session
+
+Because every session runs with `--remote-control`, each Claude instance registers itself with Anthropic's infrastructure and generates a `claude.ai/code/session_...` URL. This means you have three parallel interfaces to every project — all talking to the same live session:
+
+| Interface | How to access | Notes |
+|-----------|--------------|-------|
+| **Telegram** | Send a message in the topic | Always available while bot is running |
+| **Web / mobile app** | Open the `claude.ai/code/session_...` URL | Works in any browser or the Claude mobile app |
+| **Terminal** | `ssh server` → `tmux attach -t session-name` | Direct shell access |
+
+The session URL is printed in the tmux pane each time Claude starts:
+```
+/remote-control is active. Code in CLI or at
+https://claude.ai/code/session_<your-session-id>
+```
+
+**Tip:** The URL changes on each restart. Use `/snap` to capture the current pane and find the latest URL, or add a `/url` bot command to extract and send it directly to the Telegram topic.
+
+---
+
 ## Bot commands
 
 All commands are restricted to `OWNER_ID`.
