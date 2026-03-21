@@ -228,64 +228,71 @@ type QueueEntry = {
   photo_path?: string
 }
 
-async function poll(): Promise<void> {
-  // Track file position so we only read new lines
-  let filePos = 0
+// Persistent state: last delivered message_id survives MCP restarts
+const STATE_FILE = `/tmp/tg-queue-${THREAD_ID}.state`
 
-  // If queue file exists, start at end (don't replay old messages)
+async function loadLastId(): Promise<number> {
   try {
-    const stat = Bun.file(QUEUE_FILE)
-    if (await stat.exists()) {
-      filePos = (await stat.arrayBuffer()).byteLength
-    }
+    const f = Bun.file(STATE_FILE)
+    if (await f.exists()) return parseInt(await f.text(), 10) || 0
   } catch {}
+  return 0
+}
+
+async function saveLastId(id: number): Promise<void> {
+  try { await Bun.write(STATE_FILE, String(id)) } catch {}
+}
+
+async function poll(): Promise<void> {
+  // Deliver any message with message_id > lastDeliveredId
+  let lastId = await loadLastId()
 
   while (true) {
     try {
       const file = Bun.file(QUEUE_FILE)
       if (!(await file.exists())) { await Bun.sleep(500); continue }
 
-      const buf   = await file.arrayBuffer()
-      const total = buf.byteLength
+      const text = await file.text()
 
-      if (total > filePos) {
-        const newBytes = new Uint8Array(buf, filePos, total - filePos)
-        const newText  = new TextDecoder().decode(newBytes)
-        filePos = total
+      for (const line of text.split('\n')) {
+        if (!line.trim()) continue
+        try {
+          const entry = JSON.parse(line) as QueueEntry
+          const { text: msgText, user, message_id, ts, photo_path } = entry
 
-        for (const line of newText.split('\n')) {
-          if (!line.trim()) continue
-          try {
-            const entry = JSON.parse(line) as QueueEntry
-            const { text, user, message_id, ts, photo_path } = entry
-            const isoTs = new Date(ts * 1000).toISOString()
+          // Skip already-delivered messages
+          if (message_id <= lastId) continue
 
-            messageHistory.push({ message_id, user, text, ts: isoTs })
-            if (messageHistory.length > 100) messageHistory.shift()
+          const isoTs = new Date(ts * 1000).toISOString()
 
-            process.stderr.write(`[telegram] sending notification: ${user}: ${text}\n`)
-            Bun.write('/tmp/mcp-debug.log', `[${new Date().toISOString()}] sending notification: ${user}: ${text}\n`, { append: true })
+          messageHistory.push({ message_id, user, text: msgText, ts: isoTs })
+          if (messageHistory.length > 100) messageHistory.shift()
 
-            void mcp.notification({
-              method: 'notifications/claude/channel',
-              params: {
-                content: text,
-                meta: {
-                  chat_id:    String(CHAT_ID),
-                  thread_id:  String(THREAD_ID),
-                  message_id,
-                  user,
-                  ts:         isoTs,
-                  ...(photo_path ? { photo_path } : {}),
-                },
+          process.stderr.write(`[telegram] sending notification: ${user}: ${msgText}\n`)
+          Bun.write('/tmp/mcp-debug.log', `[${new Date().toISOString()}] sending notification: ${user}: ${msgText}\n`, { append: true })
+
+          void mcp.notification({
+            method: 'notifications/claude/channel',
+            params: {
+              content: msgText,
+              meta: {
+                chat_id:    String(CHAT_ID),
+                thread_id:  String(THREAD_ID),
+                message_id,
+                user,
+                ts:         isoTs,
+                ...(photo_path ? { photo_path } : {}),
               },
-            })
+            },
+          })
 
-            process.stderr.write(`[telegram] notification sent: ${user}: ${text}\n`)
-            Bun.write('/tmp/mcp-debug.log', `[${new Date().toISOString()}] notification sent OK\n`, { append: true })
-          } catch (e) {
-            process.stderr.write(`[telegram] parse error: ${e}\n`)
-          }
+          lastId = message_id
+          await saveLastId(lastId)
+
+          process.stderr.write(`[telegram] notification sent: ${user}: ${msgText}\n`)
+          Bun.write('/tmp/mcp-debug.log', `[${new Date().toISOString()}] notification sent OK\n`, { append: true })
+        } catch (e) {
+          process.stderr.write(`[telegram] parse error: ${e}\n`)
         }
       }
     } catch (err) {
