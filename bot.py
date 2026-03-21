@@ -384,7 +384,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/claude — start or resume Claude\n"
         "/restart — Ctrl+C + re-launch Claude\n"
         "/kill — send Ctrl+C\n"
-        "/snap — snapshot last 50 lines\n\n"
+        "/snap — snapshot last 50 lines\n"
+        "/mcp-add &lt;name&gt; &lt;binary&gt; [args...] [KEY=VAL...] — install MCP + restart\n\n"
         "<b>Info:</b>\n"
         "/sessions — list all sessions\n"
         "/status — show topic↔session map",
@@ -615,6 +616,72 @@ async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @owner_only
+async def cmd_mcp_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Usage: /mcp-add <name> <binary> [args...] [KEY=VAL...]
+    Resolves full binary path on the target host, adds MCP via claude mcp add-json, restarts Claude."""
+    session, cfg = _session_from_update(update)
+    if not session:
+        await update.message.reply_text("No session mapped to this topic.")
+        return
+
+    args = context.args or []
+    if len(args) < 2:
+        await update.message.reply_text(
+            "Usage: <code>/mcp-add &lt;name&gt; &lt;binary&gt; [args...] [KEY=VAL...]</code>\n"
+            "Example: <code>/mcp-add stitch stitch-mcp proxy STITCH_API_KEY=abc123</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    host = cfg.get("host")
+    path = cfg["path"]
+    mcp_name = args[0]
+    binary   = args[1]
+    rest     = args[2:]
+
+    mcp_args = [a for a in rest if "=" not in a]
+    env_pairs = [a for a in rest if "=" in a]
+
+    # Resolve full binary path on target host
+    r = run_cmd(["bash", "-c",
+        f"which '{binary}' 2>/dev/null || find /root/.nvm /usr/local/bin -name '{binary}' 2>/dev/null | head -1"
+    ], host)
+    full_bin = r.stdout.strip()
+    if not full_bin:
+        await update.message.reply_text(
+            f"Could not find <code>{_esc(binary)}</code> on {_esc(host or 'local')}.",
+            parse_mode="HTML"
+        )
+        return
+
+    # Build JSON config
+    import json as _json
+    env_dict = {}
+    for pair in env_pairs:
+        k, _, v = pair.partition("=")
+        env_dict[k] = v
+    mcp_cfg = {"command": full_bin, "args": mcp_args, "env": env_dict}
+    mcp_json = _json.dumps(mcp_cfg)
+
+    # Remove existing + add new
+    run_cmd(["bash", "-c", f"cd '{path}' && claude mcp remove '{mcp_name}' -s local 2>/dev/null || true"], host)
+    r2 = run_cmd(["bash", "-c", f"cd '{path}' && claude mcp add-json '{mcp_name}' '{mcp_json}' -s local"], host)
+    if r2.returncode != 0:
+        await update.message.reply_text(
+            f"<b>Failed:</b> <pre>{_esc(r2.stderr or r2.stdout)}</pre>", parse_mode="HTML"
+        )
+        return
+
+    # Restart Claude
+    tmux_send(session, "q", host)
+    await update.message.reply_text(
+        f"MCP <code>{_esc(mcp_name)}</code> added (<code>{_esc(full_bin)}</code>).\n"
+        f"Claude restarting…",
+        parse_mode="HTML"
+    )
+
+
+@owner_only
 async def cmd_kill(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session, cfg = _session_from_update(update)
     if not session:
@@ -809,8 +876,9 @@ def main():
     app.add_handler(CommandHandler("addhost",    cmd_addhost))
     app.add_handler(CommandHandler("removehost", cmd_removehost))
     app.add_handler(CommandHandler("claude",  cmd_claude))
-    app.add_handler(CommandHandler("restart", cmd_restart))
-    app.add_handler(CommandHandler("kill",    cmd_kill))
+    app.add_handler(CommandHandler("restart",  cmd_restart))
+    app.add_handler(CommandHandler("mcp_add",  cmd_mcp_add))
+    app.add_handler(CommandHandler("kill",     cmd_kill))
     app.add_handler(CommandHandler("snap",    cmd_snap))
     app.add_handler(CommandHandler("sessions",cmd_sessions))
     app.add_handler(CommandHandler("status",  cmd_status))
