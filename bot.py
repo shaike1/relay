@@ -236,6 +236,23 @@ def provision_session(session: str, path: str, host: str | None = None, thread_i
     if thread_id:
         write_mcp_json(path, thread_id, host)
 
+    # Copy CLAUDE.md template so Claude knows to respond via send_message (not terminal)
+    claude_md_src = os.path.join(os.path.dirname(__file__), "CLAUDE_TEMPLATE.md")
+    claude_md_dst = f"{path}/CLAUDE.md"
+    if host:
+        try:
+            with open(claude_md_src) as f:
+                content = f.read()
+            escaped = content.replace("'", "'\\''")
+            run_cmd(["bash", "-c", f"cat > '{claude_md_dst}' << 'CLAUDEEOF'\n{escaped}\nCLAUDEEOF"], host)
+        except Exception as e:
+            logger.warning(f"Could not copy CLAUDE.md to {host}:{path}: {e}")
+    else:
+        if not os.path.exists(claude_md_dst):
+            import shutil
+            shutil.copy(claude_md_src, claude_md_dst)
+            logger.info(f"Copied CLAUDE_TEMPLATE.md to {claude_md_dst}")
+
     if not tmux_exists(session, host):
         if host:
             run_cmd(["tmux", "new-session", "-d", "-s", session, "-c", path], host)
