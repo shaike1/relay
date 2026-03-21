@@ -315,23 +315,59 @@ Photos sent to a topic are downloaded to `/tmp/tg-photo-{id}.jpg` (SCP'd to remo
 
 ## Webhook mode (faster updates)
 
-By default the bot uses `getUpdates` polling (2s interval). For instant delivery, configure webhook mode by adding these to `.env`:
+By default the bot uses `getUpdates` polling (2s interval). For instant delivery, configure webhook mode.
 
+> **Prerequisite:** Telegram must be able to reach your server directly over the internet. This means:
+> - Your server has a **public IP** (not behind NAT or a Tailscale-only address)
+> - The chosen port (**443, 80, 88, or 8443** — only these are supported by Telegram) is **open in both the OS firewall and any cloud security groups** (e.g. Oracle Cloud VCN, AWS Security Groups, etc.)
+
+### Setup
+
+**1. Generate a self-signed cert for your public IP:**
+```bash
+openssl req -x509 -newkey rsa:2048 \
+  -keyout /etc/ssl/private/relay-webhook.key \
+  -out /etc/ssl/certs/relay-webhook.crt \
+  -days 3650 -nodes \
+  -subj "/CN=<your-public-ip>" \
+  -addext "subjectAltName=IP:<your-public-ip>"
+
+# Caddy runs as non-root — give it read access to the key
+chown root:caddy /etc/ssl/private/relay-webhook.key
+chmod 640 /etc/ssl/private/relay-webhook.key
+```
+
+**2. Add a Caddy block (or nginx equivalent) to terminate TLS and forward to the bot:**
+```
+:88 {
+    tls /etc/ssl/certs/relay-webhook.crt /etc/ssl/private/relay-webhook.key
+    reverse_proxy localhost:18793
+}
+```
+
+**3. Add to `.env`:**
 ```
 WEBHOOK_URL=https://<your-public-ip>:88
 WEBHOOK_PORT=18793
 WEBHOOK_CERT=/etc/ssl/certs/relay-webhook.crt
 ```
 
-Then add a Caddy (or nginx) block to terminate TLS and forward to port 18793, and generate a self-signed cert for your IP:
-
+**4. Open the port in your firewall:**
 ```bash
-openssl req -x509 -newkey rsa:2048 -keyout /etc/ssl/private/relay-webhook.key \
-  -out /etc/ssl/certs/relay-webhook.crt -days 3650 -nodes \
-  -subj "/CN=<your-ip>" -addext "subjectAltName=IP:<your-ip>"
+iptables -I INPUT 2 -p tcp --dport 88 -j ACCEPT
+# Also open in cloud console if using Oracle/AWS/GCP
 ```
 
-Telegram accepts self-signed certs on ports 443, 80, 88, and 8443. The bot uploads the cert automatically on startup.
+**5. Restart the relay:**
+```bash
+systemctl restart relay
+```
+
+The bot registers the webhook automatically on startup and uploads the self-signed cert to Telegram. Verify with:
+```bash
+curl -s "https://api.telegram.org/bot<TOKEN>/getWebhookInfo" | python3 -m json.tool
+```
+Check `last_error_message` — if it says `Connection timed out`, the port is not reachable from the internet (cloud security group or NAT issue). In that case, polling works just as well for this use case.
 
 ## Multi-server setup
 
