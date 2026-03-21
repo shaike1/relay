@@ -225,6 +225,7 @@ type QueueEntry = {
   thread_id: number
   chat_id: number
   ts: number
+  photo_path?: string
 }
 
 async function poll(): Promise<void> {
@@ -256,7 +257,7 @@ async function poll(): Promise<void> {
           if (!line.trim()) continue
           try {
             const entry = JSON.parse(line) as QueueEntry
-            const { text, user, message_id, ts } = entry
+            const { text, user, message_id, ts, photo_path } = entry
             const isoTs = new Date(ts * 1000).toISOString()
 
             messageHistory.push({ message_id, user, text, ts: isoTs })
@@ -275,6 +276,7 @@ async function poll(): Promise<void> {
                   message_id,
                   user,
                   ts:         isoTs,
+                  ...(photo_path ? { photo_path } : {}),
                 },
               },
             })

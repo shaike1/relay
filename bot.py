@@ -853,19 +853,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         has_mcp = os.path.exists(mcp_json)
 
+    text = update.message.text or update.message.caption or ""
+    photo_path = None
+
+    if update.message.photo:
+        # Download highest-res photo to /tmp/
+        photo = update.message.photo[-1]
+        tg_file = await context.bot.get_file(photo.file_id)
+        photo_path = f"/tmp/tg-photo-{update.message.message_id}.jpg"
+        await tg_file.download_to_drive(photo_path)
+        if not text:
+            text = f"[Photo: {photo_path}]"
+        else:
+            text = f"[Photo: {photo_path}] {text}"
+        logger.info(f"Downloaded photo to {photo_path}")
+
     if has_mcp:
-        write_queue(thread_id, {
-            "text":       update.message.text,
+        entry = {
+            "text":       text,
             "user":       update.effective_user.first_name if update.effective_user else "user",
             "message_id": update.message.message_id,
             "thread_id":  thread_id,
             "chat_id":    chat_id,
-        }, host)
+        }
+        if photo_path:
+            entry["photo_path"] = photo_path
+        write_queue(thread_id, entry, host)
         logger.info(f"Queued message for MCP session '{session}' (thread {thread_id})")
-        tmux_send(session, update.message.text, host)
+        if not update.message.photo:
+            tmux_send(session, text, host)
     else:
-        # No MCP — raw tmux passthrough
-        tmux_send(session, update.message.text, host)
+        # No MCP — raw tmux passthrough (text only)
+        if not update.message.photo:
+            tmux_send(session, text, host)
 
 
 # ─── main ─────────────────────────────────────────────────────────────────────
@@ -907,7 +927,7 @@ def main():
     app.add_handler(CommandHandler("sessions",cmd_sessions))
     app.add_handler(CommandHandler("status",  cmd_status))
     app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, handle_message))
 
     logger.info("Bot starting...")
     app.run_polling(drop_pending_updates=True)
