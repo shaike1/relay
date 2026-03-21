@@ -1,15 +1,15 @@
 #!/bin/bash
 # Relay watchdog: monitor primary (.7) and take over if it goes down
 
-PRIMARY="root@your-primary-host"
+PRIMARY="${RELAY_PRIMARY:-root@your-primary-host}"
 FAIL_COUNT=0
 MAX_FAILS=3       # 3 x 15s = 45s before failover
 CHECK_INTERVAL=15
 ACTIVE=false
 
-BOT_TOKEN="YOUR_BOT_TOKEN"
-CHAT_ID="-1003865448408"
-THREAD_ID="183"  # relay topic
+BOT_TOKEN="${TELEGRAM_BOT_TOKEN}"
+CHAT_ID="${TELEGRAM_CHAT_ID}"
+THREAD_ID="${TELEGRAM_THREAD_ID}"  # relay topic
 
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $1"; }
 
