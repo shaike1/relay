@@ -267,10 +267,13 @@ All commands are restricted to `OWNER_ID`.
 | Command | Description |
 |---------|-------------|
 | `/claude` | Start or resume Claude in this topic's tmux session |
-| `/restart` | Ctrl+C then re-launch Claude (resumes latest session) |
+| `/restart` | Quit Claude gracefully then re-launch (resumes latest session) |
+| `/restart_all [host]` | Restart all sessions across all hosts — useful after settings changes |
 | `/kill` | Send Ctrl+C to the session |
 | `/snap` | Snapshot the last 50 lines of the tmux pane |
 | `/mcp_add <name> <binary> [args...] [KEY=VAL...]` | Install an MCP server and restart Claude |
+| `/link [session]` | Get a direct `t.me` link to any session's topic |
+| `/upgrade` | Upgrade Claude Code on all hosts, then restart all sessions |
 
 **`/mcp_add` example:**
 ```
@@ -291,12 +294,44 @@ Resolves the binary's full path on the target host (handles `npm`/`nvm` installs
 
 | Tool | Description |
 |------|-------------|
-| `send_message` | Send text to the topic (HTML: `<b>`, `<i>`, `<code>`, `<pre>`) |
+| `send_message` | Send text to the topic (HTML: `<b>`, `<i>`, `<code>`, `<pre>`). Optional `buttons` param for inline keyboards. |
 | `edit_message` | Edit a previously sent message |
 | `typing` | Show typing indicator (~5s) |
 | `fetch_messages` | Get recent message history from this session |
 
+### Inline keyboard buttons
+
+Claude can send messages with clickable buttons. When a button is pressed, the label arrives as a regular message:
+
+```python
+send_message(text="Continue?", buttons=[["✅ Yes", "❌ No"]])
+```
+
+### Photo support
+
+Photos sent to a topic are downloaded to `/tmp/tg-photo-{id}.jpg` (SCP'd to remote hosts automatically). Claude receives `[Photo: /tmp/...] caption` and can read the image with the `Read` tool.
+
 ---
+
+## Webhook mode (faster updates)
+
+By default the bot uses `getUpdates` polling (2s interval). For instant delivery, configure webhook mode by adding these to `.env`:
+
+```
+WEBHOOK_URL=https://<your-public-ip>:88
+WEBHOOK_PORT=18793
+WEBHOOK_CERT=/etc/ssl/certs/relay-webhook.crt
+```
+
+Then add a Caddy (or nginx) block to terminate TLS and forward to port 18793, and generate a self-signed cert for your IP:
+
+```bash
+openssl req -x509 -newkey rsa:2048 -keyout /etc/ssl/private/relay-webhook.key \
+  -out /etc/ssl/certs/relay-webhook.crt -days 3650 -nodes \
+  -subj "/CN=<your-ip>" -addext "subjectAltName=IP:<your-ip>"
+```
+
+Telegram accepts self-signed certs on ports 443, 80, 88, and 8443. The bot uploads the cert automatically on startup.
 
 ## Multi-server setup
 

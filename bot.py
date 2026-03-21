@@ -19,6 +19,11 @@ OWNER_ID      = int(os.environ.get("OWNER_ID", "0"))
 GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID", "0"))
 TOKEN         = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 
+# Webhook config (optional — falls back to polling if not set)
+WEBHOOK_URL   = os.environ.get("WEBHOOK_URL", "")   # e.g. https://YOUR_PUBLIC_IP:88
+WEBHOOK_PORT  = int(os.environ.get("WEBHOOK_PORT", "18793"))
+WEBHOOK_CERT  = os.environ.get("WEBHOOK_CERT", "")  # path to self-signed cert for upload
+
 POLL_INTERVAL     = 2
 MAX_LINES         = 2000
 CONFIG_FILE       = os.path.join(os.path.dirname(__file__), "sessions.json")
@@ -618,6 +623,29 @@ async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @owner_only
+async def cmd_upgrade(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Upgrade Claude Code on all hosts, then restart all sessions."""
+    await update.message.reply_text("Upgrading Claude Code on all hosts…", parse_mode="HTML")
+
+    hosts = list({cfg.get("host") or None for cfg in get_configs()})
+    results = []
+
+    for host in hosts:
+        label = host or "local"
+        # claude update works for both npm and standalone installs
+        r = run_cmd(["claude", "update"], host)
+        output = (r.stdout + r.stderr).strip()[-300:] or "(no output)"
+        results.append(f"<b>{_esc(label)}</b>:\n<pre>{_esc(output)}</pre>")
+
+    await update.message.reply_text("\n\n".join(results), parse_mode="HTML")
+
+    # Restart all sessions to pick up new version
+    script = os.path.join(os.path.dirname(__file__), "restart-all-sessions.sh")
+    subprocess.run([script], capture_output=True)
+    await update.message.reply_text("All sessions restarted.", parse_mode="HTML")
+
+
+@owner_only
 async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a link to another session's topic. Usage: /link [session-name]
     Without args: shows links to all sessions."""
@@ -994,6 +1022,7 @@ def main():
     app.add_handler(CommandHandler("claude",  cmd_claude))
     app.add_handler(CommandHandler("restart",     cmd_restart))
     app.add_handler(CommandHandler("restart_all", cmd_restart_all))
+    app.add_handler(CommandHandler("upgrade",     cmd_upgrade))
     app.add_handler(CommandHandler("link",        cmd_link))
     app.add_handler(CommandHandler("mcp_add",     cmd_mcp_add))
     app.add_handler(CommandHandler("kill",     cmd_kill))
@@ -1004,7 +1033,21 @@ def main():
     app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, handle_message))
 
     logger.info("Bot starting...")
-    app.run_polling(drop_pending_updates=True)
+    if WEBHOOK_URL:
+        webhook_full = f"{WEBHOOK_URL}/tg"
+        logger.info(f"Starting in webhook mode: {webhook_full} → localhost:{WEBHOOK_PORT}")
+        kwargs = dict(
+            webhook_url          = webhook_full,
+            listen               = "127.0.0.1",
+            port                 = WEBHOOK_PORT,
+            url_path             = "/tg",
+            drop_pending_updates = True,
+        )
+        if WEBHOOK_CERT:
+            kwargs["cert"] = WEBHOOK_CERT   # uploaded to Telegram for self-signed cert verification
+        app.run_webhook(**kwargs)
+    else:
+        app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
