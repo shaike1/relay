@@ -269,9 +269,19 @@ def provision_session(session: str, path: str, host: str | None = None, thread_i
 
     if not tmux_exists(session, host):
         if host:
-            run_cmd(["tmux", "new-session", "-d", "-s", session, "-c", path], host)
+            run_cmd(["tmux", "new-session", "-d", "-s", session, "-c", path, "-x", "220", "-y", "50"], host)
         else:
-            subprocess.run(["tmux", "new-session", "-d", "-s", session, "-c", path],
+            subprocess.run(["tmux", "new-session", "-d", "-s", session, "-c", path, "-x", "220", "-y", "50"],
+                           capture_output=True)
+    else:
+        # Ensure existing sessions are wide enough for teams agents
+        if host:
+            # resize-window added in tmux 2.9; fall back to resize-pane for older versions
+            r = run_cmd(["tmux", "resize-window", "-t", session, "-x", "220", "-y", "50"], host)
+            if r.returncode != 0:
+                run_cmd(["tmux", "resize-pane", "-t", f"{session}:0.0", "-x", "220", "-y", "50"], host)
+        else:
+            subprocess.run(["tmux", "resize-window", "-t", session, "-x", "220", "-y", "50"],
                            capture_output=True)
 
     # Use real claude binary on remote hosts to bypass any shell wrappers (e.g. Zellij)
