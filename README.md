@@ -20,10 +20,17 @@ This is the normal remote dev workflow. It works, but it's constant overhead: ma
 To add a new project, send one command in Telegram:
 
 ```
+# Local project on the relay server
 /new /path/to/project
+
+# Project on a remote server over SSH
+/new root@your-backup-host /root/myproject
+
+# With a custom topic name
+/new root@your-backup-host /root/myproject my-app
 ```
 
-Relay creates the Telegram topic, starts the tmux session, writes `.mcp.json`, and launches Claude — all automatically. The topic is live and ready to use in seconds.
+Relay creates the Telegram topic, starts the tmux session, writes `.mcp.json`, and launches Claude — all automatically. The topic is live and ready to use in seconds. For remote projects, Relay SSHes in to provision everything — no manual setup on the remote host needed.
 
 ```
 Phone
