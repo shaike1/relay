@@ -270,6 +270,13 @@ All commands are restricted to `OWNER_ID`.
 | `/restart` | Ctrl+C then re-launch Claude (resumes latest session) |
 | `/kill` | Send Ctrl+C to the session |
 | `/snap` | Snapshot the last 50 lines of the tmux pane |
+| `/mcp_add <name> <binary> [args...] [KEY=VAL...]` | Install an MCP server and restart Claude |
+
+**`/mcp_add` example:**
+```
+/mcp_add stitch stitch-mcp proxy STITCH_API_KEY=abc123
+```
+Resolves the binary's full path on the target host (handles `npm`/`nvm` installs not in Claude's PATH), adds it via `claude mcp add-json`, and restarts Claude — all from Telegram.
 
 ### Info
 
