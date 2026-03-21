@@ -1,8 +1,10 @@
 import asyncio
 import os
 import json
+import re
 import subprocess
 import logging
+import time
 from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, MessageHandler, CommandHandler,
@@ -26,6 +28,7 @@ WEBHOOK_CERT  = os.environ.get("WEBHOOK_CERT", "")  # path to self-signed cert f
 
 POLL_INTERVAL     = 2
 MAX_LINES         = 2000
+STATUS_INTERVAL   = 180   # seconds between periodic status updates while Claude is active
 CONFIG_FILE       = os.path.join(os.path.dirname(__file__), "sessions.json")
 HOSTS_FILE        = os.path.join(os.path.dirname(__file__), "hosts.json")
 
@@ -34,6 +37,10 @@ sessions: dict[tuple[int, int], str] = {}        # (chat_id, thread_id) -> sessi
 session_to_thread: dict[str, tuple[int, int]] = {}
 line_counts: dict[str, int] = {}
 session_busy: dict[str, bool] = {}   # tracks whether session was "Working…" last poll
+last_status_time: dict[str, float] = {}      # session -> timestamp of last status update
+last_activity_time: dict[str, float] = {}    # session -> timestamp of last line-count change
+
+ANSI_RE = re.compile(r'\x1b\[[0-9;]*[mGKHF]|\x1b\][^\x07]*\x07|\r')
 
 # ─── persistent config ────────────────────────────────────────────────────────
 
@@ -338,11 +345,36 @@ async def poll_output(context: ContextTypes.DEFAULT_TYPE):
                 continue
 
             # Skip poll_output for MCP sessions — Claude sends replies via send_message tool
-            # But still track busy→idle transitions and notify
+            # But send periodic status snapshots while the session is actively working.
             mcp_json = f"{path}/.mcp.json"
             has_mcp = (run_cmd(["test", "-f", mcp_json], host).returncode == 0) if host else os.path.exists(mcp_json)
             if has_mcp:
-                line_counts[session] = len(tmux_capture(session, host))
+                lines = tmux_capture(session, host)
+                prev  = line_counts.get(session, len(lines))
+                now   = time.time()
+
+                if len(lines) != prev:
+                    last_activity_time[session] = now
+
+                line_counts[session] = len(lines)
+
+                # Send status if: session was active recently AND STATUS_INTERVAL has elapsed
+                active_recently = (now - last_activity_time.get(session, 0)) < STATUS_INTERVAL
+                due_for_status  = (now - last_status_time.get(session, 0)) >= STATUS_INTERVAL
+
+                if active_recently and due_for_status and lines:
+                    last_status_time[session] = now
+                    # Show last ~15 non-empty lines, stripped of ANSI codes
+                    clean = [ANSI_RE.sub("", l).strip() for l in lines[-40:]]
+                    clean = [l for l in clean if l][-15:]
+                    if clean:
+                        snippet = "\n".join(clean)
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            message_thread_id=thread_id,
+                            text=f"<b>Working…</b>\n<pre>{_esc(snippet)}</pre>",
+                            parse_mode="HTML"
+                        )
                 continue
 
             lines     = tmux_capture(session, host)
