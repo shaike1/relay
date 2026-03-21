@@ -39,6 +39,7 @@ line_counts: dict[str, int] = {}
 session_busy: dict[str, bool] = {}   # tracks whether session was "Working…" last poll
 last_status_time: dict[str, float] = {}      # session -> timestamp of last status update
 last_activity_time: dict[str, float] = {}    # session -> timestamp of last line-count change
+last_user_sent: dict[str, float] = {}        # session -> timestamp of last user message sent
 
 ANSI_RE = re.compile(r'\x1b\[[0-9;]*[mGKHF]|\x1b\][^\x07]*\x07|\r')
 
@@ -332,6 +333,20 @@ def owner_only(func):
 
 # ─── poller ───────────────────────────────────────────────────────────────────
 
+def _read_last_response(thread_id: int, host: str | None) -> float:
+    """Return the timestamp (epoch seconds) when Claude last sent a message on this thread."""
+    resp_file = f"/tmp/tg-last-sent-{thread_id}"
+    try:
+        if host:
+            r = run_cmd(["cat", resp_file], host)
+            return float(r.stdout.strip()) if r.returncode == 0 else 0.0
+        else:
+            with open(resp_file) as f:
+                return float(f.read().strip())
+    except Exception:
+        return 0.0
+
+
 async def poll_output(context: ContextTypes.DEFAULT_TYPE):
     configs = {cfg["session"]: cfg for cfg in get_configs()}
 
@@ -353,19 +368,21 @@ async def poll_output(context: ContextTypes.DEFAULT_TYPE):
             has_mcp = (run_cmd(["test", "-f", mcp_json], host).returncode == 0) if host else os.path.exists(mcp_json)
             if has_mcp:
                 lines = tmux_capture(session, host)
-                prev  = line_counts.get(session, len(lines))
+                line_counts[session] = len(lines)
                 now   = time.time()
 
-                if len(lines) != prev:
-                    last_activity_time[session] = now
+                sent_at = last_user_sent.get(session, 0)
+                # Send status only when: a user message was sent, no response yet, and
+                # STATUS_INTERVAL has elapsed since that message.
+                waiting_long_enough = sent_at > 0 and (now - sent_at) >= STATUS_INTERVAL
+                due_for_status      = (now - last_status_time.get(session, 0)) >= STATUS_INTERVAL
 
-                line_counts[session] = len(lines)
-
-                # Send status if: session was active recently AND STATUS_INTERVAL has elapsed
-                active_recently = (now - last_activity_time.get(session, 0)) < STATUS_INTERVAL
-                due_for_status  = (now - last_status_time.get(session, 0)) >= STATUS_INTERVAL
-
-                if active_recently and due_for_status and lines:
+                if waiting_long_enough and due_for_status and lines:
+                    # Check if Claude has already responded since the last user message
+                    last_response = _read_last_response(thread_id, host)
+                    if last_response >= sent_at:
+                        # Claude responded — no snapshot needed
+                        continue
                     last_status_time[session] = now
                     # Show last ~15 non-empty lines, stripped of ANSI codes
                     clean = [ANSI_RE.sub("", l).strip() for l in lines[-40:]]
@@ -1082,6 +1099,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if photo_path:
             entry["photo_path"] = photo_path
         write_queue(thread_id, entry, host)
+        last_user_sent[session] = time.time()
         logger.info(f"Queued message for MCP session '{session}' (thread {thread_id})")
         if not update.message.photo:
             tmux_send(session, text, host)

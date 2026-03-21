@@ -177,6 +177,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       args?.reply_to as number | undefined,
       args?.buttons as string[][] | undefined,
     )
+    // Write response timestamp so the relay bot knows Claude replied
+    void Bun.write(`/tmp/tg-last-sent-${THREAD_ID}`, String(Date.now() / 1000))
     return { content: [{ type: 'text', text: `Sent. message_ids: ${ids.join(', ')}` }] }
   }
 
@@ -217,6 +219,20 @@ const messageHistory: TgMessage[] = []
 // This avoids conflicts with the routing bot both polling getUpdates.
 
 const QUEUE_FILE = `/tmp/tg-queue-${THREAD_ID}.jsonl`
+const LOCK_FILE  = `/tmp/tg-queue-${THREAD_ID}.lock`
+
+// Kill any previous instance for this thread before starting
+try {
+  const f = Bun.file(LOCK_FILE)
+  if (await f.exists()) {
+    const oldPid = parseInt(await f.text(), 10)
+    if (oldPid && oldPid !== process.pid) {
+      try { process.kill(oldPid, 0); process.kill(oldPid) } catch {}
+    }
+  }
+} catch {}
+await Bun.write(LOCK_FILE, String(process.pid))
+process.on('exit', () => { try { require('fs').unlinkSync(LOCK_FILE) } catch {} })
 
 type QueueEntry = {
   text: string
