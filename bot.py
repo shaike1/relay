@@ -278,8 +278,8 @@ def provision_session(session: str, path: str, host: str | None = None, thread_i
     # Try --continue first; fall back to fresh start if no prior session exists
     loop_cmd = (
         f"while true; do "
-        f"IS_SANDBOX=1 {claude_bin} --dangerously-skip-permissions --remote-control --continue "
-        f"|| IS_SANDBOX=1 {claude_bin} --dangerously-skip-permissions --remote-control; "
+        f"IS_SANDBOX=1 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 {claude_bin} --dangerously-skip-permissions --remote-control --continue "
+        f"|| IS_SANDBOX=1 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 {claude_bin} --dangerously-skip-permissions --remote-control; "
         f"sleep 1; done"
     )
     if host:
@@ -344,7 +344,7 @@ async def poll_output(context: ContextTypes.DEFAULT_TYPE):
             if has_mcp:
                 pane = tmux_capture(session, host)
                 pane_text = "\n".join(pane[-10:])
-                is_working = any(kw in pane_text for kw in ["Working…", "Working...", "Thinking", "⎿", "✶", "✽"])
+                is_working = any(kw in pane_text for kw in ["Working…", "Working...", "Thinking…", "✶", "✽", "Swooping", "Ebbing", "tokens"])
                 was_busy   = session_busy.get(session, False)
                 if was_busy and not is_working and "❯" in pane_text:
                     # Transitioned from busy to idle — notify
