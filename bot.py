@@ -33,6 +33,7 @@ HOSTS_FILE        = os.path.join(os.path.dirname(__file__), "hosts.json")
 sessions: dict[tuple[int, int], str] = {}        # (chat_id, thread_id) -> session_name
 session_to_thread: dict[str, tuple[int, int]] = {}
 line_counts: dict[str, int] = {}
+session_busy: dict[str, bool] = {}   # tracks whether session was "Working…" last poll
 
 # ─── persistent config ────────────────────────────────────────────────────────
 
@@ -337,10 +338,27 @@ async def poll_output(context: ContextTypes.DEFAULT_TYPE):
                 continue
 
             # Skip poll_output for MCP sessions — Claude sends replies via send_message tool
+            # But still track busy→idle transitions and notify
             mcp_json = f"{path}/.mcp.json"
             has_mcp = (run_cmd(["test", "-f", mcp_json], host).returncode == 0) if host else os.path.exists(mcp_json)
             if has_mcp:
-                line_counts[session] = len(tmux_capture(session, host))
+                pane = tmux_capture(session, host)
+                pane_text = "\n".join(pane[-10:])
+                is_working = any(kw in pane_text for kw in ["Working…", "Working...", "Thinking", "⎿", "✶", "✽"])
+                was_busy   = session_busy.get(session, False)
+                if was_busy and not is_working and "❯" in pane_text:
+                    # Transitioned from busy to idle — notify
+                    try:
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            message_thread_id=thread_id,
+                            text="✅ Claude finished.",
+                            parse_mode="HTML"
+                        )
+                    except Exception:
+                        pass
+                session_busy[session] = is_working
+                line_counts[session] = len(pane)
                 continue
 
             lines     = tmux_capture(session, host)
