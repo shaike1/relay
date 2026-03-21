@@ -240,7 +240,7 @@ def write_mcp_json(path: str, thread_id: int, host: str | None = None):
     logger.info(f"Wrote .mcp.json to {path} (thread_id={thread_id})")
 
 
-def provision_session(session: str, path: str, host: str | None = None, thread_id: int | None = None):
+def provision_session(session: str, path: str, host: str | None = None, thread_id: int | None = None, model: str | None = None):
     """Ensure tmux session exists at path, running Claude (resumed if possible)."""
     # Create project folder if needed
     run_cmd(["mkdir", "-p", path], host)
@@ -283,10 +283,13 @@ def provision_session(session: str, path: str, host: str | None = None, thread_i
     # Run claude in a loop so it auto-resumes on exit.
     # Use bash --norc --noprofile to avoid shell wrappers (e.g. Zellij auto-start in .bashrc).
     # Try --continue first; fall back to fresh start if no prior session exists
+    model_flag = f" --model {model}" if model else ""
+    env_prefix = "IS_SANDBOX=1 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"
+    base_flags = f"--dangerously-skip-permissions --remote-control{model_flag}"
     loop_cmd = (
         f"while true; do "
-        f"IS_SANDBOX=1 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 {claude_bin} --dangerously-skip-permissions --remote-control --continue "
-        f"|| IS_SANDBOX=1 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 {claude_bin} --dangerously-skip-permissions --remote-control; "
+        f"{env_prefix} {claude_bin} {base_flags} --continue "
+        f"|| {env_prefix} {claude_bin} {base_flags}; "
         f"sleep 1; done"
     )
     if host:
@@ -340,7 +343,7 @@ async def poll_output(context: ContextTypes.DEFAULT_TYPE):
         try:
             if not tmux_exists(session, host):
                 logger.warning(f"Session '{session}' gone — reprovisioning")
-                provision_session(session, path, host)
+                provision_session(session, path, host, model=cfg.get("model"))
                 line_counts[session] = len(tmux_capture(session, host))
                 continue
 
@@ -423,6 +426,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/claude — start or resume Claude\n"
         "/restart — Ctrl+C + re-launch Claude\n"
         "/restart_all [host] — restart all sessions (after settings changes)\n"
+        "/model [name] — show or switch Claude model (opus/sonnet/haiku or full ID)\n"
         "/link [session] — get Telegram link to a session's topic\n"
         "/kill — send Ctrl+C\n"
         "/snap — snapshot last 50 lines\n"
@@ -653,6 +657,71 @@ async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tmux_send_ctrl(session, "C-c", host)
     await update.message.reply_text(
         "Ctrl+C sent — the loop will restart Claude automatically.", parse_mode="HTML"
+    )
+
+
+KNOWN_MODELS = {
+    "opus":    "claude-opus-4-5",
+    "sonnet":  "claude-sonnet-4-6",
+    "haiku":   "claude-haiku-4-5-20251001",
+}
+
+@owner_only
+async def cmd_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show or change the Claude model for this session.
+    Usage: /model           — show current model
+           /model sonnet    — switch to sonnet (alias or full model ID)
+           /model default   — remove model override (use Claude's default)
+    """
+    session, cfg = _session_from_update(update)
+    if not session:
+        await update.message.reply_text("No session mapped to this topic.")
+        return
+
+    args = context.args or []
+    current = cfg.get("model") or "(default)"
+
+    if not args:
+        available = "\n".join(f"• <code>{k}</code> → <code>{v}</code>" for k, v in KNOWN_MODELS.items())
+        await update.message.reply_text(
+            f"<b>Current model:</b> <code>{_esc(current)}</code>\n\n"
+            f"<b>Shortcuts:</b>\n{available}\n\n"
+            f"Usage: <code>/model sonnet</code> | <code>/model default</code> | <code>/model claude-opus-4-5</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    raw = args[0].strip()
+
+    if raw == "default":
+        new_model = None
+        label = "(default)"
+    else:
+        new_model = KNOWN_MODELS.get(raw, raw)  # expand alias or use as-is
+        label = new_model
+
+    # Update config
+    configs = load_config()
+    for c in configs:
+        if c["session"] == session:
+            if new_model:
+                c["model"] = new_model
+            else:
+                c.pop("model", None)
+            break
+    save_config(configs)
+
+    # Restart the session with new model
+    host = cfg.get("host")
+    path = cfg.get("path", "/root")
+    tmux_send_ctrl(session, "C-c", host)
+    import asyncio as _asyncio
+    await _asyncio.sleep(1)
+    provision_session(session, path, host, model=new_model)
+
+    await update.message.reply_text(
+        f"Model set to <code>{_esc(label)}</code> — session restarted.",
+        parse_mode="HTML"
     )
 
 
@@ -1056,6 +1125,7 @@ def main():
     app.add_handler(CommandHandler("claude",  cmd_claude))
     app.add_handler(CommandHandler("restart",     cmd_restart))
     app.add_handler(CommandHandler("restart_all", cmd_restart_all))
+    app.add_handler(CommandHandler("model",       cmd_model))
     app.add_handler(CommandHandler("upgrade",     cmd_upgrade))
     app.add_handler(CommandHandler("link",        cmd_link))
     app.add_handler(CommandHandler("mcp_add",     cmd_mcp_add))
