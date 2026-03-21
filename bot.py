@@ -384,6 +384,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/claude — start or resume Claude\n"
         "/restart — Ctrl+C + re-launch Claude\n"
         "/restart_all [host] — restart all sessions (after settings changes)\n"
+        "/link [session] — get Telegram link to a session's topic\n"
         "/kill — send Ctrl+C\n"
         "/snap — snapshot last 50 lines\n"
         "/mcp-add &lt;name&gt; &lt;binary&gt; [args...] [KEY=VAL...] — install MCP + restart\n\n"
@@ -614,6 +615,33 @@ async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Ctrl+C sent — the loop will restart Claude automatically.", parse_mode="HTML"
     )
+
+
+@owner_only
+async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send a link to another session's topic. Usage: /link [session-name]
+    Without args: shows links to all sessions."""
+    clean_chat = str(GROUP_CHAT_ID).replace("-100", "")
+    args = context.args or []
+
+    if args:
+        name = args[0]
+        cfg = next((c for c in get_configs() if c["session"] == name), None)
+        if not cfg:
+            await update.message.reply_text(f"Session <code>{_esc(name)}</code> not found.", parse_mode="HTML")
+            return
+        thread_id = cfg["thread_id"]
+        url = f"https://t.me/c/{clean_chat}/{thread_id}"
+        await update.message.reply_text(
+            f"<b>{_esc(name)}</b>: {url}", parse_mode="HTML"
+        )
+    else:
+        lines = []
+        for cfg in get_configs():
+            url = f"https://t.me/c/{clean_chat}/{cfg['thread_id']}"
+            host = f" ({cfg['host']})" if cfg.get("host") else ""
+            lines.append(f"• <b>{_esc(cfg['session'])}</b>{_esc(host)}: {url}")
+        await update.message.reply_text("\n".join(lines) or "No sessions.", parse_mode="HTML")
 
 
 @owner_only
@@ -966,6 +994,7 @@ def main():
     app.add_handler(CommandHandler("claude",  cmd_claude))
     app.add_handler(CommandHandler("restart",     cmd_restart))
     app.add_handler(CommandHandler("restart_all", cmd_restart_all))
+    app.add_handler(CommandHandler("link",        cmd_link))
     app.add_handler(CommandHandler("mcp_add",     cmd_mcp_add))
     app.add_handler(CommandHandler("kill",     cmd_kill))
     app.add_handler(CommandHandler("snap",    cmd_snap))
