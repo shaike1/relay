@@ -37,6 +37,16 @@ You:
 2. Run `tail -20 app.log`
 3. Call `send_message` with result wrapped in `<pre>`
 
+## Buttons — use them proactively
+
+Whenever you ask the user to choose or confirm, attach inline buttons instead of asking them to type:
+
+- Yes/No confirmation → `buttons: [["Yes", "No"]]`
+- Multiple options → `buttons: [["Option A", "Option B"], ["Option C"]]`
+- Proceed/Cancel → `buttons: [["Proceed", "Cancel"]]`
+
+The clicked label arrives as a plain message. Always prefer buttons over "type 1 or 2".
+
 ## Important
 
 - Always respond via `send_message` — never leave a message unanswered

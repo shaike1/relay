@@ -120,7 +120,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: 'send_message',
-      description: 'Send a message to the Telegram topic. Supports HTML: <b>, <i>, <code>, <pre>.',
+      description: 'Send a message to the Telegram topic. Supports HTML: <b>, <i>, <code>, <pre>. IMPORTANT: whenever you ask the user to confirm or choose between options, always include inline `buttons` (e.g. [["Yes","No"]] or [["A","B","C"]]) — never ask them to type a number or letter.',
       inputSchema: {
         type: 'object',
         required: ['text'],
