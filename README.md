@@ -30,7 +30,17 @@ To add a new project, send one command in Telegram:
 /new root@your-backup-host /root/myproject my-app
 ```
 
-Relay creates the Telegram topic, starts the tmux session, writes `.mcp.json`, and launches Claude — all automatically. The topic is live and ready to use in seconds. For remote projects, Relay SSHes in to provision everything — no manual setup on the remote host needed.
+In one command, Relay does all of this automatically:
+
+1. **Creates the Telegram topic** in your supergroup (gets a `thread_id`)
+2. **Creates the project folder** on the target host if it doesn't exist
+3. **Writes `.mcp.json`** into the project folder, wired to the new topic's `thread_id`
+4. **Creates a tmux session** on the host (local or remote via SSH) in the project directory
+5. **Launches Claude** in a self-restarting loop — `--continue` to resume any prior conversation, falling back to a fresh start if none exists
+6. **Registers the session** in `sessions.json` so it survives relay restarts
+7. **Sends a confirmation message** into the new topic so it's immediately live
+
+For remote projects, Relay SSHes in to provision everything — no manual setup on the remote host needed.
 
 ```
 Phone
