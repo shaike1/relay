@@ -244,8 +244,11 @@ async function saveLastId(id: number): Promise<void> {
 }
 
 async function poll(): Promise<void> {
-  // Deliver any message with message_id > lastDeliveredId
+  // Deliver any message with message_id > lastDeliveredId, one per poll cycle
   let lastId = await loadLastId()
+
+  // Give Claude time to fully initialize before sending notifications
+  await Bun.sleep(3000)
 
   while (true) {
     try {
@@ -253,9 +256,10 @@ async function poll(): Promise<void> {
       if (!(await file.exists())) { await Bun.sleep(500); continue }
 
       const text = await file.text()
+      let sentOne = false
 
       for (const line of text.split('\n')) {
-        if (!line.trim()) continue
+        if (!line.trim() || sentOne) continue
         try {
           const entry = JSON.parse(line) as QueueEntry
           const { text: msgText, user, message_id, ts, photo_path } = entry
@@ -288,6 +292,7 @@ async function poll(): Promise<void> {
 
           lastId = message_id
           await saveLastId(lastId)
+          sentOne = true  // send only one per cycle; next will be picked up on next poll
 
           process.stderr.write(`[telegram] notification sent: ${user}: ${msgText}\n`)
           Bun.write('/tmp/mcp-debug.log', `[${new Date().toISOString()}] notification sent OK\n`, { append: true })
