@@ -57,10 +57,11 @@ async function tg(method: string, body: Record<string, unknown> = {}): Promise<u
   return r.json()
 }
 
-async function sendMessage(text: string, replyTo?: number): Promise<number[]> {
+async function sendMessage(text: string, replyTo?: number, buttons?: string[][]): Promise<number[]> {
   const chunks = text.match(/.{1,4000}/gs) ?? [text]
   const ids: number[] = []
-  for (const chunk of chunks) {
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i]
     const body: Record<string, unknown> = {
       chat_id: CHAT_ID,
       message_thread_id: THREAD_ID,
@@ -68,6 +69,17 @@ async function sendMessage(text: string, replyTo?: number): Promise<number[]> {
       parse_mode: 'HTML',
     }
     if (replyTo) { body.reply_to_message_id = replyTo; replyTo = undefined }
+    // Attach buttons only to the last chunk
+    if (buttons && i === chunks.length - 1) {
+      body.reply_markup = {
+        inline_keyboard: buttons.map(row =>
+          row.map(label => ({
+            text: label,
+            callback_data: `btn:${THREAD_ID}:${label}`,
+          }))
+        ),
+      }
+    }
     const res = await tg('sendMessage', body) as { ok: boolean; result: { message_id: number } }
     if (res.ok) ids.push(res.result.message_id)
   }
@@ -115,6 +127,14 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           text:     { type: 'string',  description: 'Message text (HTML supported)' },
           reply_to: { type: 'integer', description: 'Optional message_id to reply to' },
+          buttons:  {
+            type: 'array',
+            description: 'Optional inline keyboard buttons. Array of rows, each row is an array of button labels. When clicked, the label is sent back as a message. Example: [["Yes", "No"]] or [["Option A"], ["Option B"]]',
+            items: {
+              type: 'array',
+              items: { type: 'string' },
+            },
+          },
         },
       },
     },
@@ -152,7 +172,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args } = req.params
 
   if (name === 'send_message') {
-    const ids = await sendMessage(String(args?.text ?? ''), args?.reply_to as number | undefined)
+    const ids = await sendMessage(
+      String(args?.text ?? ''),
+      args?.reply_to as number | undefined,
+      args?.buttons as string[][] | undefined,
+    )
     return { content: [{ type: 'text', text: `Sent. message_ids: ${ids.join(', ')}` }] }
   }
 

@@ -734,6 +734,30 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
+    # Button press from Claude's send_message buttons=[...]
+    if query.data.startswith("btn:"):
+        _, thread_id_str, label = query.data.split(":", 2)
+        thread_id = int(thread_id_str)
+        queue_file = f"/tmp/tg-queue-{thread_id}.jsonl"
+        user = query.from_user.first_name or "User"
+        import time as _time
+        entry = json.dumps({
+            "text": label,
+            "user": user,
+            "message_id": query.message.message_id,
+            "thread_id": thread_id,
+            "chat_id": query.message.chat_id,
+            "ts": _time.time(),
+        })
+        with open(queue_file, "a") as f:
+            f.write(entry + "\n")
+        # Remove buttons from the message so it can't be clicked twice
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+
     if not query.data.startswith("connect:"):
         return
 
