@@ -397,6 +397,28 @@ sudo ln -sf ~/.bun/bin/bun /usr/local/bin/bun
 which bun  # should show /usr/local/bin/bun
 ```
 
+### Adding extra MCP servers to a project (e.g. Stitch, custom tools)
+
+When adding MCP servers installed via `npm`/`nvm`, Claude Code spawns them with a minimal PATH — `~/.nvm/...` is not included, so the binary won't be found by name alone.
+
+**Always use the full binary path:**
+```bash
+# Find the full path first
+which stitch-mcp   # e.g. /root/.nvm/versions/node/v22.22.0/bin/stitch-mcp
+
+# Add with full path + any required env vars
+claude mcp add-json stitch '{
+  "command": "/root/.nvm/versions/node/v22.22.0/bin/stitch-mcp",
+  "args": ["proxy"],
+  "env": {"STITCH_API_KEY": "your-key"}
+}' -s local
+```
+
+Then restart Claude to pick up the new MCP. Use `session-run.sh` for a one-liner:
+```bash
+./session-run.sh <session-name> claude mcp add-json stitch '{...}' -s local
+```
+
 ### 409 Conflict errors
 
 **Cause:** Two processes are calling `getUpdates` with the same token.
