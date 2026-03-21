@@ -962,6 +962,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_reply_markup(reply_markup=None)
         except Exception:
             pass
+        # Echo the selection back into the chat so it's visible
+        try:
+            await query.message.reply_text(
+                f"▶ {label}",
+                message_thread_id=thread_id,
+            )
+        except Exception:
+            pass
         return
 
     if not query.data.startswith("connect:"):
