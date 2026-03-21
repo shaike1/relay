@@ -857,16 +857,42 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_path = None
 
     if update.message.photo:
-        # Download highest-res photo to /tmp/
+        # Download highest-res photo to /tmp/ with retry
         photo = update.message.photo[-1]
-        tg_file = await context.bot.get_file(photo.file_id)
-        photo_path = f"/tmp/tg-photo-{update.message.message_id}.jpg"
-        await tg_file.download_to_drive(photo_path)
-        if not text:
-            text = f"[Photo: {photo_path}]"
+        local_path = f"/tmp/tg-photo-{update.message.message_id}.jpg"
+        downloaded = False
+        for attempt in range(3):
+            try:
+                tg_file = await context.bot.get_file(photo.file_id)
+                await tg_file.download_to_drive(local_path)
+                downloaded = True
+                logger.info(f"Downloaded photo to {local_path}")
+                break
+            except Exception as e:
+                logger.warning(f"Photo download attempt {attempt+1} failed: {e}")
+                if attempt < 2:
+                    await asyncio.sleep(2)
+
+        if downloaded:
+            # For remote sessions, SCP the photo to the remote host
+            if host:
+                scp = subprocess.run(
+                    ["scp", "-o", "StrictHostKeyChecking=no", local_path, f"{host}:{local_path}"],
+                    capture_output=True, text=True
+                )
+                if scp.returncode == 0:
+                    photo_path = local_path
+                    logger.info(f"SCP'd photo to {host}:{local_path}")
+                else:
+                    logger.warning(f"SCP failed: {scp.stderr} — using local path")
+                    photo_path = local_path
+            else:
+                photo_path = local_path
+
+            caption = f" {text}" if text else ""
+            text = f"[Photo: {photo_path}]{caption}"
         else:
-            text = f"[Photo: {photo_path}] {text}"
-        logger.info(f"Downloaded photo to {photo_path}")
+            text = f"[Photo: failed to download]{(' ' + text) if text else ''}"
 
     if has_mcp:
         entry = {
