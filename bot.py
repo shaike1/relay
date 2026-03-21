@@ -342,23 +342,7 @@ async def poll_output(context: ContextTypes.DEFAULT_TYPE):
             mcp_json = f"{path}/.mcp.json"
             has_mcp = (run_cmd(["test", "-f", mcp_json], host).returncode == 0) if host else os.path.exists(mcp_json)
             if has_mcp:
-                pane = tmux_capture(session, host)
-                pane_text = "\n".join(pane[-10:])
-                is_working = any(kw in pane_text for kw in ["Working…", "Working...", "Thinking…", "✶", "✽", "Swooping", "Ebbing", "tokens"])
-                was_busy   = session_busy.get(session, False)
-                if was_busy and not is_working and "❯" in pane_text:
-                    # Transitioned from busy to idle — notify
-                    try:
-                        await context.bot.send_message(
-                            chat_id=chat_id,
-                            message_thread_id=thread_id,
-                            text="✅ Claude finished.",
-                            parse_mode="HTML"
-                        )
-                    except Exception:
-                        pass
-                session_busy[session] = is_working
-                line_counts[session] = len(pane)
+                line_counts[session] = len(tmux_capture(session, host))
                 continue
 
             lines     = tmux_capture(session, host)
