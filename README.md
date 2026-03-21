@@ -63,6 +63,9 @@ Telegram's [forum topics](https://telegram.org/blog/topics-in-groups-collectible
 | `bot.py` | Relay bot — runs once, globally. Holds the Telegram long-poll, fans messages to queue files, provisions tmux sessions. |
 | `mcp-telegram/` | MCP server — one instance per project. Tails its queue file and delivers messages to Claude as `notifications/claude/channel` events. |
 | `CLAUDE_TEMPLATE.md` | Paste into your project's `CLAUDE.md` to tell Claude how to behave on Telegram. |
+| `watchdog.sh` | Deploy to backup server. Monitors primary relay every 15s, activates backup relay after 45s down, sends Telegram alert on failover/recovery. |
+| `self-monitor.sh` | Run via cron on primary. Detects relay outage, attempts auto-restart, sends direct Telegram alert if restart fails. |
+| `sync-sessions.sh` | Run via cron on primary. Pushes host-flipped `sessions.json` to backup server every 5 minutes. |
 
 ---
 
@@ -273,6 +276,75 @@ All commands are restricted to `OWNER_ID`.
 ```
 
 Relay SSHes to write queue files and provision sessions on remote hosts. SSH key auth required (no password prompts).
+
+---
+
+## Redundancy and monitoring
+
+Relay is designed to run on one server (only one process can hold the Telegram long-poll). For high availability, use a primary/backup pattern with automatic failover.
+
+### Backup relay (watchdog)
+
+Deploy `watchdog.sh` on your backup server as a systemd service. It monitors the primary every 15 seconds and activates the backup relay after 45 seconds of downtime:
+
+```bash
+# On backup server
+cp watchdog.sh /root/relay/watchdog.sh
+chmod +x /root/relay/watchdog.sh
+```
+
+Edit `watchdog.sh` and set `PRIMARY` to your primary server's SSH address.
+
+```ini
+# /etc/systemd/system/relay-watchdog.service
+[Unit]
+Description=Relay Watchdog — failover if primary is down
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/bin/bash /root/relay/watchdog.sh
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+systemctl enable --now relay-watchdog
+```
+
+The backup relay needs its own `sessions.json` with hosts flipped (what is `null` on primary becomes `"root@primary-ip"` on backup, and vice versa). Use `sync-sessions.sh` to keep it in sync automatically.
+
+### Sessions sync
+
+Run `sync-sessions.sh` on the primary via cron to keep the backup's `sessions.json` up to date:
+
+```bash
+# Edit sync-sessions.sh and set the backup server address
+(crontab -l; echo "*/5 * * * * /root/relay/sync-sessions.sh >> /root/relay/sync.log 2>&1") | crontab -
+```
+
+### Self-monitoring on primary
+
+Run `self-monitor.sh` on the primary via cron. If the relay goes down and `systemctl restart` fails, it sends a direct Telegram alert (bypassing the relay itself):
+
+```bash
+(crontab -l; echo "*/2 * * * * /root/relay/self-monitor.sh >> /root/relay/self-monitor.log 2>&1") | crontab -
+```
+
+### Failover behavior
+
+| Session location | Primary down | Primary recovers |
+|-----------------|-------------|-----------------|
+| Backup server | ✅ continues working | ✅ continues working |
+| Primary server | ❌ unavailable | ✅ resumes automatically |
+
+Telegram alerts are sent directly via the Bot API (not through Relay) so they arrive even when Relay itself is down.
 
 ---
 
