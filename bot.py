@@ -383,6 +383,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>Session control (inside a topic):</b>\n"
         "/claude — start or resume Claude\n"
         "/restart — Ctrl+C + re-launch Claude\n"
+        "/restart_all [host] — restart all sessions (after settings changes)\n"
         "/kill — send Ctrl+C\n"
         "/snap — snapshot last 50 lines\n"
         "/mcp-add &lt;name&gt; &lt;binary&gt; [args...] [KEY=VAL...] — install MCP + restart\n\n"
@@ -613,6 +614,23 @@ async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Ctrl+C sent — the loop will restart Claude automatically.", parse_mode="HTML"
     )
+
+
+@owner_only
+async def cmd_restart_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Restart all Claude sessions across all hosts. Useful after settings changes."""
+    filter_host = (context.args or [None])[0]
+    label = f" on {filter_host}" if filter_host else " (all hosts)"
+    await update.message.reply_text(f"Restarting all sessions{label}…", parse_mode="HTML")
+
+    script = os.path.join(os.path.dirname(__file__), "restart-all-sessions.sh")
+    args = [script]
+    if filter_host:
+        args.append(filter_host)
+
+    r = subprocess.run(args, capture_output=True, text=True)
+    output = (r.stdout + r.stderr).strip()
+    await update.message.reply_text(f"<pre>{_esc(output)}</pre>", parse_mode="HTML")
 
 
 @owner_only
@@ -946,8 +964,9 @@ def main():
     app.add_handler(CommandHandler("addhost",    cmd_addhost))
     app.add_handler(CommandHandler("removehost", cmd_removehost))
     app.add_handler(CommandHandler("claude",  cmd_claude))
-    app.add_handler(CommandHandler("restart",  cmd_restart))
-    app.add_handler(CommandHandler("mcp_add",  cmd_mcp_add))
+    app.add_handler(CommandHandler("restart",     cmd_restart))
+    app.add_handler(CommandHandler("restart_all", cmd_restart_all))
+    app.add_handler(CommandHandler("mcp_add",     cmd_mcp_add))
     app.add_handler(CommandHandler("kill",     cmd_kill))
     app.add_handler(CommandHandler("snap",    cmd_snap))
     app.add_handler(CommandHandler("sessions",cmd_sessions))

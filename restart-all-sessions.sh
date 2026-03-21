@@ -1,0 +1,50 @@
+#!/bin/bash
+# restart-all-sessions.sh — restart all Claude sessions across all hosts
+#
+# Usage:
+#   ./restart-all-sessions.sh          # restart all sessions
+#   ./restart-all-sessions.sh <host>   # restart only sessions on a specific host (or "local")
+#
+# Useful after changing ~/.claude/settings.json to apply new settings.
+
+set -euo pipefail
+
+SESSIONS_FILE="$(dirname "$0")/sessions.json"
+FILTER_HOST="${1:-}"
+
+echo "Reading sessions from $SESSIONS_FILE..."
+
+python3 - "$SESSIONS_FILE" "$FILTER_HOST" <<'EOF'
+import json, subprocess, sys, time
+
+sessions_file = sys.argv[1]
+filter_host   = sys.argv[2]
+
+configs = json.load(open(sessions_file))
+
+restarted = 0
+for cfg in configs:
+    session = cfg["session"]
+    host    = cfg.get("host") or ""
+
+    # Filter by host if requested
+    if filter_host:
+        target = "" if filter_host == "local" else filter_host
+        if host != target:
+            continue
+
+    host_label = host or "local"
+    print(f"  Restarting '{session}' on {host_label}...")
+
+    ssh_prefix = ["ssh", "-o", "StrictHostKeyChecking=no", host] if host else []
+
+    # Send 'q Enter' to quit Claude gracefully; loop restarts it
+    subprocess.run(
+        ssh_prefix + ["tmux", "send-keys", "-t", session, "q", "Enter"],
+        capture_output=True
+    )
+    time.sleep(0.3)
+    restarted += 1
+
+print(f"\nDone — restarted {restarted} session(s).")
+EOF
