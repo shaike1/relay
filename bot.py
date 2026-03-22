@@ -1099,7 +1099,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         entry = json.dumps({
             "text": label,
             "user": user,
-            "message_id": query.message.message_id,
+            "message_id": int(_time.time() * 1000),
             "thread_id": thread_id,
             "chat_id": query.message.chat_id,
             "ts": _time.time(),
