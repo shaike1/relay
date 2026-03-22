@@ -383,30 +383,6 @@ async def poll_output(context: ContextTypes.DEFAULT_TYPE):
                 line_counts[session] = len(lines)
                 now   = time.time()
 
-                sent_at = last_user_sent.get(session, 0)
-                # Send status only when: a user message was sent, no response yet, and
-                # STATUS_INTERVAL has elapsed since that message.
-                waiting_long_enough = sent_at > 0 and (now - sent_at) >= STATUS_INTERVAL
-                due_for_status      = (now - last_status_time.get(session, 0)) >= STATUS_INTERVAL
-
-                if waiting_long_enough and due_for_status and lines:
-                    # Check if Claude has already responded since the last user message
-                    last_response = _read_last_response(thread_id, host)
-                    if last_response >= sent_at:
-                        # Claude responded — no snapshot needed
-                        continue
-                    last_status_time[session] = now
-                    # Show last ~15 non-empty lines, stripped of ANSI codes
-                    clean = [ANSI_RE.sub("", l).strip() for l in lines[-40:]]
-                    clean = [l for l in clean if l][-15:]
-                    if clean:
-                        snippet = "\n".join(clean)
-                        await context.bot.send_message(
-                            chat_id=chat_id,
-                            message_thread_id=thread_id,
-                            text=f"<b>Working…</b>\n<pre>{_esc(snippet)}</pre>",
-                            parse_mode="HTML"
-                        )
                 continue
 
             lines     = tmux_capture(session, host)
@@ -936,9 +912,17 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
+def _all_tmux_sessions(host: str | None = None) -> list[str]:
+    """Return all running tmux session names on a host."""
+    r = run_cmd(["tmux", "list-sessions", "-F", "#{session_name}"], host)
+    if r.returncode != 0:
+        return []
+    return [s.strip() for s in r.stdout.splitlines() if s.strip()]
+
+
 @owner_only
 async def cmd_switch(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Switch current topic to route messages to a different session.
+    """Switch current topic to route messages to any tmux session (including team agents).
     Usage: /switch            — show all sessions as buttons
            /switch <session>  — switch this topic to that session
     """
@@ -949,43 +933,65 @@ async def cmd_switch(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Must be used inside a topic.")
         return
 
+    current = sessions.get((chat_id, thread_id), "—")
     configs = get_configs()
+    registered = {c["session"] for c in configs}
+
+    # Get all running tmux sessions (local only for now)
+    all_tmux = _all_tmux_sessions()
+    # Exclude internal/system sessions
+    SKIP = {"relay", "tgbot", "clawdbot", "cliproxy", "claude-runner", "2"}
+    all_tmux = [s for s in all_tmux if s not in SKIP]
 
     if not context.args:
-        # Show all sessions as buttons (2 per row)
-        names = [c["session"] for c in configs]
-        if not names:
-            await update.message.reply_text("No sessions available.")
+        if not all_tmux:
+            await update.message.reply_text("No tmux sessions found.")
             return
-        rows = [names[i:i+2] for i in range(0, len(names), 2)]
-        current = sessions.get((chat_id, thread_id), "—")
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(
-                ("✓ " if n == current else "") + n,
-                callback_data=f"switch:{thread_id}:{n}"
-            ) for n in row]
-            for row in rows
-        ])
+
+        # Split into registered sessions and unregistered agents
+        reg   = [s for s in all_tmux if s in registered]
+        agents = [s for s in all_tmux if s not in registered]
+
+        def make_btn(name: str) -> InlineKeyboardButton:
+            label = ("✓ " if name == current else "") + name
+            return InlineKeyboardButton(label, callback_data=f"switch:{thread_id}:{name}")
+
+        rows = []
+        if reg:
+            rows += [reg[i:i+2] for i in range(0, len(reg), 2)]
+        if agents:
+            rows.append(["── agents ──".center(12)])  # separator label (non-functional)
+            rows += [agents[i:i+2] for i in range(0, len(agents), 2)]
+
+        # Build keyboard — skip the separator row (no callback_data for it)
+        kb_rows = []
+        for row in rows:
+            if row == ["── agents ──".center(12)]:
+                # Use a disabled-looking button as separator
+                kb_rows.append([InlineKeyboardButton("· · · agents · · ·", callback_data="noop")])
+            else:
+                kb_rows.append([make_btn(n) for n in row])
+
+        keyboard = InlineKeyboardMarkup(kb_rows)
         await update.message.reply_text(
-            f"Current: <b>{_esc(current)}</b>\nSwitch to:",
+            f"Active: <b>{_esc(current)}</b>\nSwitch to:",
             parse_mode="HTML",
             reply_markup=keyboard,
         )
         return
 
     target = context.args[0]
-    cfg = next((c for c in configs if c["session"] == target), None)
-    if not cfg:
-        await update.message.reply_text(f"Session <code>{_esc(target)}</code> not found.", parse_mode="HTML")
+    if not tmux_exists(target):
+        await update.message.reply_text(f"Session <code>{_esc(target)}</code> not running.", parse_mode="HTML")
         return
 
+    cfg = next((c for c in configs if c["session"] == target), {})
     _do_switch(chat_id, thread_id, target, cfg)
     await update.message.reply_text(f"Switched to <b>{_esc(target)}</b>.", parse_mode="HTML")
 
 
 def _do_switch(chat_id: int, thread_id: int, session: str, cfg: dict):
     """Update in-memory routing so this topic now talks to `session`."""
-    # Remove old reverse mapping for this thread
     old = sessions.get((chat_id, thread_id))
     if old and session_to_thread.get(old) == (chat_id, thread_id):
         del session_to_thread[old]
@@ -997,6 +1003,9 @@ def _do_switch(chat_id: int, thread_id: int, session: str, cfg: dict):
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
+    if query.data == "noop":
+        return
 
     # Button press from Claude's send_message buttons=[...]
     if query.data.startswith("btn:"):
