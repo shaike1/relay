@@ -456,6 +456,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/restart — Ctrl+C + re-launch Claude\n"
         "/restart_all [host] — restart all sessions (after settings changes)\n"
         "/model [name] — show or switch Claude model (opus/sonnet/haiku or full ID)\n"
+        "/switch [session] — reroute this topic to a different session\n"
         "/link [session] — get Telegram link to a session's topic\n"
         "/kill — send Ctrl+C\n"
         "/snap — snapshot last 50 lines\n"
@@ -936,6 +937,63 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @owner_only
+async def cmd_switch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Switch current topic to route messages to a different session.
+    Usage: /switch            — show all sessions as buttons
+           /switch <session>  — switch this topic to that session
+    """
+    chat_id   = update.effective_chat.id
+    thread_id = update.message.message_thread_id
+
+    if not thread_id:
+        await update.message.reply_text("Must be used inside a topic.")
+        return
+
+    configs = get_configs()
+
+    if not context.args:
+        # Show all sessions as buttons (2 per row)
+        names = [c["session"] for c in configs]
+        if not names:
+            await update.message.reply_text("No sessions available.")
+            return
+        rows = [names[i:i+2] for i in range(0, len(names), 2)]
+        current = sessions.get((chat_id, thread_id), "—")
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                ("✓ " if n == current else "") + n,
+                callback_data=f"switch:{thread_id}:{n}"
+            ) for n in row]
+            for row in rows
+        ])
+        await update.message.reply_text(
+            f"Current: <b>{_esc(current)}</b>\nSwitch to:",
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+        return
+
+    target = context.args[0]
+    cfg = next((c for c in configs if c["session"] == target), None)
+    if not cfg:
+        await update.message.reply_text(f"Session <code>{_esc(target)}</code> not found.", parse_mode="HTML")
+        return
+
+    _do_switch(chat_id, thread_id, target, cfg)
+    await update.message.reply_text(f"Switched to <b>{_esc(target)}</b>.", parse_mode="HTML")
+
+
+def _do_switch(chat_id: int, thread_id: int, session: str, cfg: dict):
+    """Update in-memory routing so this topic now talks to `session`."""
+    # Remove old reverse mapping for this thread
+    old = sessions.get((chat_id, thread_id))
+    if old and session_to_thread.get(old) == (chat_id, thread_id):
+        del session_to_thread[old]
+    sessions[(chat_id, thread_id)] = session
+    session_to_thread[session] = (chat_id, thread_id)
+
+
+@owner_only
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -970,6 +1028,21 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except Exception:
             pass
+        return
+
+    if query.data.startswith("switch:"):
+        _, thread_id_str, target = query.data.split(":", 2)
+        thread_id = int(thread_id_str)
+        chat_id   = query.message.chat_id
+        cfg = next((c for c in get_configs() if c["session"] == target), None)
+        if cfg:
+            _do_switch(chat_id, thread_id, target, cfg)
+            try:
+                await query.edit_message_text(
+                    f"Switched to <b>{_esc(target)}</b>.", parse_mode="HTML"
+                )
+            except Exception:
+                pass
         return
 
     if not query.data.startswith("connect:"):
@@ -1171,6 +1244,7 @@ def main():
     app.add_handler(CommandHandler("snap",    cmd_snap))
     app.add_handler(CommandHandler("sessions",cmd_sessions))
     app.add_handler(CommandHandler("status",  cmd_status))
+    app.add_handler(CommandHandler("switch",  cmd_switch))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, handle_message))
 
