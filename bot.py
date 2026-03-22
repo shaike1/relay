@@ -903,28 +903,83 @@ async def cmd_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 AGENT_SKIP = {"relay", "tgbot", "clawdbot", "cliproxy", "claude-runner", "2"}
 
+def _load_teams() -> list[dict]:
+    """Return list of team configs from ~/.claude/teams/*/config.json"""
+    import glob as _glob
+    teams = []
+    for path in _glob.glob(os.path.expanduser("~/.claude/teams/*/config.json")):
+        try:
+            with open(path) as f:
+                teams.append(json.load(f))
+        except Exception:
+            pass
+    return teams
+
+
+def _active_panes() -> dict[str, str]:
+    """Return mapping of pane_id -> last few lines from all active tmux panes."""
+    r = subprocess.run(
+        ["tmux", "list-panes", "-a", "-F", "#{pane_id}"],
+        capture_output=True, text=True
+    )
+    return {p.strip() for p in r.stdout.splitlines() if p.strip()}
+
+
+def _capture_pane_id(pane_id: str) -> list[str]:
+    """Capture output from a tmux pane by global pane ID (e.g. %4)."""
+    r = subprocess.run(
+        ["tmux", "capture-pane", "-p", "-S", "-", "-t", pane_id],
+        capture_output=True, text=True
+    )
+    lines = r.stdout.splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return lines
+
+
 @owner_only
 async def cmd_agents(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show all running tmux sessions (team agents) with a short status snapshot."""
-    registered = {c["session"] for c in get_configs()}
-    all_tmux   = _all_tmux_sessions()
-    agents     = [s for s in all_tmux if s not in AGENT_SKIP]
+    """Show Claude team agents with live snapshots from their tmux panes."""
+    teams   = _load_teams()
+    active  = _active_panes()
 
-    if not agents:
-        await update.message.reply_text("No agents running.")
+    if not teams:
+        await update.message.reply_text("No Claude teams found in ~/.claude/teams/")
         return
 
-    for name in agents:
-        lines  = tmux_capture(name)
-        # Last 5 non-empty lines, ANSI stripped
-        clean  = [ANSI_RE.sub("", l).strip() for l in lines[-30:]]
-        clean  = [l for l in clean if l][-5:]
-        status = "\n".join(clean) or "(empty)"
-        tag    = "" if name in registered else " <i>(agent)</i>"
-        await update.message.reply_text(
-            f"<b>{_esc(name)}</b>{tag}\n<pre>{_esc(status)}</pre>",
-            parse_mode="HTML",
-        )
+    for team in teams:
+        name    = team.get("name") or team.get("leadAgentId", "unknown")
+        members = team.get("members", [])
+
+        header = f"<b>Team: {_esc(name)}</b> ({len(members)} agents)"
+        await update.message.reply_text(header, parse_mode="HTML")
+
+        for m in members:
+            agent_name = m.get("name", m.get("agentId", "?"))
+            pane_id    = m.get("tmuxPaneId", "")
+            agent_type = m.get("agentType", "")
+
+            if pane_id and pane_id in active:
+                lines  = _capture_pane_id(pane_id)
+                clean  = [ANSI_RE.sub("", l).strip() for l in lines[-30:]]
+                clean  = [l for l in clean if l][-5:]
+                status = "\n".join(clean) or "(empty)"
+                state  = "🟢"
+            elif pane_id == "in-process":
+                status = "(in-process, no pane)"
+                state  = "🔵"
+            elif pane_id:
+                status = "(pane gone)"
+                state  = "⚫"
+            else:
+                status = "(not started)"
+                state  = "⚪"
+
+            await update.message.reply_text(
+                f"{state} <b>{_esc(agent_name)}</b> <i>{_esc(agent_type)}</i>\n"
+                + (f"<pre>{_esc(status)}</pre>" if pane_id and pane_id in active else f"<i>{_esc(status)}</i>"),
+                parse_mode="HTML",
+            )
 
 
 @owner_only
