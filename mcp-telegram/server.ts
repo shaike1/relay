@@ -300,11 +300,11 @@ async function poll(): Promise<void> {
       for (const line of text.split('\n')) {
         if (!line.trim() || sentOne) continue
         try {
-          const entry = JSON.parse(line) as QueueEntry
-          const { text: msgText, user, message_id, ts, photo_path } = entry
+          const entry = JSON.parse(line) as QueueEntry & { force?: boolean }
+          const { text: msgText, user, message_id, ts, photo_path, force } = entry
 
-          // Skip already-delivered messages
-          if (message_id <= lastId) continue
+          // Skip already-delivered messages (unless force flag set, e.g. button clicks)
+          if (!force && message_id <= lastId) continue
 
           const isoTs = new Date(ts * 1000).toISOString()
 

@@ -1101,10 +1101,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         entry = {
             "text": label,
             "user": user,
-            "message_id": int(_time.time() * 1000),
+            "message_id": query.message.message_id,
             "thread_id": thread_id,
             "chat_id": query.message.chat_id,
             "ts": _time.time(),
+            "force": True,
         }
         write_queue(thread_id, entry, host)
         # Remove buttons from the message so it can't be clicked twice
