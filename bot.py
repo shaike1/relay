@@ -433,6 +433,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/restart_all [host] — restart all sessions (after settings changes)\n"
         "/model [name] — show or switch Claude model (opus/sonnet/haiku or full ID)\n"
         "/switch [session] — reroute this topic to a different session\n"
+        "/agents — show all running agents with status snapshot\n"
         "/link [session] — get Telegram link to a session's topic\n"
         "/kill — send Ctrl+C\n"
         "/snap — snapshot last 50 lines\n"
@@ -900,6 +901,32 @@ async def cmd_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
+AGENT_SKIP = {"relay", "tgbot", "clawdbot", "cliproxy", "claude-runner", "2"}
+
+@owner_only
+async def cmd_agents(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show all running tmux sessions (team agents) with a short status snapshot."""
+    registered = {c["session"] for c in get_configs()}
+    all_tmux   = _all_tmux_sessions()
+    agents     = [s for s in all_tmux if s not in AGENT_SKIP]
+
+    if not agents:
+        await update.message.reply_text("No agents running.")
+        return
+
+    for name in agents:
+        lines  = tmux_capture(name)
+        # Last 5 non-empty lines, ANSI stripped
+        clean  = [ANSI_RE.sub("", l).strip() for l in lines[-30:]]
+        clean  = [l for l in clean if l][-5:]
+        status = "\n".join(clean) or "(empty)"
+        tag    = "" if name in registered else " <i>(agent)</i>"
+        await update.message.reply_text(
+            f"<b>{_esc(name)}</b>{tag}\n<pre>{_esc(status)}</pre>",
+            parse_mode="HTML",
+        )
+
+
 @owner_only
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not sessions:
@@ -1254,6 +1281,7 @@ def main():
     app.add_handler(CommandHandler("sessions",cmd_sessions))
     app.add_handler(CommandHandler("status",  cmd_status))
     app.add_handler(CommandHandler("switch",  cmd_switch))
+    app.add_handler(CommandHandler("agents",  cmd_agents))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, handle_message))
 

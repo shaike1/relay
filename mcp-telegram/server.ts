@@ -46,6 +46,28 @@ if (!TOKEN || !CHAT_ID || !THREAD_ID) {
 
 const BASE = `https://api.telegram.org/bot${TOKEN}`
 
+// ── auto-code wrapping ────────────────────────────────────────────────────────
+
+/** Wrap copyable patterns (URLs, tokens) in <code> tags, skipping existing <code>/<pre> blocks. */
+function autoCode(html: string): string {
+  // Split by ALL HTML tags, track whether we're inside <code> or <pre>
+  const segments = html.split(/(<[^>]*>)/g)
+  let inProtected = 0
+
+  return segments.map(seg => {
+    if (seg.startsWith('<')) {
+      if (/^<(code|pre)\b/i.test(seg))        inProtected++
+      else if (/^<\/(code|pre)\b/i.test(seg)) inProtected = Math.max(0, inProtected - 1)
+      return seg
+    }
+    if (inProtected > 0) return seg
+
+    // Wrap bare URLs
+    seg = seg.replace(/https?:\/\/[^\s,<>"'()]+/g, m => `<code>${m}</code>`)
+    return seg
+  }).join('')
+}
+
 // ── telegram helpers ──────────────────────────────────────────────────────────
 
 async function tg(method: string, body: Record<string, unknown> = {}): Promise<unknown> {
@@ -58,6 +80,7 @@ async function tg(method: string, body: Record<string, unknown> = {}): Promise<u
 }
 
 async function sendMessage(text: string, replyTo?: number, buttons?: string[][]): Promise<number[]> {
+  text = autoCode(text)
   const chunks = text.match(/.{1,4000}/gs) ?? [text]
   const ids: number[] = []
   for (let i = 0; i < chunks.length; i++) {
