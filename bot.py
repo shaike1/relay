@@ -359,6 +359,55 @@ def _read_last_response(thread_id: int, host: str | None) -> float:
         return 0.0
 
 
+LOGIN_PATTERNS = [
+    "press enter to open claude.ai",
+    "to sign in",
+    "sign in to claude",
+    "oauth",
+    "open claude.ai in your browser",
+]
+login_alerted: dict[str, float] = {}  # session -> last alert time
+
+
+def _check_login_prompt(session: str, host, chat_id: int, thread_id: int, context) -> None:
+    """Detect login prompt in tmux pane and alert+restart the session."""
+    try:
+        lines = tmux_capture(session, host)
+        text = " ".join(ANSI_RE.sub("", l).lower() for l in lines[-10:])
+        if any(p in text for p in LOGIN_PATTERNS):
+            # Only alert once per 30 minutes per session
+            now = time.time()
+            if now - login_alerted.get(session, 0) < 1800:
+                return
+            login_alerted[session] = now
+            logger.warning(f"Login prompt detected in '{session}' — restarting")
+            # Restart session by pressing q (loop will restart Claude)
+            tmux_send(session, "q", host)
+            # Alert in Telegram
+            asyncio.ensure_future(context.bot.send_message(
+                chat_id=chat_id,
+                message_thread_id=thread_id,
+                text=f"<b>Login prompt detected in {session}</b> — restarting automatically.\nIf it persists, run /login.",
+                parse_mode="HTML"
+            ))
+    except Exception:
+        pass
+
+
+async def keepalive_ping(context: ContextTypes.DEFAULT_TYPE):
+    """Send a harmless ping to each session every 6h to keep OAuth token alive."""
+    configs = {cfg["session"]: cfg for cfg in get_configs()}
+    for (chat_id, thread_id), session in list(sessions.items()):
+        cfg  = configs.get(session, {})
+        host = cfg.get("host")
+        try:
+            if tmux_exists(session, host):
+                tmux_send(session, "", host)  # empty enter — triggers any pending UI
+        except Exception:
+            pass
+    logger.info("Keep-alive ping sent to all sessions")
+
+
 async def poll_output(context: ContextTypes.DEFAULT_TYPE):
     configs = {cfg["session"]: cfg for cfg in get_configs()}
 
@@ -373,6 +422,9 @@ async def poll_output(context: ContextTypes.DEFAULT_TYPE):
                 provision_session(session, path, host, model=cfg.get("model"))
                 line_counts[session] = len(tmux_capture(session, host))
                 continue
+
+            # Check for login prompt — Claude needs re-auth
+            _check_login_prompt(session, host, chat_id, thread_id, context)
 
             # Skip poll_output for MCP sessions — Claude sends replies via send_message tool
             # But send periodic status snapshots while the session is actively working.
@@ -1310,6 +1362,7 @@ async def debug_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def post_init(app: Application):
     load_sessions()
     app.job_queue.run_repeating(poll_output, interval=POLL_INTERVAL, first=2)
+    app.job_queue.run_repeating(keepalive_ping, interval=6 * 3600, first=3600)
 
 
 def main():

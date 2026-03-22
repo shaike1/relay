@@ -1,7 +1,8 @@
 #!/bin/bash
 # Relay self-monitor on .7 — attempts restart and sends direct Telegram alert
 
-BOT_TOKEN="YOUR_BOT_TOKEN"
+source /root/relay/.env
+BOT_TOKEN="$TELEGRAM_BOT_TOKEN"
 CHAT_ID="-1003865448408"
 THREAD_ID="183"
 ALERT_FILE="/tmp/relay-alert-sent"

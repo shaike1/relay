@@ -285,6 +285,7 @@ async function saveLastId(id: number): Promise<void> {
 async function poll(): Promise<void> {
   // Deliver any message with message_id > lastDeliveredId, one per poll cycle
   let lastId = await loadLastId()
+  const deliveredForce = new Set<number>()  // track force entries already delivered this session
 
   // Brief pause to let the MCP handshake complete before first notification
   await Bun.sleep(1000)
@@ -303,8 +304,9 @@ async function poll(): Promise<void> {
           const entry = JSON.parse(line) as QueueEntry & { force?: boolean }
           const { text: msgText, user, message_id, ts, photo_path, force } = entry
 
-          // Skip already-delivered messages (unless force flag set, e.g. button clicks)
-          if (!force && message_id <= lastId) continue
+          // Skip already-delivered messages
+          if (message_id <= lastId && !force) continue
+          if (force && deliveredForce.has(message_id)) continue
 
           const isoTs = new Date(ts * 1000).toISOString()
 
@@ -329,8 +331,13 @@ async function poll(): Promise<void> {
             },
           })
 
-          lastId = message_id
-          await saveLastId(lastId)
+          // Only advance lastId forward — force entries with old IDs must not rewind it
+          if (message_id > lastId) {
+            lastId = message_id
+            await saveLastId(lastId)
+          } else if (force) {
+            deliveredForce.add(message_id)
+          }
           sentOne = true  // send only one per cycle; next will be picked up on next poll
 
           process.stderr.write(`[telegram] notification sent: ${user}: ${msgText}\n`)
