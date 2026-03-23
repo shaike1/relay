@@ -294,7 +294,7 @@ async function saveLastId(id: number): Promise<void> {
 async function poll(): Promise<void> {
   // Deliver any message with message_id > lastDeliveredId, one per poll cycle
   let lastId = await loadLastId()
-  const deliveredForce = new Set<number>()  // track force entries already delivered this session
+  const deliveredForce = new Map<number, number>()  // message_id → delivery timestamp (ms)
 
   // Sanity-check lastId against queue on startup:
   // If the most recently received message (by ts) has a lower ID than lastId,
@@ -341,7 +341,7 @@ async function poll(): Promise<void> {
 
           // Skip already-delivered messages
           if (message_id <= lastId && !force) continue
-          if (force && deliveredForce.has(message_id)) continue
+          if (force && deliveredForce.has(message_id) && Date.now() - deliveredForce.get(message_id)! < 15_000) continue
 
           const isoTs = new Date(ts * 1000).toISOString()
 
@@ -371,7 +371,7 @@ async function poll(): Promise<void> {
             lastId = message_id
             await saveLastId(lastId)
           } else if (force) {
-            deliveredForce.add(message_id)
+            deliveredForce.set(message_id, Date.now())
           }
           sentOne = true  // send only one per cycle; next will be picked up on next poll
 

@@ -365,31 +365,67 @@ LOGIN_PATTERNS = [
     "sign in to claude",
     "oauth",
     "open claude.ai in your browser",
+    "please run /login",
+    "run /login",
+    "api error: 401",
+    "login successful",  # detect completed login so we can clear awaiting state
 ]
 login_alerted: dict[str, float] = {}  # session -> last alert time
+# Maps (chat_id, thread_id) -> session waiting for OAuth code
+login_awaiting_code: dict[tuple[int, int], str] = {}
+
+
+async def _auto_login(session: str, host, chat_id: int, thread_id: int, context) -> None:
+    """Trigger /login in tmux, extract the OAuth URL, and send it to Telegram."""
+    import re as _re
+    try:
+        # Clear any partial input then send /login
+        tmux_send_ctrl(session, "C-u", host)
+        await asyncio.sleep(0.3)
+        tmux_send(session, "/login", host)
+        await asyncio.sleep(2)
+        # Select option 1 — Claude account with subscription
+        tmux_send(session, "1", host)
+        await asyncio.sleep(7)
+        # Capture pane and look for the OAuth URL
+        lines = tmux_capture(session, host)
+        pane_text = " ".join(ANSI_RE.sub("", l) for l in lines)
+        url_match = _re.search(r'https://claude\.ai/oauth/authorize\S+', pane_text)
+        if url_match:
+            url = url_match.group(0).rstrip(")")
+            login_awaiting_code[(chat_id, thread_id)] = session
+            await context.bot.send_message(
+                chat_id=chat_id,
+                message_thread_id=thread_id,
+                text=(
+                    f"<b>{session}</b> צריך re-login (OAuth פג תוקף).\n\n"
+                    f"פתח את הקישור ושלח לי את הקוד:\n<code>{url}</code>"
+                ),
+                parse_mode="HTML"
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                message_thread_id=thread_id,
+                text=f"<b>{session}</b> צריך re-login אבל לא הצלחתי לחלץ URL. בצע /login ידנית.",
+                parse_mode="HTML"
+            )
+    except Exception as e:
+        logger.error(f"_auto_login failed for {session}: {e}")
 
 
 def _check_login_prompt(session: str, host, chat_id: int, thread_id: int, context) -> None:
-    """Detect login prompt in tmux pane and alert+restart the session."""
+    """Detect login prompt in tmux pane and trigger auto-login flow."""
     try:
         lines = tmux_capture(session, host)
-        text = " ".join(ANSI_RE.sub("", l).lower() for l in lines[-10:])
-        if any(p in text for p in LOGIN_PATTERNS):
-            # Only alert once per 30 minutes per session
+        text = " ".join(ANSI_RE.sub("", l).lower() for l in lines[-15:])
+        if any(p in text for p in LOGIN_PATTERNS[:7]):  # exclude "login successful"
             now = time.time()
             if now - login_alerted.get(session, 0) < 1800:
                 return
             login_alerted[session] = now
-            logger.warning(f"Login prompt detected in '{session}' — restarting")
-            # Restart session by pressing q (loop will restart Claude)
-            tmux_send(session, "q", host)
-            # Alert in Telegram
-            asyncio.ensure_future(context.bot.send_message(
-                chat_id=chat_id,
-                message_thread_id=thread_id,
-                text=f"<b>Login prompt detected in {session}</b> — restarting automatically.\nIf it persists, run /login.",
-                parse_mode="HTML"
-            ))
+            logger.warning(f"Login needed in '{session}' — starting auto-login")
+            asyncio.ensure_future(_auto_login(session, host, chat_id, thread_id, context))
     except Exception:
         pass
 
@@ -1138,6 +1174,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
+    logger.info(f"Callback: data={query.data!r} from={query.from_user.id} msg_id={query.message.message_id}")
+
     if query.data == "noop":
         return
 
@@ -1159,12 +1197,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "ts": _time.time(),
             "force": True,
         }
+        logger.info(f"Button click: thread={thread_id} host={host!r} label={label!r} msg_id={entry['message_id']}")
         write_queue(thread_id, entry, host)
-        # Remove buttons from the message so it can't be clicked twice
-        try:
-            await query.edit_message_reply_markup(reply_markup=None)
-        except Exception:
-            pass
+        logger.info(f"Button click written to queue for thread={thread_id}")
+        # Keep buttons visible so the user can click them again
         # Echo the selection back into the chat so it's visible
         try:
             await query.message.reply_text(
@@ -1287,6 +1323,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text or update.message.caption or ""
     photo_path = None
+
+    # Check if this is an OAuth code for a pending login
+    import re as _re
+    if text and _re.match(r'^[A-Za-z0-9_\-]{20,}#[A-Za-z0-9_\-]{20,}$', text.strip()):
+        waiting_session = login_awaiting_code.get((chat_id, thread_id))
+        if waiting_session:
+            waiting_cfg  = next((c for c in get_configs() if c.get("session") == waiting_session), {})
+            waiting_host = waiting_cfg.get("host")
+            tmux_send(waiting_session, text.strip(), waiting_host)
+            del login_awaiting_code[(chat_id, thread_id)]
+            login_alerted.pop(waiting_session, None)
+            logger.info(f"Pasted OAuth code into session '{waiting_session}'")
+            return
 
     if update.message.photo:
         # Download highest-res photo to /tmp/ with retry
