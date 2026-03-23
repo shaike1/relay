@@ -16,6 +16,8 @@ RELAY_DIR    = Path(__file__).parent
 SESSIONS     = RELAY_DIR / "sessions.json"
 ENV_FILE     = Path.home() / ".claude" / "channels" / "telegram" / ".env"
 LOG_FILE     = Path("/tmp/relay-watchdog.log")
+ALERT_STATE  = Path("/tmp/relay-watchdog-alerted.json")
+ALERT_COOLDOWN = 1800  # seconds (30 min) between alerts per session
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -145,6 +147,12 @@ def main():
     relay_cfg = next((c for c in configs if c.get("session") == "relay"), {})
     alert_thread = str(relay_cfg.get("thread_id", ""))
 
+    # Load per-session alert timestamps
+    try:
+        alert_times: dict = json.loads(ALERT_STATE.read_text()) if ALERT_STATE.exists() else {}
+    except Exception:
+        alert_times = {}
+
     recovered = []
 
     for cfg in configs:
@@ -190,11 +198,20 @@ def main():
 
         recovered.append(session)
 
+    now = time.time()
     if recovered and token and chat_id and alert_thread:
-        sessions_list = ", ".join(f"<code>{s}</code>" for s in recovered)
-        send_alert(token, chat_id, alert_thread,
-                   f"🔄 Watchdog auto-recovered: {sessions_list}")
-        log(f"Alert sent for: {recovered}")
+        # Only alert for sessions not alerted in the last 30 min
+        to_alert = [s for s in recovered if now - alert_times.get(s, 0) >= ALERT_COOLDOWN]
+        if to_alert:
+            sessions_list = ", ".join(f"<code>{s}</code>" for s in to_alert)
+            send_alert(token, chat_id, alert_thread,
+                       f"🔄 Watchdog auto-recovered: {sessions_list}")
+            for s in to_alert:
+                alert_times[s] = now
+            ALERT_STATE.write_text(json.dumps(alert_times))
+            log(f"Alert sent for: {to_alert}")
+        else:
+            log(f"Recovered {recovered} but all within cooldown — no alert sent")
 
     if not recovered:
         log("All sessions healthy.")
