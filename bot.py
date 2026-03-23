@@ -1172,7 +1172,10 @@ def _do_switch(chat_id: int, thread_id: int, session: str, cfg: dict):
 @owner_only
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        await query.answer()
+    except Exception:
+        pass  # TimedOut or invalid query — still process the click
 
     logger.info(f"Callback: data={query.data!r} from={query.from_user.id} msg_id={query.message.message_id}")
 
