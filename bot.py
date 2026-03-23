@@ -216,7 +216,7 @@ def latest_claude_session(path: str, host: str | None = None) -> str | None:
         return files[0].replace(".jsonl", "") if files else None
 
 
-def write_mcp_json(path: str, thread_id: int, host: str | None = None):
+def write_mcp_json(path: str, thread_id: int, host: str | None = None, session: str | None = None):
     """Write .mcp.json into the project folder so Claude starts with the Telegram MCP server."""
     mcp_config = {
         "mcpServers": {
@@ -226,7 +226,8 @@ def write_mcp_json(path: str, thread_id: int, host: str | None = None):
                 "env": {
                     "TELEGRAM_THREAD_ID": str(thread_id),
                     "TELEGRAM_BOT_TOKEN": TOKEN,
-                    "TELEGRAM_CHAT_ID": str(GROUP_CHAT_ID)
+                    "TELEGRAM_CHAT_ID": str(GROUP_CHAT_ID),
+                    **({"SESSION_NAME": session} if session else {}),
                 }
             }
         }
@@ -250,7 +251,7 @@ def provision_session(session: str, path: str, host: str | None = None, thread_i
 
     # Write .mcp.json so Claude loads the Telegram channel
     if thread_id:
-        write_mcp_json(path, thread_id, host)
+        write_mcp_json(path, thread_id, host, session=session)
 
     # Copy CLAUDE.md template so Claude knows to respond via send_message (not terminal)
     claude_md_src = os.path.join(os.path.dirname(__file__), "CLAUDE_TEMPLATE.md")

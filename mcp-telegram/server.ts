@@ -188,6 +188,23 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
+    {
+      name: 'list_peers',
+      description: 'List all other active Claude sessions in the relay. Shows session name, host, path, and when they last sent a message.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    {
+      name: 'message_peer',
+      description: 'Send a message directly to another Claude session in the relay (peer-to-peer). The message will appear as an incoming user message in that session.',
+      inputSchema: {
+        type: 'object',
+        required: ['session', 'text'],
+        properties: {
+          session: { type: 'string', description: 'Target session name (from list_peers)' },
+          text:    { type: 'string', description: 'Message to send to the peer session' },
+        },
+      },
+    },
   ],
 }))
 
@@ -222,6 +239,59 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       `[${m.ts}] ${m.user} (id:${m.message_id}): ${m.text}`
     )
     return { content: [{ type: 'text', text: lines.join('\n') || 'No messages yet.' }] }
+  }
+
+  if (name === 'list_peers') {
+    try {
+      const sessionsPath = new URL('../../sessions.json', import.meta.url).pathname
+      const sessions: Array<{ session: string; thread_id: number; host?: string; path?: string }> =
+        JSON.parse(Bun.file(sessionsPath).toString())
+      const lines: string[] = []
+      for (const s of sessions) {
+        if (s.thread_id === THREAD_ID) continue  // skip self
+        const lastSentFile = `/tmp/tg-last-sent-${s.thread_id}`
+        let lastActive = 'unknown'
+        try {
+          const ts = parseFloat(await Bun.file(lastSentFile).text())
+          if (!isNaN(ts)) {
+            const ago = Math.round((Date.now() / 1000 - ts) / 60)
+            lastActive = ago < 1 ? 'just now' : `${ago}m ago`
+          }
+        } catch {}
+        const host = s.host ?? 'local'
+        lines.push(`${s.session} (${host}) — last active: ${lastActive}`)
+      }
+      return { content: [{ type: 'text', text: lines.join('\n') || 'No other sessions.' }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error reading sessions: ${e}` }] }
+    }
+  }
+
+  if (name === 'message_peer') {
+    const targetSession = String(args?.session ?? '')
+    const text = String(args?.text ?? '')
+    try {
+      const sessionsPath = new URL('../../sessions.json', import.meta.url).pathname
+      const sessions: Array<{ session: string; thread_id: number; host?: string }> =
+        JSON.parse(Bun.file(sessionsPath).toString())
+      const target = sessions.find(s => s.session === targetSession)
+      if (!target) return { content: [{ type: 'text', text: `Session '${targetSession}' not found. Use list_peers to see available sessions.` }] }
+      if (target.host) return { content: [{ type: 'text', text: `Session '${targetSession}' is on a remote host (${target.host}) — peer messaging only supported for local sessions.` }] }
+
+      const queueFile = `/tmp/tg-queue-${target.thread_id}.jsonl`
+      const entry = JSON.stringify({
+        text,
+        user: `peer:${process.env.SESSION_NAME ?? `session-${THREAD_ID}`}`,
+        message_id: Date.now(),
+        thread_id: target.thread_id,
+        ts: Date.now() / 1000,
+        force: true,
+      })
+      await Bun.write(queueFile, entry + '\n', { append: true })
+      return { content: [{ type: 'text', text: `Message sent to '${targetSession}'.` }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error sending to peer: ${e}` }] }
+    }
   }
 
   return { content: [{ type: 'text', text: `Unknown tool: ${name}` }] }
