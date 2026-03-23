@@ -273,7 +273,16 @@ const STATE_FILE = `/tmp/tg-queue-${THREAD_ID}.state`
 async function loadLastId(): Promise<number> {
   try {
     const f = Bun.file(STATE_FILE)
-    if (await f.exists()) return parseInt(await f.text(), 10) || 0
+    if (await f.exists()) {
+      const id = parseInt(await f.text(), 10) || 0
+      // Unix-timestamp IDs (> 1e10) are corrupted — reset
+      if (id > 1e10) {
+        process.stderr.write(`[telegram] state ${id} looks like a Unix timestamp, resetting to 0\n`)
+        await saveLastId(0)
+        return 0
+      }
+      return id
+    }
   } catch {}
   return 0
 }
@@ -286,6 +295,32 @@ async function poll(): Promise<void> {
   // Deliver any message with message_id > lastDeliveredId, one per poll cycle
   let lastId = await loadLastId()
   const deliveredForce = new Set<number>()  // track force entries already delivered this session
+
+  // Sanity-check lastId against queue on startup:
+  // If the most recently received message (by ts) has a lower ID than lastId,
+  // lastId is stale (old test messages or session reset) — rewind to just before it.
+  try {
+    const qFile = Bun.file(QUEUE_FILE)
+    if (await qFile.exists()) {
+      const qText = await qFile.text()
+      const entries = qText.split('\n')
+        .filter(l => l.trim())
+        .map(l => { try { return JSON.parse(l) as QueueEntry } catch { return null } })
+        .filter((e): e is QueueEntry => e !== null && e.ts < 1e12)
+      if (entries.length > 0) {
+        const mostRecent = entries.reduce((a, b) => b.ts > a.ts ? b : a)
+        if (lastId > mostRecent.message_id && lastId > mostRecent.message_id + 100) {
+          process.stderr.write(
+            `[telegram] stale lastId=${lastId}, most recent msg id=${mostRecent.message_id} — resetting\n`
+          )
+          lastId = Math.max(0, mostRecent.message_id - 1)
+          await saveLastId(lastId)
+        }
+      }
+    }
+  } catch (e) {
+    process.stderr.write(`[telegram] state sanity check error: ${e}\n`)
+  }
 
   // Brief pause to let the MCP handshake complete before first notification
   await Bun.sleep(1000)
