@@ -252,7 +252,17 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         const lastSentFile = `/tmp/tg-last-sent-${s.thread_id}`
         let lastActive = 'unknown'
         try {
-          const ts = parseFloat(await Bun.file(lastSentFile).text())
+          let raw: string
+          if (s.host) {
+            const proc = Bun.spawn(
+              ['ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=3',
+               s.host, `cat ${lastSentFile} 2>/dev/null`]
+            )
+            raw = await new Response(proc.stdout).text()
+          } else {
+            raw = await Bun.file(lastSentFile).text()
+          }
+          const ts = parseFloat(raw.trim())
           if (!isNaN(ts)) {
             const ago = Math.round((Date.now() / 1000 - ts) / 60)
             lastActive = ago < 1 ? 'just now' : `${ago}m ago`
@@ -276,7 +286,6 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         JSON.parse(Bun.file(sessionsPath).toString())
       const target = sessions.find(s => s.session === targetSession)
       if (!target) return { content: [{ type: 'text', text: `Session '${targetSession}' not found. Use list_peers to see available sessions.` }] }
-      if (target.host) return { content: [{ type: 'text', text: `Session '${targetSession}' is on a remote host (${target.host}) — peer messaging only supported for local sessions.` }] }
 
       const queueFile = `/tmp/tg-queue-${target.thread_id}.jsonl`
       const entry = JSON.stringify({
@@ -287,8 +296,20 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         ts: Date.now() / 1000,
         force: true,
       })
-      await Bun.write(queueFile, entry + '\n', { append: true })
-      return { content: [{ type: 'text', text: `Message sent to '${targetSession}'.` }] }
+
+      if (target.host) {
+        // Remote session — write via SSH
+        const proc = Bun.spawn(
+          ['ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=5',
+           target.host, `cat >> ${queueFile}`],
+          { stdin: new TextEncoder().encode(entry + '\n') }
+        )
+        await proc.exited
+        if (proc.exitCode !== 0) throw new Error(`SSH exit code ${proc.exitCode}`)
+      } else {
+        await Bun.write(queueFile, entry + '\n', { append: true })
+      }
+      return { content: [{ type: 'text', text: `Message sent to '${targetSession}' (${target.host ?? 'local'}).` }] }
     } catch (e) {
       return { content: [{ type: 'text', text: `Error sending to peer: ${e}` }] }
     }
