@@ -1,7 +1,7 @@
 #!/bin/bash
 # Disk monitor — alerts via Telegram if usage > 85%
 
-BOT_TOKEN="8092810636:AAHME3zHBRPUJjj3OhMXQOZ5qOtsE_CEyFo"
+BOT_TOKEN="8092810636:AAEbja7zpCmi_bSAMyazEGMvC89TclqbsUQ"
 CHAT_ID="-1003865448408"
 THREAD_ID="213"
 THRESHOLD=85
