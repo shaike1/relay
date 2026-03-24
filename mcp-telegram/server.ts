@@ -475,6 +475,25 @@ async function poll(): Promise<void> {
   // Brief pause to let the MCP handshake complete before first notification
   await Bun.sleep(1000)
 
+  // Inject peer list as a system notification so Claude knows available sessions on startup
+  try {
+    const sessionsPath = new URL('../../sessions.json', import.meta.url).pathname
+    const allSessions: Array<{ session: string; thread_id: number; host?: string }> =
+      JSON.parse(Bun.file(sessionsPath).toString())
+    const peers = allSessions.filter(s => s.thread_id !== THREAD_ID).map(s => s.session)
+    if (peers.length > 0) {
+      const selfName = process.env.SESSION_NAME ?? `session-${THREAD_ID}`
+      server.notification({
+        method: 'notifications/message',
+        params: {
+          level: 'info',
+          data: `[relay] You are session "${selfName}". Available peer sessions: ${peers.join(', ')}. ` +
+                `Use message_peer(session, text) to contact them, or include @session-name in send_message to auto-route.`,
+        },
+      })
+    }
+  } catch {}
+
   while (true) {
     try {
       const file = Bun.file(QUEUE_FILE)
