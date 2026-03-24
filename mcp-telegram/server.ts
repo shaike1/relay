@@ -291,7 +291,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const entry = JSON.stringify({
         text,
         user: `peer:${process.env.SESSION_NAME ?? `session-${THREAD_ID}`}`,
-        message_id: Date.now(),
+        message_id: -Date.now(),  // negative so it never advances lastId (peer msgs are force=true)
         thread_id: target.thread_id,
         ts: Date.now() / 1000,
         force: true,
@@ -366,8 +366,8 @@ async function loadLastId(): Promise<number> {
     const f = Bun.file(STATE_FILE)
     if (await f.exists()) {
       const id = parseInt(await f.text(), 10) || 0
-      // Unix-timestamp IDs (> 1e10) are corrupted — reset
-      if (id > 1e10) {
+      // Unix-timestamp IDs (> 1e8) are corrupted — current epoch is ~1.77e9, Telegram msg IDs stay well below 1e8
+      if (id > 1e8) {
         process.stderr.write(`[telegram] state ${id} looks like a Unix timestamp, resetting to 0\n`)
         await saveLastId(0)
         return 0
