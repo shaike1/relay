@@ -423,7 +423,8 @@ async function poll(): Promise<void> {
         try {
           const e = JSON.parse(line) as QueueEntry & { force?: boolean }
           if (e.force && e.message_id <= lastId) {
-            deliveredForce.set(e.message_id, Date.now())
+            // Use Infinity so Date.now() - Infinity = -Infinity < 15_000 always → never re-delivered
+            deliveredForce.set(e.message_id, Infinity)
           }
         } catch {}
       }
