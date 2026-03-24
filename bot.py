@@ -1309,7 +1309,6 @@ def write_queue(thread_id: int, message: dict, host: str | None = None):
             f.write(entry + "\n")
 
 
-@owner_only
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id   = update.effective_chat.id
     thread_id = update.message.message_thread_id
