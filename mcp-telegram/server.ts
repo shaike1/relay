@@ -413,6 +413,23 @@ async function poll(): Promise<void> {
     process.stderr.write(`[telegram] state sanity check error: ${e}\n`)
   }
 
+  // Pre-populate deliveredForce with all force entries that are already behind lastId.
+  // Without this, every server restart would re-deliver old button clicks to Claude.
+  try {
+    const qFile = Bun.file(QUEUE_FILE)
+    if (await qFile.exists()) {
+      for (const line of (await qFile.text()).split('\n')) {
+        if (!line.trim()) continue
+        try {
+          const e = JSON.parse(line) as QueueEntry & { force?: boolean }
+          if (e.force && e.message_id <= lastId) {
+            deliveredForce.set(e.message_id, Date.now())
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+
   // Brief pause to let the MCP handshake complete before first notification
   await Bun.sleep(1000)
 
