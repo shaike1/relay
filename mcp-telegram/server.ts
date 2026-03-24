@@ -422,8 +422,9 @@ async function poll(): Promise<void> {
         if (!line.trim()) continue
         try {
           const e = JSON.parse(line) as QueueEntry & { force?: boolean }
-          if (e.force && e.message_id <= lastId) {
+          if (e.force && e.message_id < lastId) {
             // Use Infinity so Date.now() - Infinity = -Infinity < 15_000 always → never re-delivered
+            // Use < not <= so force msgs at exactly lastId can still be re-delivered after restart
             deliveredForce.set(e.message_id, Infinity)
           }
         } catch {}
@@ -475,12 +476,14 @@ async function poll(): Promise<void> {
             },
           })
 
-          // Only advance lastId forward — force entries with old IDs must not rewind it
-          if (message_id > lastId) {
+          // Force messages: always track in deliveredForce; never advance lastId
+          // (their IDs reuse the button-message ID, not sequential message IDs)
+          if (force) {
+            deliveredForce.set(message_id, Date.now())
+          } else if (message_id > lastId) {
+            // Regular messages advance lastId
             lastId = message_id
             await saveLastId(lastId)
-          } else if (force) {
-            deliveredForce.set(message_id, Date.now())
           }
           sentOne = true  // send only one per cycle; next will be picked up on next poll
 
