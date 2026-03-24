@@ -324,9 +324,12 @@ def load_sessions():
         thread_id = cfg["thread_id"]
         session   = cfg["session"]
         host      = cfg.get("host")
+        path      = cfg.get("path", "/root")
         key       = (GROUP_CHAT_ID, thread_id)
         sessions[key] = session
         session_to_thread[session] = key
+        # Always ensure .mcp.json exists with correct thread_id
+        write_mcp_json(path, thread_id, host, session=session)
         if tmux_exists(session, host):
             line_counts[session] = len(tmux_capture(session, host))
         logger.info(f"Loaded: topic {thread_id} -> '{session}' on {host or 'local'}")
@@ -456,7 +459,7 @@ async def poll_output(context: ContextTypes.DEFAULT_TYPE):
         try:
             if not tmux_exists(session, host):
                 logger.warning(f"Session '{session}' gone — reprovisioning")
-                provision_session(session, path, host, model=cfg.get("model"))
+                provision_session(session, path, host, thread_id=thread_id, model=cfg.get("model"))
                 line_counts[session] = len(tmux_capture(session, host))
                 continue
 
