@@ -1194,6 +1194,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         import time as _time
         # Look up host for this thread (handles remote sessions)
         cfg  = next((c for c in get_configs() if c.get("thread_id") == thread_id), {})
+        # Per-topic access control
+        uid = query.from_user.id
+        allowed = cfg.get("allowed_users")
+        if uid != OWNER_ID and (allowed is None or uid not in allowed):
+            logger.warning(f"Blocked button click from user_id={uid} on thread={thread_id}")
+            return
         host = cfg.get("host")
         entry = {
             "text": label,
@@ -1320,6 +1326,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cfg  = next((c for c in get_configs() if c.get("session") == session), {})
     host = cfg.get("host")
     path = cfg.get("path", "/root")
+
+    # Per-topic access control: if "allowed_users" is set, only those user IDs may interact
+    uid = update.effective_user.id if update.effective_user else None
+    allowed = cfg.get("allowed_users")  # list of Telegram user IDs, or null = owner only
+    if uid != OWNER_ID:
+        if allowed is None or uid not in allowed:
+            logger.warning(f"Blocked user_id={uid} from session '{session}' (not in allowed_users)")
+            return
 
     # Check if session has .mcp.json (local or remote)
     mcp_json = f"{path}/.mcp.json"
