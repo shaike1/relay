@@ -212,13 +212,53 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args } = req.params
 
   if (name === 'send_message') {
+    const text = String(args?.text ?? '')
     const ids = await sendMessage(
-      String(args?.text ?? ''),
+      text,
       args?.reply_to as number | undefined,
       args?.buttons as string[][] | undefined,
     )
     // Write response timestamp so the relay bot knows Claude replied
     void Bun.write(`/tmp/tg-last-sent-${THREAD_ID}`, String(Date.now() / 1000))
+
+    // Auto-route @mentions to peer sessions
+    // e.g. "@itops-dev can you check the Docker setup?" → forwarded to itops-dev session
+    const mentions = [...text.matchAll(/@([\w-]+)/g)].map(m => m[1])
+    if (mentions.length > 0) {
+      try {
+        const sessionsPath = new URL('../../sessions.json', import.meta.url).pathname
+        const sessions: Array<{ session: string; thread_id: number; host?: string }> =
+          JSON.parse(Bun.file(sessionsPath).toString())
+        const selfName = process.env.SESSION_NAME ?? `session-${THREAD_ID}`
+        for (const mention of mentions) {
+          const target = sessions.find(s => s.session === mention)
+          if (!target || target.thread_id === THREAD_ID) continue
+          const entry = JSON.stringify({
+            text,
+            user: `peer:${selfName}`,
+            message_id: -Date.now(),
+            thread_id: target.thread_id,
+            ts: Date.now() / 1000,
+            force: true,
+          })
+          const queueFile = `/tmp/tg-queue-${target.thread_id}.jsonl`
+          if (target.host) {
+            const proc = Bun.spawn(
+              ['ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=5',
+               target.host, `cat >> ${queueFile}`],
+              { stdin: new TextEncoder().encode(entry + '\n') }
+            )
+            await proc.exited
+          } else {
+            await Bun.write(queueFile, entry + '\n', { append: true })
+          }
+          process.stderr.write(`[telegram] auto-routed @${mention} mention to peer session\n`)
+        }
+      } catch (e) {
+        process.stderr.write(`[telegram] @mention routing error: ${e}\n`)
+      }
+    }
+
     return { content: [{ type: 'text', text: `Sent. message_ids: ${ids.join(', ')}` }] }
   }
 
