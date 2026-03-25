@@ -103,8 +103,12 @@ def ssh_prefix(host: str | None) -> list[str]:
     return []
 
 
-def run_cmd(cmd: list[str], host: str | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(ssh_prefix(host) + cmd, capture_output=True, text=True)
+def run_cmd(cmd: list[str], host: str | None = None, timeout: int = 5) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(ssh_prefix(host) + cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        logger.warning(f"run_cmd timeout ({timeout}s): {cmd} host={host}")
+        return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr="timeout")
 
 
 def tmux_exists(session: str, host: str | None = None) -> bool:
@@ -112,7 +116,7 @@ def tmux_exists(session: str, host: str | None = None) -> bool:
 
 
 def tmux_capture(session: str, host: str | None = None) -> list[str]:
-    r = run_cmd(["tmux", "capture-pane", "-p", "-S", "-", "-t", session], host)
+    r = run_cmd(["tmux", "capture-pane", "-p", "-J", "-S", "-", "-t", session], host)
     lines = r.stdout.splitlines()
     while lines and not lines[-1].strip():
         lines.pop()
@@ -391,19 +395,37 @@ async def _auto_login(session: str, host, chat_id: int, thread_id: int, context)
         # Select option 1 — Claude account with subscription
         tmux_send(session, "1", host)
         await asyncio.sleep(7)
-        # Capture pane and look for the OAuth URL
+        # Capture pane and reconstruct the OAuth URL (may be hard-wrapped across lines)
         lines = tmux_capture(session, host)
-        pane_text = " ".join(ANSI_RE.sub("", l) for l in lines)
-        url_match = _re.search(r'https://claude\.ai/oauth/authorize\S+', pane_text)
-        if url_match:
-            url = url_match.group(0).rstrip(")")
+        clean_lines = [ANSI_RE.sub("", l) for l in lines]
+        url = None
+        # Scan from the bottom — latest URL wins (avoids stale scrollback matches)
+        for i in range(len(clean_lines) - 1, -1, -1):
+            stripped = clean_lines[i].strip()
+            m = _re.match(r'(https://claude\.ai/(?:oauth/authorize|code/session_)\S*)', stripped)
+            if m:
+                # Collect continuation lines below (URL chars only, no whitespace)
+                parts = [m.group(1).rstrip()]
+                j = i + 1
+                while j < len(clean_lines):
+                    cont = clean_lines[j].strip()
+                    if cont and not _re.search(r'\s', cont) and _re.match(r'[A-Za-z0-9%&=_\-+.~:/?#\[\]@!$\'()*,;]+$', cont):
+                        parts.append(cont)
+                        j += 1
+                    else:
+                        break
+                url = "".join(parts).rstrip(")")
+                logger.info(f"_auto_login extracted URL ({len(url)} chars): {url[:80]}...")
+                break
+        if url:
             login_awaiting_code[(chat_id, thread_id)] = session
+            import html as _html
             await context.bot.send_message(
                 chat_id=chat_id,
                 message_thread_id=thread_id,
                 text=(
                     f"<b>{session}</b> צריך re-login (OAuth פג תוקף).\n\n"
-                    f"פתח את הקישור ושלח לי את הקוד:\n<code>{url}</code>"
+                    f"פתח את הקישור:\n<code>{_html.escape(url)}</code>"
                 ),
                 parse_mode="HTML"
             )
@@ -448,52 +470,75 @@ async def keepalive_ping(context: ContextTypes.DEFAULT_TYPE):
     logger.info("Keep-alive ping sent to all sessions")
 
 
-async def poll_output(context: ContextTypes.DEFAULT_TYPE):
-    configs = {cfg["session"]: cfg for cfg in get_configs()}
+async def _poll_one_session(
+    session: str, chat_id: int, thread_id: int, cfg: dict, context
+) -> None:
+    """Poll a single session — runs in a thread to avoid blocking the event loop."""
+    host = cfg.get("host")
+    path = cfg.get("path", "/root")
+    try:
+        if not await asyncio.to_thread(tmux_exists, session, host):
+            logger.warning(f"Session '{session}' gone — reprovisioning")
+            await asyncio.to_thread(
+                provision_session, session, path, host,
+                thread_id=thread_id, model=cfg.get("model")
+            )
+            line_counts[session] = len(await asyncio.to_thread(tmux_capture, session, host))
+            return
 
-    for (chat_id, thread_id), session in list(sessions.items()):
-        cfg  = configs.get(session, {})
-        host = cfg.get("host")
-        path = cfg.get("path", "/root")
+        # Check for login prompt
+        await asyncio.to_thread(_check_login_prompt, session, host, chat_id, thread_id, context)
 
-        try:
-            if not tmux_exists(session, host):
-                logger.warning(f"Session '{session}' gone — reprovisioning")
-                provision_session(session, path, host, thread_id=thread_id, model=cfg.get("model"))
-                line_counts[session] = len(tmux_capture(session, host))
-                continue
-
-            # Check for login prompt — Claude needs re-auth
-            _check_login_prompt(session, host, chat_id, thread_id, context)
-
-            # Skip poll_output for MCP sessions — Claude sends replies via send_message tool
-            # But send periodic status snapshots while the session is actively working.
-            mcp_json = f"{path}/.mcp.json"
-            has_mcp = (run_cmd(["test", "-f", mcp_json], host).returncode == 0) if host else os.path.exists(mcp_json)
-            if has_mcp:
-                lines = tmux_capture(session, host)
-                line_counts[session] = len(lines)
-                now   = time.time()
-
-                continue
-
-            lines     = tmux_capture(session, host)
-            prev      = line_counts.get(session, len(lines))
-
-            if len(lines) > prev:
-                text = "\n".join(lines[prev:]).strip()
-                if text:
-                    for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
-                        await context.bot.send_message(
-                            chat_id=chat_id,
-                            message_thread_id=thread_id,
-                            text=f"<code>{_esc(chunk)}</code>",
-                            parse_mode="HTML"
-                        )
+        mcp_json = f"{path}/.mcp.json"
+        has_mcp = (
+            (await asyncio.to_thread(run_cmd, ["test", "-f", mcp_json], host)).returncode == 0
+            if host else os.path.exists(mcp_json)
+        )
+        if has_mcp:
+            lines = await asyncio.to_thread(tmux_capture, session, host)
             line_counts[session] = len(lines)
+            return
 
-        except Exception as e:
-            logger.error(f"Poll error [{session}]: {e}")
+        lines = await asyncio.to_thread(tmux_capture, session, host)
+        prev  = line_counts.get(session, len(lines))
+
+        if len(lines) > prev:
+            text = "\n".join(lines[prev:]).strip()
+            if text:
+                for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        message_thread_id=thread_id,
+                        text=f"<code>{_esc(chunk)}</code>",
+                        parse_mode="HTML"
+                    )
+        line_counts[session] = len(lines)
+    except Exception as e:
+        logger.error(f"Poll error [{session}]: {e}")
+
+
+async def poll_output(context: ContextTypes.DEFAULT_TYPE):
+    """Poll local sessions every cycle."""
+    configs = {cfg["session"]: cfg for cfg in get_configs()}
+    tasks = [
+        _poll_one_session(session, chat_id, thread_id, configs.get(session, {}), context)
+        for (chat_id, thread_id), session in list(sessions.items())
+        if not configs.get(session, {}).get("host")  # local only
+    ]
+    if tasks:
+        await asyncio.gather(*tasks)
+
+
+async def poll_output_remote(context: ContextTypes.DEFAULT_TYPE):
+    """Poll remote (SSH) sessions less frequently."""
+    configs = {cfg["session"]: cfg for cfg in get_configs()}
+    tasks = [
+        _poll_one_session(session, chat_id, thread_id, configs.get(session, {}), context)
+        for (chat_id, thread_id), session in list(sessions.items())
+        if configs.get(session, {}).get("host")  # remote only
+    ]
+    if tasks:
+        await asyncio.gather(*tasks)
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
@@ -760,7 +805,7 @@ async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 KNOWN_MODELS = {
-    "opus":    "claude-opus-4-5",
+    "opus":    "claude-opus-4-6",
     "sonnet":  "claude-sonnet-4-6",
     "haiku":   "claude-haiku-4-5-20251001",
 }
@@ -1431,6 +1476,7 @@ async def debug_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def post_init(app: Application):
     load_sessions()
     app.job_queue.run_repeating(poll_output, interval=POLL_INTERVAL, first=2)
+    app.job_queue.run_repeating(poll_output_remote, interval=20, first=10)
     app.job_queue.run_repeating(keepalive_ping, interval=6 * 3600, first=3600)
 
 

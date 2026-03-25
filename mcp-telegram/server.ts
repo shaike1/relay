@@ -68,6 +68,26 @@ function autoCode(html: string): string {
   }).join('')
 }
 
+// ── peer topic logging ────────────────────────────────────────────────────────
+
+async function logToPeersTopic(from: string, to: string, text: string): Promise<void> {
+  try {
+    const peerTopicPath = new URL('../../peers-topic.json', import.meta.url).pathname
+    const cfg = JSON.parse(Bun.file(peerTopicPath).toString()) as { thread_id: number }
+    const label = `<b>[${from} → ${to}]</b>\n${text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}`
+    await fetch(`${BASE}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: CHAT_ID,
+        message_thread_id: cfg.thread_id,
+        text: label,
+        parse_mode: 'HTML',
+      }),
+    })
+  } catch {}
+}
+
 // ── telegram helpers ──────────────────────────────────────────────────────────
 
 async function tg(method: string, body: Record<string, unknown> = {}): Promise<unknown> {
@@ -252,6 +272,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           } else {
             await Bun.write(queueFile, entry + '\n', { append: true })
           }
+          void logToPeersTopic(selfName, mention, text)
           process.stderr.write(`[telegram] auto-routed @${mention} mention to peer session\n`)
         }
       } catch (e) {
@@ -349,6 +370,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       } else {
         await Bun.write(queueFile, entry + '\n', { append: true })
       }
+      const selfName = process.env.SESSION_NAME ?? `session-${THREAD_ID}`
+      void logToPeersTopic(selfName, targetSession, text)
       return { content: [{ type: 'text', text: `Message sent to '${targetSession}' (${target.host ?? 'local'}).` }] }
     } catch (e) {
       return { content: [{ type: 'text', text: `Error sending to peer: ${e}` }] }
@@ -508,8 +531,13 @@ async function poll(): Promise<void> {
           const entry = JSON.parse(line) as QueueEntry & { force?: boolean }
           const { text: msgText, user, message_id, ts, photo_path, force } = entry
 
-          // Skip already-delivered messages
-          if (message_id <= lastId && !force) continue
+          // Skip already-delivered messages.
+          // Exception: deliver recent regular messages (< 10 min old) even if message_id <= lastId,
+          // in case lastId jumped ahead (e.g. due to a bot outgoing message ID collision).
+          const ageMs = Date.now() - ts * 1000
+          const isRecent = ageMs < 10 * 60 * 1000
+          if (message_id <= lastId && !force && !isRecent) continue
+          if (message_id <= lastId && !force && isRecent && deliveredForce.has(-message_id)) continue  // dedupe recent
           if (force && deliveredForce.has(message_id) && Date.now() - deliveredForce.get(message_id)! < 15_000) continue
 
           const isoTs = new Date(ts * 1000).toISOString()
@@ -539,6 +567,9 @@ async function poll(): Promise<void> {
           // (their IDs reuse the button-message ID, not sequential message IDs)
           if (force) {
             deliveredForce.set(message_id, Date.now())
+          } else if (message_id <= lastId && isRecent) {
+            // Recent message delivered despite being behind lastId — mark deduped
+            deliveredForce.set(-message_id, Date.now())
           } else if (message_id > lastId) {
             // Regular messages advance lastId
             lastId = message_id
