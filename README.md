@@ -295,9 +295,13 @@ Resolves the binary's full path on the target host (handles `npm`/`nvm` installs
 | Tool | Description |
 |------|-------------|
 | `send_message` | Send text to the topic (HTML: `<b>`, `<i>`, `<code>`, `<pre>`). Optional `buttons` param for inline keyboards. |
-| `edit_message` | Edit a previously sent message |
+| `edit_message` | Edit a previously sent message in-place |
 | `typing` | Show typing indicator (~5s) |
 | `fetch_messages` | Get recent message history from this session |
+| `send_file` | Send a file from the server filesystem to the Telegram topic (logs, exports, generated files, etc.) |
+| `list_peers` | List all other active Claude sessions in the relay — session name, host, path, last activity |
+| `message_peer` | Send a message directly to another Claude session (peer-to-peer between agents) |
+| `react` | Add an emoji reaction to a message — `👀` working, `✅` done, `❌` error |
 
 ### Inline keyboard buttons
 
@@ -305,11 +309,44 @@ Claude can send messages with clickable buttons. When a button is pressed, the l
 
 ```python
 send_message(text="Continue?", buttons=[["✅ Yes", "❌ No"]])
+send_message(text="Choose phase:", buttons=[["Phase 1", "Phase 2"], ["Cancel"]])
 ```
 
-### Photo support
+Buttons are ideal for confirmations, choices, and multi-step workflows — Claude uses them instead of asking the user to type.
 
-Photos sent to a topic are downloaded to `/tmp/tg-photo-{id}.jpg` (SCP'd to remote hosts automatically). Claude receives `[Photo: /tmp/...] caption` and can read the image with the `Read` tool.
+### Progress updates during long tasks
+
+When a task takes more than ~2 minutes (builds, test suites, deployments), Claude sends brief progress updates so you're not left wondering if anything is still happening:
+
+```
+⏳ Build running — 3 min so far...
+✅ Build done. Deploying...
+```
+
+This is baked into `CLAUDE_TEMPLATE.md` so it applies to all sessions.
+
+### Photo and file support
+
+- **Photos** sent to a topic are downloaded to `/tmp/tg-photo-{id}.jpg` (SCP'd to remote hosts automatically). Claude receives `[Photo: /tmp/...] caption` and can read the image with the `Read` tool.
+- **Files** can be sent back to Telegram with `send_file` — useful for sharing logs, exports, or generated artifacts directly in the chat.
+
+---
+
+## Multi-agent teamwork
+
+Every Claude session in the relay is a peer. Sessions can discover and message each other directly — no human in the loop.
+
+**Example:** Your orchestrator session in `/root/myproject` can:
+1. Call `list_peers` to see all active sessions: `backend`, `frontend`, `infra`
+2. Call `message_peer(session="backend", text="Deploy the API to staging")` to delegate work
+3. The `backend` session receives it as a regular user message, does the work, and can `message_peer` back with results
+
+This enables patterns like:
+- **Orchestrator → workers**: one Claude breaks down a task and distributes subtasks to specialized sessions
+- **Parallel execution**: multiple sessions work independently on different parts of a problem simultaneously
+- **Event-driven pipelines**: a CI session triggers a deploy session on build success
+
+Configure a dedicated "peers topic" in `peers-topic.json` for cross-session coordination messages to appear in one Telegram thread instead of flooding individual project topics.
 
 ---
 
