@@ -37,17 +37,19 @@ else
     echo "Local already at $LATEST"
 fi
 
-# --- Remote host: 100.64.0.12 ---
-REMOTE_VER=$(ssh -o ConnectTimeout=10 root@100.64.0.12 \
-    "claude --version 2>/dev/null | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' | head -1 || true" 2>/dev/null || true)
+# --- Remote host ---
+if [[ -n "${REMOTE_HOST:-}" ]]; then
+    REMOTE_VER=$(ssh -o ConnectTimeout=10 "$REMOTE_HOST" \
+        "claude --version 2>/dev/null | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' | head -1 || true" 2>/dev/null || true)
 
-if [[ -n "$REMOTE_VER" && "$REMOTE_VER" != "$LATEST" ]]; then
-    echo "Remote 100.64.0.12: $REMOTE_VER -> $LATEST"
-    ssh -o ConnectTimeout=10 root@100.64.0.12 \
-        "npm install -g \"@anthropic-ai/claude-code@$LATEST\"" 2>&1
-    UPDATED_HOSTS+=("100.64.0.12: $REMOTE_VER → $LATEST")
-else
-    echo "Remote 100.64.0.12 already at $LATEST"
+    if [[ -n "$REMOTE_VER" && "$REMOTE_VER" != "$LATEST" ]]; then
+        echo "Remote $REMOTE_HOST: $REMOTE_VER -> $LATEST"
+        ssh -o ConnectTimeout=10 "$REMOTE_HOST" \
+            "npm install -g \"@anthropic-ai/claude-code@$LATEST\"" 2>&1
+        UPDATED_HOSTS+=("$REMOTE_HOST: $REMOTE_VER → $LATEST")
+    else
+        echo "Remote $REMOTE_HOST already at $LATEST"
+    fi
 fi
 
 # Notify Telegram if anything was updated

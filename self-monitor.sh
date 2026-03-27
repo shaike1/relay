@@ -3,8 +3,8 @@
 
 source /root/relay/.env
 BOT_TOKEN="$TELEGRAM_BOT_TOKEN"
-CHAT_ID="-1003865448408"
-THREAD_ID="183"
+CHAT_ID="$GROUP_CHAT_ID"
+THREAD_ID="${SELF_MONITOR_THREAD_ID:-183}"
 ALERT_FILE="/tmp/relay-alert-sent"
 
 send_alert() {
