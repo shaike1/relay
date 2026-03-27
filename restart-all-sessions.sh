@@ -17,15 +17,20 @@ MCP_SERVER="$RELAY_DIR/mcp-telegram/server.ts"
 
 echo "Reading sessions from $SESSIONS_FILE..."
 
-# Sync server.ts to all remote hosts first
-python3 - "$SESSIONS_FILE" <<'SYNCEOF'
+# Sync .env and server.ts to all remote hosts first
+python3 - "$SESSIONS_FILE" "$RELAY_DIR" <<'SYNCEOF'
 import json, subprocess, sys
 cfgs = json.load(open(sys.argv[1]))
+relay_dir = sys.argv[2]
 hosts = {c["host"] for c in cfgs if c.get("host")}
 for host in hosts:
+    print(f"  Syncing .env to {host}...")
+    subprocess.run(["scp", "-o", "StrictHostKeyChecking=no",
+        f"{relay_dir}/.env", f"{host}:/root/relay/.env"],
+        capture_output=True)
     print(f"  Syncing mcp-telegram/server.ts to {host}...")
     subprocess.run(["scp", "-o", "StrictHostKeyChecking=no",
-        "mcp-telegram/server.ts", f"{host}:/root/relay/mcp-telegram/server.ts"],
+        f"{relay_dir}/mcp-telegram/server.ts", f"{host}:/root/relay/mcp-telegram/server.ts"],
         capture_output=True)
 SYNCEOF
 
