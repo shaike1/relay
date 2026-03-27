@@ -13890,7 +13890,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args } = req.params;
   if (name === "send_message") {
-    const text = String(args?.text ?? "");
+    const text = String(args?.text ?? args?.message ?? "");
     const rawButtons = args?.buttons;
     const buttons = typeof rawButtons === "string" ? (() => {
       try {

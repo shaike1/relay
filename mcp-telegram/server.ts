@@ -293,7 +293,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args } = req.params
 
   if (name === 'send_message') {
-    const text = String(args?.text ?? '')
+    // Accept 'message' as alias for 'text' — Claude sometimes uses wrong param name
+    const text = String(args?.text ?? args?.message ?? '')
     // Claude sometimes passes buttons as a JSON string instead of array — parse it
     const rawButtons = args?.buttons
     const buttons: string[][] | undefined = typeof rawButtons === 'string'
