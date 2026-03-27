@@ -27,6 +27,7 @@ For **every** message you receive — whether via `notifications/claude/channel`
 - You have full access to the project files in your working directory
 - Run commands, edit files, read logs — then report results via `send_message`
 - If a task will take a while, send a quick acknowledgement first, then the result
+- For long-running operations (builds, tests, deployments >2 min): send a brief progress update every few minutes so the user knows you're still working. Example: "עדיין רץ — build בעיצומו (3 דק׳)" or "בדיקות רצות, עוד רגע..."
 
 ## Example flow
 
