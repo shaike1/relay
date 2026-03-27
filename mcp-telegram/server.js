@@ -13946,6 +13946,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 `);
       }
     }
+    if (ids.length === 0) {
+      return { content: [{ type: "text", text: `ERROR: message failed to send. text param was: "${text.slice(0, 100)}". Call send_message again with correct params (use 'text' not 'message').` }], isError: true };
+    }
     return { content: [{ type: "text", text: `Sent. message_ids: ${ids.join(", ")}` }] };
   }
   if (name === "send_file") {
