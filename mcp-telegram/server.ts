@@ -620,11 +620,11 @@ async function poll(): Promise<void> {
         if (!line.trim()) continue
         try {
           const e = JSON.parse(line) as QueueEntry & { force?: boolean }
-          if (e.force && e.message_id < lastId) {
-            // Only permanently skip old force entries (> 5 min).
-            // Recent button clicks should still be re-delivered after a context restart.
+          if (e.force) {
+            // Permanently skip force entries older than 10 minutes at startup.
+            // Only re-deliver truly recent button clicks (< 10 min) after a restart.
             const ageMs = Date.now() - e.ts * 1000
-            if (ageMs > 4 * 60 * 60 * 1000) {
+            if (ageMs > 10 * 60 * 1000) {
               deliveredForce.set(e.message_id, Infinity)
             }
           }
