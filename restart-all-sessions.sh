@@ -17,21 +17,51 @@ MCP_SERVER="$RELAY_DIR/mcp-telegram/server.ts"
 
 echo "Reading sessions from $SESSIONS_FILE..."
 
-# Sync .env and server.ts to all remote hosts first
+# Sync .env, server.ts, and bot token in ~/.claude.json to all remote hosts
 python3 - "$SESSIONS_FILE" "$RELAY_DIR" <<'SYNCEOF'
-import json, subprocess, sys
+import json, subprocess, sys, os, re
+
 cfgs = json.load(open(sys.argv[1]))
 relay_dir = sys.argv[2]
 hosts = {c["host"] for c in cfgs if c.get("host")}
+
+# Read local bot token from .env
+local_token = ""
+env_path = os.path.join(relay_dir, ".env")
+try:
+    for line in open(env_path).read().splitlines():
+        m = re.match(r'^TELEGRAM_BOT_TOKEN=(.+)$', line)
+        if m:
+            local_token = m.group(1).strip()
+            break
+except Exception:
+    pass
+
 for host in hosts:
     print(f"  Syncing .env to {host}...")
     subprocess.run(["scp", "-o", "StrictHostKeyChecking=no",
-        f"{relay_dir}/.env", f"{host}:/root/relay/.env"],
+        env_path, f"{host}:/root/relay/.env"],
         capture_output=True)
     print(f"  Syncing mcp-telegram/server.ts to {host}...")
     subprocess.run(["scp", "-o", "StrictHostKeyChecking=no",
         f"{relay_dir}/mcp-telegram/server.ts", f"{host}:/root/relay/mcp-telegram/server.ts"],
         capture_output=True)
+    # Update bot token in ~/.claude.json on the remote host
+    # (Claude stores per-project MCP configs there; stale tokens block MCP startup)
+    if local_token:
+        print(f"  Updating TELEGRAM_BOT_TOKEN in ~/.claude.json on {host}...")
+        update_cmd = (
+            f"python3 -c \""
+            f"import json, re; "
+            f"path='/root/.claude.json'; "
+            f"txt=open(path).read(); "
+            f"txt=re.sub(r'(TELEGRAM_BOT_TOKEN\\\\\\\":\\s*\\\\\\\")[^\\\"]+', "
+            f"r'\\\\g<1>{local_token}', txt); "
+            f"open(path,'w').write(txt)"
+            f"\""
+        )
+        subprocess.run(["ssh", "-o", "StrictHostKeyChecking=no", host, update_cmd],
+            capture_output=True)
 SYNCEOF
 
 python3 - "$SESSIONS_FILE" "$FILTER_HOST" <<'EOF'
