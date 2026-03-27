@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-# Relay install script
+# Topix Relay install script
 # https://github.com/shaike1/relay
 
 RELAY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,7 +22,7 @@ die()     { echo -e "${RED}✗${NC} $*" >&2; exit 1; }
 ask()     { echo -en "${YELLOW}?${NC} $* "; }
 
 echo ""
-echo "  Relay — Telegram to Claude Code bridge"
+echo "  Topix Relay — Telegram to Claude Code bridge"
 echo "  https://github.com/shaike1/relay"
 echo ""
 
@@ -60,7 +60,7 @@ echo "   MCP server ready"
 if [ -f "$ENV_FILE" ]; then
   warn ".env already exists — skipping (delete it to reconfigure)"
 else
-  info "Configuring Relay..."
+  info "Configuring Topix Relay..."
   echo ""
   echo "   You'll need:"
   echo "   • Bot token from @BotFather"
@@ -114,7 +114,7 @@ else
     info "Installing systemd service..."
     sudo tee "$SERVICE_FILE" > /dev/null <<EOF
 [Unit]
-Description=Relay — Telegram to Claude Code bridge
+Description=Topix Relay — Telegram to Claude Code bridge
 After=network.target
 
 [Service]
@@ -141,7 +141,7 @@ fi
 # ── 7. Summary ────────────────────────────────────────────────────────────────
 
 echo ""
-echo "  ✓ Relay is installed and running"
+echo "  ✓ Topix Relay is installed and running"
 echo ""
 echo "  Next: add a project"
 echo "    Send /new /path/to/your/project in your Telegram group"

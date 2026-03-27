@@ -1,8 +1,39 @@
-# Relay
+# Topix Relay
 
-Control Claude Code from Telegram — no SSH, no terminal babysitting.
+Control Claude Code from Telegram — one topic per project, no SSH, no terminal babysitting.
 
 Send a message from your phone. Claude thinks inside the project directory. Replies with formatted code, logs, diffs — right back in the same Telegram topic.
+
+## Why Relay — what makes it different
+
+There are other ways to control Claude remotely. Topix Relay does something distinct.
+
+**Topics as a project switchboard**
+
+Telegram's [forum topics](https://telegram.org/blog/topics-in-groups-collectible-usernames) are the core insight. One topic = one project — not by convention, but structurally: messages in topic A never reach topic B, notifications are per-topic, search is scoped per-topic. Open your Telegram group and you have a full project dashboard: every running Claude session, its history, and its current status. It's Slack sidebar UX, built on infrastructure you already use.
+
+You get these for free on every topic, without any extra code:
+- Per-project notification control (mute a quiet project, pin a critical one)
+- Searchable history scoped to each project
+- Any team member you add to the group can see and interact with any project's topic
+
+**Conversation persistence — not just command execution**
+
+Relay isn't "send a shell command, get output back." Claude holds full conversation context across restarts. When the server reboots, Claude resumes exactly where it left off: the same decisions, the same in-progress plan, the same awareness of what was tried and why. This is what makes async mobile development actually work — you pick up where you left off, from your phone, hours later.
+
+**Zero additional apps**
+
+Telegram is already on your phone. There's no SSH client, no web UI to keep open, no VPN, no port to expose. The interface you already use for messaging is the interface for your dev environment.
+
+**Multi-agent — sessions talk to each other**
+
+Every Claude session is a peer. An orchestrator session can query `list_peers`, then `message_peer` to delegate subtasks to specialized sessions running in parallel — all without a human in the loop. Build a frontend, deploy an API, and run tests simultaneously, with sessions coordinating among themselves and reporting back.
+
+**One bot, many servers**
+
+A single Topix Relay instance controls sessions across multiple servers over SSH — local and remote — from one Telegram group. Add a remote host once, then `/new root@server /path` provisions everything: topic, tmux session, MCP config, and Claude launch.
+
+---
 
 ## The problem this solves
 
@@ -15,7 +46,7 @@ Running Claude Code on a remote server is powerful but fragile:
 
 This is the normal remote dev workflow. It works, but it's constant overhead: maintaining connections, babysitting sessions, manually restarting things after downtime.
 
-**Relay removes that entirely.** Your projects run as persistent tmux sessions managed by a systemd service. Claude auto-resumes its last conversation on restart. You interact through Telegram — which is always open on your phone anyway. A dropped SSH connection changes nothing. A server reboot? The service comes back up, Claude resumes, your Telegram topic is right where you left it.
+**Topix Relay removes that entirely.** Your projects run as persistent tmux sessions managed by a systemd service. Claude auto-resumes its last conversation on restart. You interact through Telegram — which is always open on your phone anyway. A dropped SSH connection changes nothing. A server reboot? The service comes back up, Claude resumes, your Telegram topic is right where you left it.
 
 To add a new project, send one command in Telegram:
 
@@ -30,7 +61,7 @@ To add a new project, send one command in Telegram:
 /new root@your-backup-host /root/myproject my-app
 ```
 
-In one command, Relay does all of this automatically:
+In one command, Topix Relay does all of this automatically:
 
 1. **Creates the Telegram topic** in your supergroup (gets a `thread_id`)
 2. **Creates the project folder** on the target host if it doesn't exist
@@ -40,7 +71,7 @@ In one command, Relay does all of this automatically:
 6. **Registers the session** in `sessions.json` so it survives relay restarts
 7. **Sends a confirmation message** into the new topic so it's immediately live
 
-For remote projects, Relay SSHes in to provision everything — no manual setup on the remote host needed.
+For remote projects, Topix Relay SSHes in to provision everything — no manual setup on the remote host needed.
 
 ```
 Phone
@@ -68,7 +99,7 @@ Telegram's [forum topics](https://telegram.org/blog/topics-in-groups-collectible
 
 - **One topic = one project.** Each Telegram topic maps to exactly one tmux session running Claude Code in a specific directory. Messages stay isolated — no cross-talk between projects.
 - **One long-poll, many consumers.** Telegram returns `409 Conflict` if two processes call `getUpdates` with the same bot token. The Relay bot holds the single long-poll and writes each incoming message to a queue file named after the topic's thread ID: `/tmp/tg-queue-{THREAD_ID}.jsonl`. Each MCP server instance reads only its own file — no conflicts, no duplicated API calls.
-- **Queue files as the handoff.** The queue file decouples the Relay bot from Claude's lifecycle. If Claude restarts mid-session, Relay keeps running and the queue keeps filling. When Claude comes back up, the MCP server resumes tailing from where it left off.
+- **Queue files as the handoff.** The queue file decouples the Topix Relay bot from Claude's lifecycle. If Claude restarts mid-session, Relay keeps running and the queue keeps filling. When Claude comes back up, the MCP server resumes tailing from where it left off.
 - **`sessions.json` as the source of truth.** The mapping of `thread_id → session name → project path → host` lives in `sessions.json`. Add a line and Relay knows which tmux session to write to and which queue file to update.
 
 ---
@@ -112,8 +143,8 @@ Telegram's [forum topics](https://telegram.org/blog/topics-in-groups-collectible
 ### 1. Clone and run the install script
 
 ```bash
-git clone https://github.com/shaike1/relay
-cd relay
+git clone https://github.com/shaike1/topix-relay
+cd topix-relay
 bash install.sh
 ```
 
@@ -160,7 +191,7 @@ Or as a systemd service (recommended):
 ```ini
 # /etc/systemd/system/relay.service
 [Unit]
-Description=Relay — Telegram to Claude Code bridge
+Description=Topix Relay — Telegram to Claude Code bridge
 After=network.target
 
 [Service]
@@ -185,7 +216,7 @@ systemctl start relay
 journalctl -u relay -f
 ```
 
-With systemd, Relay survives reboots and restarts automatically if it crashes. Claude sessions run in tmux and auto-resume their last conversation (`claude --resume`) each time they start — so a reboot or disconnect doesn't lose your context.
+With systemd, Topix Relay survives reboots and restarts automatically if it crashes. Claude sessions run in tmux and auto-resume their last conversation (`claude --resume`) each time they start — so a reboot or disconnect doesn't lose your context.
 
 ### 6. Add the MCP server to a project
 
@@ -450,7 +481,7 @@ Edit `watchdog.sh` and set `PRIMARY` to your primary server's SSH address.
 ```ini
 # /etc/systemd/system/relay-watchdog.service
 [Unit]
-Description=Relay Watchdog — failover if primary is down
+Description=Topix Relay Watchdog — failover if primary is down
 After=network.target
 
 [Service]
@@ -496,7 +527,7 @@ Run `self-monitor.sh` on the primary via cron. If the relay goes down and `syste
 | Backup server | ✅ continues working | ✅ continues working |
 | Primary server | ❌ unavailable | ✅ resumes automatically |
 
-Telegram alerts are sent directly via the Bot API (not through Relay) so they arrive even when Relay itself is down.
+Telegram alerts are sent directly via the Bot API (not through Topix Relay) so they arrive even when Relay itself is down.
 
 ---
 
@@ -542,7 +573,7 @@ Then restart Claude to pick up the new MCP. Use `session-run.sh` for a one-liner
 
 ### Messages not arriving
 
-1. Is Relay running? `systemctl status relay` or `tmux ls`
+1. Is Topix Relay running? `systemctl status relay` or `tmux ls`
 2. Does the queue file exist? `ls /tmp/tg-queue-*.jsonl`
 3. Is `TELEGRAM_THREAD_ID` in `.mcp.json` correct?
 4. Did you restart Claude after changing `.mcp.json`?

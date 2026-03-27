@@ -572,7 +572,7 @@ def _session_from_update(update: Update) -> tuple[str | None, dict]:
 @owner_only
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "<b>Relay</b>\n\n"
+        "<b>Topix Relay</b>\n\n"
         "<b>Provision:</b>\n"
         "/new [host] &lt;path&gt; — create session + topic\n"
         "/discover — find all Claude projects with history not yet connected\n\n"
