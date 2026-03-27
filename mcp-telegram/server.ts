@@ -522,6 +522,9 @@ function cleanup() { try { require('fs').unlinkSync(LOCK_FILE) } catch {} }
 process.on('exit', cleanup)
 process.on('SIGTERM', () => { cleanup(); process.exit(0) })
 process.on('SIGINT',  () => { cleanup(); process.exit(0) })
+// Exit when Claude Code closes the MCP stdio pipe (e.g. on Claude restart/exit)
+process.stdin.on('end',   () => { cleanup(); process.exit(0) })
+process.stdin.on('close', () => { cleanup(); process.exit(0) })
 
 type QueueEntry = {
   text: string

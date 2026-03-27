@@ -789,6 +789,18 @@ async def cmd_claude(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+def kill_stale_mcp(thread_id: int, host: str | None = None) -> None:
+    """Kill any stale bun MCP server holding the queue lock for this thread."""
+    lock_file = f"/tmp/tg-queue-{thread_id}.lock"
+    try:
+        result = run_cmd(["cat", lock_file], host)
+        old_pid = int(result.stdout.strip())
+        run_cmd(["kill", str(old_pid)], host)
+        logger.info(f"Killed stale MCP server pid={old_pid} for thread {thread_id}")
+    except Exception:
+        pass
+
+
 @owner_only
 async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session, cfg = _session_from_update(update)
@@ -797,7 +809,9 @@ async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     host = cfg.get("host")
+    thread_id = cfg.get("thread_id")
 
+    kill_stale_mcp(thread_id, host)
     tmux_send_ctrl(session, "C-c", host)
     await update.message.reply_text(
         "Ctrl+C sent — the loop will restart Claude automatically.", parse_mode="HTML"
