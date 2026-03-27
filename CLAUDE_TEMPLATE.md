@@ -47,6 +47,23 @@ Whenever you ask the user to choose or confirm, attach inline buttons instead of
 
 The clicked label arrives as a plain message. Always prefer buttons over "type 1 or 2".
 
+## Persistent memory across restarts
+
+Your memory directory survives both restarts and context compaction. Use it actively.
+
+**On startup** — before responding to the first user message:
+1. Check if `memory/session_context.md` exists (use the memory path from your system prompt)
+2. If it exists, read it and open with: "I remember working on [X]. Continuing from there." or similar
+3. If absent or empty, let the user know it's a fresh context
+
+**After completing tasks or at natural break points:**
+Write/update `memory/session_context.md` with:
+- What was being worked on and current status
+- Key findings, decisions, or file changes
+- Any open questions or next steps
+
+Keep it concise (under 20 lines). This is your safety net against context loss.
+
 ## Important
 
 - Always respond via `send_message` — never leave a message unanswered

@@ -300,14 +300,26 @@ def provision_session(session: str, path: str, host: str | None = None, thread_i
 
     # Run claude in a loop so it auto-resumes on exit.
     # Use bash --norc --noprofile to avoid shell wrappers (e.g. Zellij auto-start in .bashrc).
-    # Try --continue first; fall back to fresh start if no prior session exists
+    # Pinned session ID: save the session ID after each run so we always resume the exact
+    # same conversation thread (not just "most recent"), surviving restarts and manual runs.
     model_flag = f" --model {model}" if model else ""
     env_prefix = "IS_SANDBOX=1 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"
-    base_flags = f"--dangerously-skip-permissions --remote-control{model_flag}"
+    base_flags = f"--dangerously-skip-permissions --permission-mode auto --remote-control{model_flag}"
+    proj_dir_shell = f"~/.claude/projects/-{path_to_claude_dir(path)}"
+    sess_id_file = f"{path}/.relay_session_id"
+    # No single quotes inside loop_cmd — the whole thing is wrapped in bash -c '...'
     loop_cmd = (
         f"while true; do "
-        f"{env_prefix} {claude_bin} {base_flags} --continue "
-        f"|| {env_prefix} {claude_bin} {base_flags}; "
+        f"if [ -f {sess_id_file} ]; then "
+        f"  {env_prefix} {claude_bin} {base_flags} --resume \"$(cat {sess_id_file})\" "
+        f"  || {env_prefix} {claude_bin} {base_flags} --continue "
+        f"  || {env_prefix} {claude_bin} {base_flags}; "
+        f"else "
+        f"  {env_prefix} {claude_bin} {base_flags} --continue "
+        f"  || {env_prefix} {claude_bin} {base_flags}; "
+        f"fi; "
+        f"LATEST=$(ls -t {proj_dir_shell}/*.jsonl 2>/dev/null | head -1); "
+        f"[ -n \"$LATEST\" ] && basename \"$LATEST\" .jsonl > {sess_id_file} || true; "
         f"sleep 1; done"
     )
     if host:
@@ -1260,7 +1272,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _, thread_id_str, label = query.data.split(":", 2)
         thread_id = int(thread_id_str)
         user = query.from_user.first_name or "User"
-        import time as _time
         # Look up host for this thread (handles remote sessions)
         cfg  = next((c for c in get_configs() if c.get("thread_id") == thread_id), {})
         # Per-topic access control
@@ -1270,18 +1281,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Blocked button click from user_id={uid} on thread={thread_id}")
             return
         host = cfg.get("host")
-        entry = {
-            "text": label,
-            "user": user,
-            "message_id": query.message.message_id,
-            "thread_id": thread_id,
-            "chat_id": query.message.chat_id,
-            "ts": _time.time(),
-            "force": True,
-        }
-        logger.info(f"Button click: thread={thread_id} host={host!r} label={label!r} msg_id={entry['message_id']}")
-        write_queue(thread_id, entry, host)
-        logger.info(f"Button click written to queue for thread={thread_id}")
+        logger.info(f"Button click: thread={thread_id} host={host!r} label={label!r}")
+        session_name = next((s for (cid, tid), s in sessions.items() if tid == thread_id), None)
+        if session_name:
+            tmux_send(session_name, f"[{user}] ▶ {label}", host)
+            last_user_sent[session_name] = time.time()
+            logger.info(f"Button click sent to tmux '{session_name}'")
         # Keep buttons visible so the user can click them again
         # Echo the selection back into the chat so it's visible
         try:
@@ -1496,23 +1501,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             text = f"[File: {filename} — download failed]{(' ' + text) if text else ''}"
 
-    if has_mcp:
-        entry = {
-            "text":       text,
-            "user":       update.effective_user.first_name if update.effective_user else "user",
-            "message_id": update.message.message_id,
-            "thread_id":  thread_id,
-            "chat_id":    chat_id,
-        }
-        if photo_path:
-            entry["photo_path"] = photo_path
-        write_queue(thread_id, entry, host)
-        last_user_sent[session] = time.time()
-        logger.info(f"Queued message for MCP session '{session}' (thread {thread_id})")
-    else:
-        # No MCP — raw tmux passthrough (text only)
-        if not update.message.photo and not update.message.document:
-            tmux_send(session, text, host)
+    # Always deliver via tmux keyboard input so messages appear in the Claude Code transcript
+    user_name = update.effective_user.first_name if update.effective_user else "user"
+    tmux_send(session, f"[{user_name}]: {text}", host)
+    last_user_sent[session] = time.time()
+    logger.info(f"Sent message to tmux '{session}' (thread {thread_id})")
 
 
 # ─── main ─────────────────────────────────────────────────────────────────────
@@ -1549,10 +1542,18 @@ async def check_stuck_force(context) -> None:
             continue
 
         state_file = qf.replace(".jsonl", ".state")
+        last_id = 0
+        acked_force: set[int] = set()
         try:
-            last_id = int(open(state_file).read().strip())
+            raw = open(state_file).read().strip()
+            if raw.startswith('{'):
+                parsed = json.loads(raw)
+                last_id = int(parsed.get("lastId", 0))
+                acked_force = set(parsed.get("ackedForce", []))
+            else:
+                last_id = int(raw)
         except Exception:
-            last_id = 0
+            pass
 
         try:
             lines = open(qf).readlines()
@@ -1572,6 +1573,8 @@ async def check_stuck_force(context) -> None:
             # been sitting there too long without Claude responding, something is stuck.
             if msg_id > 0 and msg_id <= last_id:
                 continue  # regular force-flagged msg already delivered
+            if msg_id in acked_force:
+                continue  # button click already delivered (persisted in ackedForce)
             age = now - entry.get("ts", now)
             if age < STUCK_FORCE_ALERT_AFTER:
                 continue

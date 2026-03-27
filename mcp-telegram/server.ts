@@ -294,10 +294,15 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
   if (name === 'send_message') {
     const text = String(args?.text ?? '')
+    // Claude sometimes passes buttons as a JSON string instead of array — parse it
+    const rawButtons = args?.buttons
+    const buttons: string[][] | undefined = typeof rawButtons === 'string'
+      ? (() => { try { return JSON.parse(rawButtons) } catch { return undefined } })()
+      : rawButtons as string[][] | undefined
     const ids = await sendMessage(
       text,
       args?.reply_to as number | undefined,
-      args?.buttons as string[][] | undefined,
+      buttons,
     )
     // Write response timestamp so the relay bot knows Claude replied
     void Bun.write(`/tmp/tg-last-sent-${THREAD_ID}`, String(Date.now() / 1000))
@@ -536,28 +541,44 @@ type QueueEntry = {
   photo_path?: string
 }
 
-// Persistent state: last delivered message_id survives MCP restarts
+// Persistent state: last delivered message_id + acked force IDs survive MCP restarts
 const STATE_FILE = `/tmp/tg-queue-${THREAD_ID}.state`
 
-async function loadLastId(): Promise<number> {
+interface State { lastId: number; ackedForce: number[] }
+
+async function loadState(): Promise<State> {
   try {
     const f = Bun.file(STATE_FILE)
     if (await f.exists()) {
-      const id = parseInt(await f.text(), 10) || 0
-      // Unix-timestamp IDs (> 1e8) are corrupted — current epoch is ~1.77e9, Telegram msg IDs stay well below 1e8
+      const raw = await f.text()
+      // New format: JSON {"lastId":N,"ackedForce":[...]}
+      if (raw.trim().startsWith('{')) {
+        const parsed = JSON.parse(raw) as Partial<State>
+        let lastId = parsed.lastId ?? 0
+        if (lastId > 1e8) { lastId = 0 }  // corrupted
+        return { lastId, ackedForce: parsed.ackedForce ?? [] }
+      }
+      // Legacy format: plain number string
+      const id = parseInt(raw, 10) || 0
       if (id > 1e8) {
         process.stderr.write(`[telegram] state ${id} looks like a Unix timestamp, resetting to 0\n`)
-        await saveLastId(0)
-        return 0
+        await saveState(0, [])
+        return { lastId: 0, ackedForce: [] }
       }
-      return id
+      return { lastId: id, ackedForce: [] }
     }
   } catch {}
-  return 0
+  return { lastId: 0, ackedForce: [] }
 }
 
-async function saveLastId(id: number): Promise<void> {
-  try { await Bun.write(STATE_FILE, String(id)) } catch {}
+async function saveState(lastId: number, ackedForce: number[]): Promise<void> {
+  try { await Bun.write(STATE_FILE, JSON.stringify({ lastId, ackedForce })) } catch {}
+}
+
+// Keep backward-compat callers that only update lastId
+async function saveLastId(id: number, ackedForce?: number[]): Promise<void> {
+  const cur = ackedForce ?? (await loadState()).ackedForce
+  await saveState(id, cur)
 }
 
 /** Remove queue entries older than 24h that have already been delivered. */
@@ -582,7 +603,10 @@ async function trimQueue(lastId: number): Promise<void> {
 
 async function poll(): Promise<void> {
   // Deliver any message with message_id > lastDeliveredId, one per poll cycle
-  let lastId = await loadLastId()
+  const state = await loadState()
+  let lastId = state.lastId
+  // ackedForceIds: force message IDs that were already delivered — persisted across restarts
+  const ackedForceIds = new Set<number>(state.ackedForce)
   const deliveredForce = new Map<number, number>()  // message_id → delivery timestamp (ms)
 
   // Sanity-check lastId against queue on startup:
@@ -603,7 +627,7 @@ async function poll(): Promise<void> {
             `[telegram] stale lastId=${lastId}, most recent msg id=${mostRecent.message_id} — resetting\n`
           )
           lastId = Math.max(0, mostRecent.message_id - 1)
-          await saveLastId(lastId)
+          await saveState(lastId, [...ackedForceIds])
         }
       }
     }
@@ -611,8 +635,9 @@ async function poll(): Promise<void> {
     process.stderr.write(`[telegram] state sanity check error: ${e}\n`)
   }
 
-  // Pre-populate deliveredForce with all force entries that are already behind lastId.
-  // Without this, every server restart would re-deliver old button clicks to Claude.
+  // Pre-populate deliveredForce from persisted ackedForce (survives restarts)
+  // and also from force entries older than 10 min (fallback for first startup).
+  for (const id of ackedForceIds) deliveredForce.set(id, Infinity)
   try {
     const qFile = Bun.file(QUEUE_FILE)
     if (await qFile.exists()) {
@@ -620,12 +645,11 @@ async function poll(): Promise<void> {
         if (!line.trim()) continue
         try {
           const e = JSON.parse(line) as QueueEntry & { force?: boolean }
-          if (e.force) {
-            // Permanently skip force entries older than 10 minutes at startup.
-            // Only re-deliver truly recent button clicks (< 10 min) after a restart.
+          if (e.force && !deliveredForce.has(e.message_id)) {
             const ageMs = Date.now() - e.ts * 1000
             if (ageMs > 10 * 60 * 1000) {
               deliveredForce.set(e.message_id, Infinity)
+              ackedForceIds.add(e.message_id)
             }
           }
         } catch {}
@@ -708,13 +732,18 @@ async function poll(): Promise<void> {
           // (their IDs reuse the button-message ID, not sequential message IDs)
           if (force) {
             deliveredForce.set(message_id, Date.now())
+            // Persist so restarts don't re-deliver the same button click
+            ackedForceIds.add(message_id)
+            // Trim to last 200 to prevent unbounded growth
+            const trimmed = [...ackedForceIds].slice(-200)
+            await saveState(lastId, trimmed)
           } else if (message_id <= lastId && isRecent) {
             // Recent message delivered despite being behind lastId — mark deduped
             deliveredForce.set(-message_id, Date.now())
           } else if (message_id > lastId) {
             // Regular messages advance lastId
             lastId = message_id
-            await saveLastId(lastId)
+            await saveState(lastId, [...ackedForceIds])
           }
           sentOne = true  // send only one per cycle; next will be picked up on next poll
 
