@@ -804,6 +804,16 @@ async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@owner_only
+async def cmd_reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reload sessions.json without restarting the bot."""
+    load_sessions()
+    count = len(sessions)
+    await update.message.reply_text(
+        f"Reloaded sessions.json — {count} sessions active.", parse_mode="HTML"
+    )
+
+
 KNOWN_MODELS = {
     "opus":    "claude-opus-4-6",
     "sonnet":  "claude-sonnet-4-6",
@@ -1440,6 +1450,38 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             text = f"[Photo: failed to download]{(' ' + text) if text else ''}"
 
+    elif update.message.document:
+        doc = update.message.document
+        filename = doc.file_name or f"file-{update.message.message_id}"
+        local_path = f"/tmp/tg-file-{update.message.message_id}-{filename}"
+        downloaded = False
+        for attempt in range(3):
+            try:
+                tg_file = await context.bot.get_file(doc.file_id)
+                await tg_file.download_to_drive(local_path)
+                downloaded = True
+                logger.info(f"Downloaded document to {local_path}")
+                break
+            except Exception as e:
+                logger.warning(f"Document download attempt {attempt+1} failed: {e}")
+                if attempt < 2:
+                    await asyncio.sleep(2)
+
+        if downloaded:
+            if host:
+                scp = subprocess.run(
+                    ["scp", "-o", "StrictHostKeyChecking=no", local_path, f"{host}:{local_path}"],
+                    capture_output=True, text=True
+                )
+                if scp.returncode == 0:
+                    logger.info(f"SCP'd document to {host}:{local_path}")
+                else:
+                    logger.warning(f"SCP failed: {scp.stderr}")
+            caption = f" {text}" if text else ""
+            text = f"[File: {local_path}]{caption}"
+        else:
+            text = f"[File: {filename} — download failed]{(' ' + text) if text else ''}"
+
     if has_mcp:
         entry = {
             "text":       text,
@@ -1453,11 +1495,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         write_queue(thread_id, entry, host)
         last_user_sent[session] = time.time()
         logger.info(f"Queued message for MCP session '{session}' (thread {thread_id})")
-        if not update.message.photo:
-            tmux_send(session, text, host)
     else:
         # No MCP — raw tmux passthrough (text only)
-        if not update.message.photo:
+        if not update.message.photo and not update.message.document:
             tmux_send(session, text, host)
 
 
@@ -1470,7 +1510,79 @@ async def debug_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     thread = msg.message_thread_id if msg else None
     text = msg.text if msg else "(no text)"
-    logger.info(f"DEBUG UPDATE: user_id={uid} chat={chat} thread={thread} text={text!r}")
+    logger.debug(f"DEBUG UPDATE: user_id={uid} chat={chat} thread={thread} text={text!r}")
+
+
+STUCK_FORCE_ALERT_AFTER = 60 * 60      # 1 hour — alert if force msg undelivered this long
+STUCK_FORCE_CHECK_INTERVAL = 15 * 60  # check every 15 minutes
+_alerted_force: set[tuple[int, int]] = set()  # (thread_id, message_id) already alerted
+
+
+async def check_stuck_force(context) -> None:
+    """Alert via Telegram if a button click (force msg) has been undelivered for >1h."""
+    import glob, time as _time
+    now = _time.time()
+    thread_to_chat: dict[int, int] = {tid: cid for (cid, tid) in sessions}
+
+    for qf in glob.glob("/tmp/tg-queue-*.jsonl"):
+        # Extract thread_id from filename; skip remote copies
+        basename = os.path.basename(qf)
+        if "remote" in basename:
+            continue
+        try:
+            thread_id = int(basename.removeprefix("tg-queue-").removesuffix(".jsonl"))
+        except ValueError:
+            continue
+
+        state_file = qf.replace(".jsonl", ".state")
+        try:
+            last_id = int(open(state_file).read().strip())
+        except Exception:
+            last_id = 0
+
+        try:
+            lines = open(qf).readlines()
+        except Exception:
+            continue
+
+        for line in lines:
+            try:
+                entry = json.loads(line)
+            except Exception:
+                continue
+            if not entry.get("force"):
+                continue
+            msg_id = entry.get("message_id", 0)
+            # Force messages from server.ts have negative message_id (-Date.now()).
+            # They are never tracked by last_id (positive). Check age only — if it's
+            # been sitting there too long without Claude responding, something is stuck.
+            if msg_id > 0 and msg_id <= last_id:
+                continue  # regular force-flagged msg already delivered
+            age = now - entry.get("ts", now)
+            if age < STUCK_FORCE_ALERT_AFTER:
+                continue
+            key = (thread_id, msg_id)
+            if key in _alerted_force:
+                continue
+            _alerted_force.add(key)
+            session_name = next(
+                (s for (cid, tid), s in sessions.items() if tid == thread_id), f"thread {thread_id}"
+            )
+            age_min = int(age / 60)
+            text = entry.get("text", "?")
+            chat_id = thread_to_chat.get(thread_id, GROUP_CHAT_ID)
+            logger.warning(f"Stuck force msg: thread={thread_id} msg_id={msg_id} age={age_min}m text={text!r}")
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    message_thread_id=thread_id,
+                    text=f"⚠️ כפתור תקוע — סשן <b>{session_name}</b>\n"
+                         f"לחיצה על <b>{text}</b> לפני {age_min} דקות לא נמסרה ל-Claude.\n"
+                         f"נסה /restart בטופיק הזה.",
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                logger.error(f"Failed to send stuck-force alert: {e}")
 
 
 async def post_init(app: Application):
@@ -1478,11 +1590,28 @@ async def post_init(app: Application):
     app.job_queue.run_repeating(poll_output, interval=POLL_INTERVAL, first=2)
     app.job_queue.run_repeating(poll_output_remote, interval=20, first=10)
     app.job_queue.run_repeating(keepalive_ping, interval=6 * 3600, first=3600)
+    app.job_queue.run_repeating(check_stuck_force, interval=STUCK_FORCE_CHECK_INTERVAL, first=60)
+
+
+BOT_PID_FILE = '/tmp/relay-bot.pid'
 
 
 def main():
     if not TOKEN:
         raise ValueError("TELEGRAM_BOT_TOKEN not set")
+
+    # Single-instance lock — prevent systemd + manual start coexisting
+    if os.path.exists(BOT_PID_FILE):
+        try:
+            old_pid = int(open(BOT_PID_FILE).read().strip())
+            os.kill(old_pid, 0)  # raises if process doesn't exist
+            logger.error(f"Another bot instance already running (pid {old_pid}). Exiting.")
+            return
+        except (ProcessLookupError, ValueError):
+            pass  # stale PID file
+    open(BOT_PID_FILE, 'w').write(str(os.getpid()))
+    import atexit
+    atexit.register(lambda: os.unlink(BOT_PID_FILE) if os.path.exists(BOT_PID_FILE) else None)
 
     app = Application.builder().token(TOKEN).post_init(post_init).build()
 
@@ -1496,6 +1625,7 @@ def main():
     app.add_handler(CommandHandler("removehost", cmd_removehost))
     app.add_handler(CommandHandler("claude",  cmd_claude))
     app.add_handler(CommandHandler("restart",     cmd_restart))
+    app.add_handler(CommandHandler("reload",      cmd_reload))
     app.add_handler(CommandHandler("restart_all", cmd_restart_all))
     app.add_handler(CommandHandler("model",       cmd_model))
     app.add_handler(CommandHandler("upgrade",     cmd_upgrade))
@@ -1508,7 +1638,7 @@ def main():
     app.add_handler(CommandHandler("switch",  cmd_switch))
     app.add_handler(CommandHandler("agents",  cmd_agents))
     app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND, handle_message))
 
     logger.info("Bot starting...")
     if WEBHOOK_URL:

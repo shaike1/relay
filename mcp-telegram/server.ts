@@ -20,6 +20,7 @@ import {
 import { readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
+import { Database } from 'bun:sqlite'
 
 // ── config ────────────────────────────────────────────────────────────────────
 
@@ -45,6 +46,32 @@ if (!TOKEN || !CHAT_ID || !THREAD_ID) {
 }
 
 const BASE = `https://api.telegram.org/bot${TOKEN}`
+
+// ── message splitting ─────────────────────────────────────────────────────────
+
+/** Split at newline boundaries; hard-split only when a single line exceeds maxLen. */
+function splitMessage(text: string, maxLen = 4000): string[] {
+  if (text.length <= maxLen) return [text]
+  const chunks: string[] = []
+  const lines = text.split('\n')
+  let current = ''
+  for (const line of lines) {
+    const candidate = current ? current + '\n' + line : line
+    if (candidate.length <= maxLen) {
+      current = candidate
+    } else {
+      if (current) chunks.push(current)
+      if (line.length > maxLen) {
+        for (let i = 0; i < line.length; i += maxLen) chunks.push(line.slice(i, i + maxLen))
+        current = ''
+      } else {
+        current = line
+      }
+    }
+  }
+  if (current) chunks.push(current)
+  return chunks
+}
 
 // ── auto-code wrapping ────────────────────────────────────────────────────────
 
@@ -72,8 +99,8 @@ function autoCode(html: string): string {
 
 async function logToPeersTopic(from: string, to: string, text: string): Promise<void> {
   try {
-    const peerTopicPath = new URL('../../peers-topic.json', import.meta.url).pathname
-    const cfg = JSON.parse(Bun.file(peerTopicPath).toString()) as { thread_id: number }
+    const peerTopicPath = new URL('../peers-topic.json', import.meta.url).pathname
+    const cfg = JSON.parse(readFileSync(peerTopicPath, 'utf8')) as { thread_id: number }
     const label = `<b>[${from} → ${to}]</b>\n${text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}`
     await fetch(`${BASE}/sendMessage`, {
       method: 'POST',
@@ -101,7 +128,7 @@ async function tg(method: string, body: Record<string, unknown> = {}): Promise<u
 
 async function sendMessage(text: string, replyTo?: number, buttons?: string[][]): Promise<number[]> {
   text = autoCode(text)
-  const chunks = text.match(/.{1,4000}/gs) ?? [text]
+  const chunks = splitMessage(text)
   const ids: number[] = []
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i]
@@ -145,6 +172,16 @@ async function sendTyping(): Promise<void> {
     message_thread_id: THREAD_ID,
     action: 'typing',
   })
+}
+
+async function sendReaction(messageId: number, emoji: string): Promise<boolean> {
+  const res = await tg('setMessageReaction', {
+    chat_id: CHAT_ID,
+    message_id: messageId,
+    reaction: [{ type: 'emoji', emoji }],
+    is_big: false,
+  }) as { ok: boolean }
+  return res.ok
 }
 
 // ── MCP server ────────────────────────────────────────────────────────────────
@@ -214,6 +251,18 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: { type: 'object', properties: {} },
     },
     {
+      name: 'send_file',
+      description: 'Send a file from the server filesystem to the Telegram topic. Use this to share logs, exports, generated files, etc.',
+      inputSchema: {
+        type: 'object',
+        required: ['file_path'],
+        properties: {
+          file_path: { type: 'string', description: 'Absolute path to the file on the server' },
+          caption:   { type: 'string', description: 'Optional caption for the file' },
+        },
+      },
+    },
+    {
       name: 'message_peer',
       description: 'Send a message directly to another Claude session in the relay (peer-to-peer). The message will appear as an incoming user message in that session.',
       inputSchema: {
@@ -222,6 +271,18 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           session: { type: 'string', description: 'Target session name (from list_peers)' },
           text:    { type: 'string', description: 'Message to send to the peer session' },
+        },
+      },
+    },
+    {
+      name: 'react',
+      description: 'Add an emoji reaction to a message. Use to signal status: 👀 = working, ✅ = done, ❌ = error.',
+      inputSchema: {
+        type: 'object',
+        required: ['message_id', 'emoji'],
+        properties: {
+          message_id: { type: 'integer', description: 'ID of the message to react to' },
+          emoji:      { type: 'string',  description: 'Emoji to react with, e.g. "👀", "✅", "❌"' },
         },
       },
     },
@@ -246,9 +307,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     const mentions = [...text.matchAll(/@([\w-]+)/g)].map(m => m[1])
     if (mentions.length > 0) {
       try {
-        const sessionsPath = new URL('../../sessions.json', import.meta.url).pathname
+        const sessionsPath = new URL('../sessions.json', import.meta.url).pathname
         const sessions: Array<{ session: string; thread_id: number; host?: string }> =
-          JSON.parse(Bun.file(sessionsPath).toString())
+          JSON.parse(readFileSync(sessionsPath, 'utf8'))
         const selfName = process.env.SESSION_NAME ?? `session-${THREAD_ID}`
         for (const mention of mentions) {
           const target = sessions.find(s => s.session === mention)
@@ -283,6 +344,33 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     return { content: [{ type: 'text', text: `Sent. message_ids: ${ids.join(', ')}` }] }
   }
 
+  if (name === 'send_file') {
+    const filePath = String(args?.file_path ?? '')
+    const caption  = args?.caption ? String(args.caption) : undefined
+    try {
+      const file = Bun.file(filePath)
+      if (!(await file.exists())) {
+        return { content: [{ type: 'text', text: `File not found: ${filePath}` }] }
+      }
+      const blob = await file.arrayBuffer()
+      const fileName = filePath.split('/').pop() ?? 'file'
+      const form = new FormData()
+      form.append('chat_id', String(CHAT_ID))
+      form.append('message_thread_id', String(THREAD_ID))
+      form.append('document', new File([blob], fileName))
+      if (caption) form.append('caption', caption)
+      const r = await fetch(`${BASE}/sendDocument`, { method: 'POST', body: form })
+      const res = await r.json() as { ok: boolean; result?: { message_id: number } }
+      if (res.ok) {
+        return { content: [{ type: 'text', text: `File sent (message_id: ${res.result?.message_id})` }] }
+      } else {
+        return { content: [{ type: 'text', text: `Failed to send file: ${JSON.stringify(res)}` }] }
+      }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error sending file: ${e}` }] }
+    }
+  }
+
   if (name === 'edit_message') {
     const ok = await editMessage(Number(args?.message_id), String(args?.text ?? ''))
     return { content: [{ type: 'text', text: ok ? 'Edited.' : 'Failed to edit.' }] }
@@ -295,18 +383,16 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
   if (name === 'fetch_messages') {
     const limit = Number(args?.limit ?? 20)
-    const recent = messageHistory.slice(-limit)
-    const lines = recent.map(m =>
-      `[${m.ts}] ${m.user} (id:${m.message_id}): ${m.text}`
-    )
+    const recent = dbRecent(limit)
+    const lines = recent.map(m => `[${m.ts}] ${m.user} (id:${m.message_id}): ${m.text}`)
     return { content: [{ type: 'text', text: lines.join('\n') || 'No messages yet.' }] }
   }
 
   if (name === 'list_peers') {
     try {
-      const sessionsPath = new URL('../../sessions.json', import.meta.url).pathname
+      const sessionsPath = new URL('../sessions.json', import.meta.url).pathname
       const sessions: Array<{ session: string; thread_id: number; host?: string; path?: string }> =
-        JSON.parse(Bun.file(sessionsPath).toString())
+        JSON.parse(readFileSync(sessionsPath, 'utf8'))
       const lines: string[] = []
       for (const s of sessions) {
         if (s.thread_id === THREAD_ID) continue  // skip self
@@ -342,9 +428,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     const targetSession = String(args?.session ?? '')
     const text = String(args?.text ?? '')
     try {
-      const sessionsPath = new URL('../../sessions.json', import.meta.url).pathname
+      const sessionsPath = new URL('../sessions.json', import.meta.url).pathname
       const sessions: Array<{ session: string; thread_id: number; host?: string }> =
-        JSON.parse(Bun.file(sessionsPath).toString())
+        JSON.parse(readFileSync(sessionsPath, 'utf8'))
       const target = sessions.find(s => s.session === targetSession)
       if (!target) return { content: [{ type: 'text', text: `Session '${targetSession}' not found. Use list_peers to see available sessions.` }] }
 
@@ -378,10 +464,15 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
   }
 
+  if (name === 'react') {
+    const ok = await sendReaction(Number(args?.message_id), String(args?.emoji ?? '👍'))
+    return { content: [{ type: 'text', text: ok ? 'Reaction sent.' : 'Failed to send reaction.' }] }
+  }
+
   return { content: [{ type: 'text', text: `Unknown tool: ${name}` }] }
 })
 
-// ── message history (in-memory, last 100) ────────────────────────────────────
+// ── message history (SQLite, last 500, persists across restarts) ──────────────
 
 type TgMessage = {
   message_id: number
@@ -390,7 +481,25 @@ type TgMessage = {
   ts: string
 }
 
-const messageHistory: TgMessage[] = []
+const db = new Database(`/tmp/tg-history-${THREAD_ID}.db`)
+db.run(`CREATE TABLE IF NOT EXISTS messages (
+  rowid    INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id INTEGER,
+  user     TEXT,
+  text     TEXT,
+  ts       TEXT
+)`)
+db.run(`CREATE INDEX IF NOT EXISTS idx_ts ON messages(ts)`)
+
+function dbInsert(msg: TgMessage): void {
+  db.run('INSERT INTO messages (message_id, user, text, ts) VALUES (?, ?, ?, ?)',
+    [msg.message_id, msg.user, msg.text, msg.ts])
+  db.run('DELETE FROM messages WHERE rowid NOT IN (SELECT rowid FROM messages ORDER BY rowid DESC LIMIT 500)')
+}
+
+function dbRecent(limit: number): TgMessage[] {
+  return (db.query('SELECT message_id, user, text, ts FROM messages ORDER BY rowid DESC LIMIT ?').all(limit) as TgMessage[]).reverse()
+}
 
 // ── Queue file reader (routing bot writes here, we consume) ──────────────────
 // This avoids conflicts with the routing bot both polling getUpdates.
@@ -409,7 +518,10 @@ try {
   }
 } catch {}
 await Bun.write(LOCK_FILE, String(process.pid))
-process.on('exit', () => { try { require('fs').unlinkSync(LOCK_FILE) } catch {} })
+function cleanup() { try { require('fs').unlinkSync(LOCK_FILE) } catch {} }
+process.on('exit', cleanup)
+process.on('SIGTERM', () => { cleanup(); process.exit(0) })
+process.on('SIGINT',  () => { cleanup(); process.exit(0) })
 
 type QueueEntry = {
   text: string
@@ -443,6 +555,26 @@ async function loadLastId(): Promise<number> {
 
 async function saveLastId(id: number): Promise<void> {
   try { await Bun.write(STATE_FILE, String(id)) } catch {}
+}
+
+/** Remove queue entries older than 24h that have already been delivered. */
+async function trimQueue(lastId: number): Promise<void> {
+  try {
+    const file = Bun.file(QUEUE_FILE)
+    if (!(await file.exists())) return
+    const cutoff = Date.now() / 1000 - 24 * 60 * 60
+    const lines = (await file.text()).split('\n').filter(line => {
+      if (!line.trim()) return false
+      try {
+        const e = JSON.parse(line) as QueueEntry & { force?: boolean }
+        // Keep: recent entries OR undelivered regular messages
+        if (e.ts > cutoff) return true
+        if (!e.force && e.message_id > lastId) return true
+        return false
+      } catch { return false }
+    })
+    await Bun.write(QUEUE_FILE, lines.join('\n') + (lines.length ? '\n' : ''))
+  } catch {}
 }
 
 async function poll(): Promise<void> {
@@ -486,9 +618,12 @@ async function poll(): Promise<void> {
         try {
           const e = JSON.parse(line) as QueueEntry & { force?: boolean }
           if (e.force && e.message_id < lastId) {
-            // Use Infinity so Date.now() - Infinity = -Infinity < 15_000 always → never re-delivered
-            // Use < not <= so force msgs at exactly lastId can still be re-delivered after restart
-            deliveredForce.set(e.message_id, Infinity)
+            // Only permanently skip old force entries (> 5 min).
+            // Recent button clicks should still be re-delivered after a context restart.
+            const ageMs = Date.now() - e.ts * 1000
+            if (ageMs > 4 * 60 * 60 * 1000) {
+              deliveredForce.set(e.message_id, Infinity)
+            }
           }
         } catch {}
       }
@@ -500,9 +635,9 @@ async function poll(): Promise<void> {
 
   // Inject peer list as a system notification so Claude knows available sessions on startup
   try {
-    const sessionsPath = new URL('../../sessions.json', import.meta.url).pathname
+    const sessionsPath = new URL('../sessions.json', import.meta.url).pathname
     const allSessions: Array<{ session: string; thread_id: number; host?: string }> =
-      JSON.parse(Bun.file(sessionsPath).toString())
+      JSON.parse(readFileSync(sessionsPath, 'utf8'))
     const peers = allSessions.filter(s => s.thread_id !== THREAD_ID).map(s => s.session)
     if (peers.length > 0) {
       const selfName = process.env.SESSION_NAME ?? `session-${THREAD_ID}`
@@ -517,7 +652,12 @@ async function poll(): Promise<void> {
     }
   } catch {}
 
+  let pollCount = 0
   while (true) {
+    pollCount++
+    // Trim queue every ~5 minutes (600 cycles × 500ms)
+    if (pollCount % 600 === 0) void trimQueue(lastId)
+
     try {
       const file = Bun.file(QUEUE_FILE)
       if (!(await file.exists())) { await Bun.sleep(500); continue }
@@ -542,11 +682,9 @@ async function poll(): Promise<void> {
 
           const isoTs = new Date(ts * 1000).toISOString()
 
-          messageHistory.push({ message_id, user, text: msgText, ts: isoTs })
-          if (messageHistory.length > 100) messageHistory.shift()
+          dbInsert({ message_id, user, text: msgText, ts: isoTs })
 
           process.stderr.write(`[telegram] sending notification: ${user}: ${msgText}\n`)
-          Bun.write('/tmp/mcp-debug.log', `[${new Date().toISOString()}] sending notification: ${user}: ${msgText}\n`, { append: true })
 
           void mcp.notification({
             method: 'notifications/claude/channel',
@@ -578,7 +716,6 @@ async function poll(): Promise<void> {
           sentOne = true  // send only one per cycle; next will be picked up on next poll
 
           process.stderr.write(`[telegram] notification sent: ${user}: ${msgText}\n`)
-          Bun.write('/tmp/mcp-debug.log', `[${new Date().toISOString()}] notification sent OK\n`, { append: true })
         } catch (e) {
           process.stderr.write(`[telegram] parse error: ${e}\n`)
         }
