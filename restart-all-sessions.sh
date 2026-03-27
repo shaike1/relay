@@ -42,6 +42,11 @@ for cfg in configs:
     session = cfg["session"]
     host    = cfg.get("host") or ""
 
+    # Never restart the relay session itself — it manages all others
+    if session == "relay":
+        print(f"  Skipping 'relay' (self)")
+        continue
+
     # Filter by host if requested
     if filter_host:
         target = "" if filter_host == "local" else filter_host
