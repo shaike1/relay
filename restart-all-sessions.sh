@@ -72,7 +72,10 @@ filter_host   = sys.argv[2]
 
 configs = json.load(open(sessions_file))
 
-restarted = 0
+GROUP_SIZE  = 3
+GROUP_DELAY = 5  # seconds between groups
+
+to_restart = []
 for cfg in configs:
     session = cfg["session"]
     host    = cfg.get("host") or ""
@@ -88,8 +91,18 @@ for cfg in configs:
         if host != target:
             continue
 
+    to_restart.append(cfg)
+
+total = len(to_restart)
+restarted = 0
+for i, cfg in enumerate(to_restart):
+    session    = cfg["session"]
+    host       = cfg.get("host") or ""
     host_label = host or "local"
-    print(f"  Restarting '{session}' on {host_label}...")
+    group_num  = i // GROUP_SIZE + 1
+    total_grps = (total + GROUP_SIZE - 1) // GROUP_SIZE
+
+    print(f"  [{group_num}/{total_grps}] Restarting '{session}' on {host_label}...")
 
     ssh_prefix = ["ssh", "-o", "StrictHostKeyChecking=no", host] if host else []
 
@@ -100,6 +113,11 @@ for cfg in configs:
     )
     time.sleep(0.3)
     restarted += 1
+
+    # After each complete group (except the last), wait before continuing
+    if (i + 1) % GROUP_SIZE == 0 and (i + 1) < total:
+        print(f"  Group {group_num} done — waiting {GROUP_DELAY}s before next group...")
+        time.sleep(GROUP_DELAY)
 
 print(f"\nDone — restarted {restarted} session(s).")
 EOF
