@@ -143,8 +143,8 @@ Telegram's [forum topics](https://telegram.org/blog/topics-in-groups-collectible
 ### 1. Clone and run the install script
 
 ```bash
-git clone https://github.com/shaike1/topix-relay
-cd topix-relay
+git clone https://github.com/shaike1/relay
+cd relay
 bash install.sh
 ```
 
@@ -290,7 +290,7 @@ docker compose up -d
 docker compose logs -f
 ```
 
-No git clone, no build step — the image is pulled from Docker Hub automatically.
+No git clone, no build step — `shaikeme/topix-relay:latest` is pulled from Docker Hub automatically.
 
 ### Build from source (optional)
 
