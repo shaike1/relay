@@ -128,55 +128,33 @@ Telegram's [forum topics](https://telegram.org/blog/topics-in-groups-collectible
 
 ## Prerequisites
 
-- Python 3.10+ and `pip`
-- [Bun](https://bun.sh) — `curl -fsSL https://bun.sh/install | bash`
-- `tmux`
+- [Docker](https://docs.docker.com/engine/install/) + Docker Compose
 - A Telegram bot token from [@BotFather](https://t.me/BotFather)
 - A Telegram **Supergroup** with **Topics** enabled
 - SSH key auth for any remote hosts (no password prompts)
 
-> **Critical: bun must be in system PATH**
->
-> Claude Code spawns MCP servers with a minimal environment. If bun is only in `~/.bun/bin` the MCP server silently fails to start.
->
-> Fix:
-> ```bash
-> sudo ln -sf ~/.bun/bin/bun /usr/local/bin/bun
-> which bun  # should return /usr/local/bin/bun
-> ```
+> Everything else (Python, Bun, Node.js, Claude Code) is bundled in the Docker image.
 
 ---
 
 ## Setup
 
-### 1. Clone and run the install script
-
-```bash
-git clone https://github.com/shaike1/relay
-cd relay
-bash install.sh
-```
-
-The script installs Python deps, installs/symlinks Bun, writes your `.env`, sets up MCP credentials, and installs the systemd service — prompting only for what's missing.
-
-To install manually instead, expand the steps below.
-
-### 2. Create your Telegram bot
+### 1. Create your Telegram bot
 
 - Open [@BotFather](https://t.me/BotFather), send `/newbot`, follow the steps, copy the token
 - Disable privacy mode: BotFather → `/mybots` → your bot → **Bot Settings → Group Privacy → Turn off**
 
-### 3. Set up your Supergroup
+### 2. Set up your Supergroup
 
 - Create a Telegram group → Settings → **Topics: Enable**
 - Add your bot as **Admin** with "Manage Topics" permission
 
-### 4. Configure Relay
+### 3. Deploy with Docker
 
 ```bash
+curl -O https://raw.githubusercontent.com/shaike1/relay/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/shaike1/relay/main/.env.example
 cp .env.example .env
-cp sessions.example.json sessions.json
-cp hosts.example.json hosts.json
 ```
 
 Edit `.env`:
@@ -186,48 +164,39 @@ OWNER_ID=your_telegram_user_id
 GROUP_CHAT_ID=-1001234567890
 ```
 
+Then start:
+```bash
+docker compose up -d
+docker compose logs -f
+```
+
+That's it. The container pulls from Docker Hub, starts the bot, and auto-restarts on crash or reboot.
+
 To find your `OWNER_ID`, send `/start` to [@userinfobot](https://t.me/userinfobot).
 To find `GROUP_CHAT_ID`, add the bot to your group and call `getUpdates` — look for `chat.id` (a large negative number).
 
-### 5. Start Relay
+### 4. Add your first project
 
-```bash
-python bot.py
+From Telegram, send this in your group (General topic):
+
+```
+/new /path/to/your/project
 ```
 
-Or as a systemd service (recommended):
-
-```ini
-# /etc/systemd/system/relay.service
-[Unit]
-Description=Topix Relay — Telegram to Claude Code bridge
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/root/relay
-EnvironmentFile=/root/relay/.env
-ExecStart=/usr/bin/python3 /root/relay/bot.py
-Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
+Or for a project on a remote server:
+```
+/new root@your-server /path/to/project
 ```
 
-```bash
-systemctl daemon-reload
-systemctl enable relay
-systemctl start relay
-journalctl -u relay -f
-```
+Topix Relay creates the topic, wires up the MCP server, launches Claude — all in one command. Send a message in the new topic and Claude responds.
 
-With systemd, Topix Relay survives reboots and restarts automatically if it crashes. Claude sessions run in tmux and auto-resume their last conversation (`claude --resume`) each time they start — so a reboot or disconnect doesn't lose your context.
+> **Manual wiring (optional):** If you prefer to set up a project without `/new`, see the [manual MCP setup](#manual-mcp-setup) section below.
 
-### 6. Add the MCP server to a project
+---
+
+### Manual MCP setup
+
+Skip this if you use `/new`. This is for wiring an existing project manually.
 
 In your project folder, create `.mcp.json`:
 ```json
@@ -244,28 +213,13 @@ In your project folder, create `.mcp.json`:
 }
 ```
 
-Replace `/path/to/relay` with where you cloned this repo. `TELEGRAM_THREAD_ID` is the `message_thread_id` for this project's Telegram topic (run `getUpdates` and look in the message object).
-
 The MCP server reads its credentials from `~/.claude/channels/telegram/.env`:
 ```env
 TELEGRAM_BOT_TOKEN=your_token_here
 TELEGRAM_CHAT_ID=-1001234567890
 ```
 
-### 7. Add CLAUDE.md to your project
-
-Copy `CLAUDE_TEMPLATE.md` to your project root as `CLAUDE.md` (or append it to an existing one). This tells Claude to respond via `send_message` instead of the terminal.
-
-### 8. Launch Claude
-
-```bash
-cd /your/project
-claude
-```
-
-Claude loads the MCP server automatically, connects to the Telegram topic, and starts listening. Send a message — you'll see the typing indicator, then a reply.
-
-> **Tip: use `/new` instead of steps 6–8.** The bot command `/new /path/to/project` handles creating the topic, tmux session, `.mcp.json`, and launching Claude in one step. Steps 6–8 are for wiring up an existing project manually.
+Copy `CLAUDE_TEMPLATE.md` to your project root as `CLAUDE.md`, then run `claude` in the project directory.
 
 ---
 
