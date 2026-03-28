@@ -24,19 +24,18 @@ import { Database } from 'bun:sqlite'
 
 // ── config ────────────────────────────────────────────────────────────────────
 
-// Load env from multiple locations (later files win only for unset vars).
-// Canonical source of truth: /root/relay/.env (synced by restart-all-sessions.sh).
-// Fallback: ~/.claude/channels/telegram/.env (legacy per-host location).
+// Load env: /root/relay/.env is canonical (read first so it wins).
+// ~/.claude/channels/telegram/.env fills in anything still missing after.
 const ENV_FILES = [
-  join(homedir(), '.claude', 'channels', 'telegram', '.env'),
   '/root/relay/.env',
+  join(homedir(), '.claude', 'channels', 'telegram', '.env'),
 ]
 
 for (const ENV_FILE of ENV_FILES) {
   try {
     for (const line of readFileSync(ENV_FILE, 'utf8').split('\n')) {
-      const m = line.match(/^(\w+)=(.*)$/)
-      if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2]
+      const m = line.match(/^(\w+)=(.+)$/)   // require non-empty value
+      if (m && !process.env[m[1]]) process.env[m[1]] = m[2]
     }
   } catch {}
 }
