@@ -1157,14 +1157,55 @@ async def cmd_agents(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @owner_only
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not sessions:
-        await update.message.reply_text("No active mappings.")
+    """Show all sessions with ✓/✗ tmux alive check, grouped by host."""
+    configs = get_configs()
+    if not configs:
+        await update.message.reply_text("No sessions configured.")
         return
-    lines = [
-        f"thread <code>{tid}</code> → <b>{_esc(s)}</b>"
-        for (_, tid), s in sessions.items()
-    ]
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+    # Find relay session thread_id for sending result there too
+    relay_cfg    = next((c for c in configs if c.get("session") == "relay"), {})
+    relay_thread = relay_cfg.get("thread_id")
+
+    # Group by host (None = local)
+    from collections import defaultdict
+    by_host: dict[str | None, list[dict]] = defaultdict(list)
+    for cfg in configs:
+        by_host[cfg.get("host") or None].append(cfg)
+
+    lines = ["<b>Session Status</b>"]
+
+    for host in sorted(by_host.keys(), key=lambda h: h or ""):
+        host_label = host or "local"
+        lines.append(f"\n<b>{_esc(host_label)}</b>")
+
+        host_cfgs = by_host[host]
+        for cfg in sorted(host_cfgs, key=lambda c: c["session"]):
+            session   = cfg["session"]
+            thread_id = cfg.get("thread_id", "?")
+            try:
+                alive = await asyncio.to_thread(tmux_exists, session, host)
+                icon  = "✓" if alive else "✗"
+            except Exception:
+                icon = "?"
+            lines.append(f"  {icon} <code>{_esc(session)}</code> (t={thread_id})")
+
+    text = "\n".join(lines)
+
+    # Reply in current topic
+    await update.message.reply_text(text, parse_mode="HTML")
+
+    # Also post to relay topic if this command was sent from a different topic
+    if relay_thread and update.message.message_thread_id != relay_thread:
+        try:
+            await context.bot.send_message(
+                chat_id=GROUP_CHAT_ID,
+                message_thread_id=relay_thread,
+                text=text,
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.warning(f"Could not send /status to relay topic: {e}")
 
 
 def _all_tmux_sessions(host: str | None = None) -> list[str]:
