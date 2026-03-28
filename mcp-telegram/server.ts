@@ -24,17 +24,25 @@ import { Database } from 'bun:sqlite'
 
 // ── config ────────────────────────────────────────────────────────────────────
 
-const ENV_FILE = join(homedir(), '.claude', 'channels', 'telegram', '.env')
+// Load env from multiple locations (later files win only for unset vars).
+// Canonical source of truth: /root/relay/.env (synced by restart-all-sessions.sh).
+// Fallback: ~/.claude/channels/telegram/.env (legacy per-host location).
+const ENV_FILES = [
+  join(homedir(), '.claude', 'channels', 'telegram', '.env'),
+  '/root/relay/.env',
+]
 
-try {
-  for (const line of readFileSync(ENV_FILE, 'utf8').split('\n')) {
-    const m = line.match(/^(\w+)=(.*)$/)
-    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2]
-  }
-} catch {}
+for (const ENV_FILE of ENV_FILES) {
+  try {
+    for (const line of readFileSync(ENV_FILE, 'utf8').split('\n')) {
+      const m = line.match(/^(\w+)=(.*)$/)
+      if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2]
+    }
+  } catch {}
+}
 
 const TOKEN     = process.env.TELEGRAM_BOT_TOKEN
-const CHAT_ID   = process.env.TELEGRAM_CHAT_ID
+const CHAT_ID   = process.env.TELEGRAM_CHAT_ID ?? process.env.GROUP_CHAT_ID
 const THREAD_ID = process.env.TELEGRAM_THREAD_ID ? parseInt(process.env.TELEGRAM_THREAD_ID) : undefined
 
 if (!TOKEN || !CHAT_ID || !THREAD_ID) {

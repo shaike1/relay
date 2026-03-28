@@ -229,8 +229,8 @@ def write_mcp_json(path: str, thread_id: int, host: str | None = None, session: 
                 "args": ["run", "--cwd", "/root/relay/mcp-telegram", "--silent", "start"],
                 "env": {
                     "TELEGRAM_THREAD_ID": str(thread_id),
-                    "TELEGRAM_BOT_TOKEN": TOKEN,
-                    "TELEGRAM_CHAT_ID": str(GROUP_CHAT_ID),
+                    # TOKEN and CHAT_ID are loaded from /root/relay/.env by server.ts
+                    # — do not embed them here so token rotation needs only one file.
                     **({"SESSION_NAME": session} if session else {}),
                 }
             }
