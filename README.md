@@ -336,7 +336,9 @@ Claude Code conversation history lives in `~/.claude` — which is volume-mounte
 ### Local vs remote sessions
 
 - **Remote sessions** (`"host": "root@server"` in `sessions.json`) — no extra config. The container SSHes out to the remote host as usual.
-- **Local sessions** (`"host": null`) — Claude runs **inside** the container. The default `docker-compose.yml` mounts `/root:/root` which covers all sessions under the home directory. If your projects live elsewhere, add those paths as additional volumes.
+- **Local sessions** (`"host": null`) — Claude runs on the host in tmux. The container communicates via two shared mounts:
+  - `/root:/root` — project directories and `~/.claude` state
+  - `/tmp:/tmp` — queue files (`/tmp/tg-queue-*.jsonl`) and tmux socket (`/tmp/tmux-0/default`)
 
 ### Migrating from systemd
 
