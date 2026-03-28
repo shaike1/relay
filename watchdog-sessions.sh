@@ -19,6 +19,8 @@ LOG_FILE     = Path("/tmp/relay-watchdog.log")
 ALERT_STATE  = Path("/tmp/relay-watchdog-alerted.json")
 ALERT_COOLDOWN = 1800  # seconds (30 min) between alerts per session
 
+QUEUE_IDLE_WARN = 2 * 3600  # seconds (2h) — warn if session quiet this long
+
 # ── helpers ─────────────────────────────────────────────────────────────────
 
 def log(msg: str):
@@ -135,6 +137,35 @@ def remove_lock(thread_id: int, host: str | None):
         except FileNotFoundError:
             pass
 
+def latest_queue_entry_age(thread_id: int, host: str | None) -> float | None:
+    """Return seconds since the most recent queue entry for this session.
+    Returns None if the queue file doesn't exist or has no valid entries."""
+    queue_file = f"/tmp/tg-queue-{thread_id}.jsonl"
+    try:
+        if host:
+            r = subprocess.run(
+                ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=5", host,
+                 f"tail -1 {queue_file} 2>/dev/null"],
+                capture_output=True, text=True, timeout=10
+            )
+            last_line = r.stdout.strip()
+        else:
+            try:
+                with open(queue_file) as f:
+                    lines = f.readlines()
+                last_line = lines[-1].strip() if lines else ""
+            except FileNotFoundError:
+                return None
+        if not last_line:
+            return None
+        entry = json.loads(last_line)
+        ts = entry.get("ts")
+        if ts:
+            return time.time() - float(ts)
+    except Exception:
+        pass
+    return None
+
 # ── main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -175,7 +206,16 @@ def main():
             continue
 
         if mcp_alive:
-            continue  # healthy
+            # MCP is healthy — check queue file age for idle warning
+            try:
+                age = latest_queue_entry_age(thread_id, host)
+                if age is not None and age > QUEUE_IDLE_WARN:
+                    age_h = age / 3600
+                    log(f"WARNING: {session} (t={thread_id}): MCP alive but last queue entry "
+                        f"is {age_h:.1f}h old — session may be idle or stuck")
+            except Exception as e:
+                log(f"{session}: error checking queue age — {e}")
+            continue  # healthy — no recovery needed
 
         log(f"{session} (t={thread_id}): MCP dead — recovering...")
 
