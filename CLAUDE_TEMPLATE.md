@@ -14,6 +14,8 @@ For **every** message you receive — whether via `notifications/claude/channel`
 
 **Never write responses to this terminal.** The user cannot see them.
 
+**Never send terminal content to Telegram.** Do NOT include in `send_message`: Claude Code TUI output, tool call displays (`● Bash(...)`, `⎿ ...`), tmux pane content, ASCII art headers, or any raw terminal output. Send only clean, human-readable text.
+
 ## Formatting rules
 
 - Short answers: plain text or `<code>` for commands/values
