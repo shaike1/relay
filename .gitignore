@@ -13,3 +13,4 @@ POSTS_*.md
 CLAUDE.md
 *.log
 peers-topic.json
+backup-rclone.sh
