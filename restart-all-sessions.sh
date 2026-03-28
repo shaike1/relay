@@ -62,6 +62,28 @@ for host in hosts:
         )
         subprocess.run(["ssh", "-o", "StrictHostKeyChecking=no", host, update_cmd],
             capture_output=True)
+        # Also patch TELEGRAM_BOT_TOKEN in all .mcp.json files under /root
+        print(f"  Updating TELEGRAM_BOT_TOKEN in .mcp.json files on {host}...")
+        patch_mcp_cmd = (
+            "python3 -c \""
+            "import json, os, glob; "
+            "token = '" + local_token + "'; "
+            "for p in glob.glob('/root/**/.mcp.json', recursive=True): "
+            "  try: "
+            "    d = json.load(open(p)); "
+            "    changed = False; "
+            "    for srv in d.get('mcpServers', {}).values(): "
+            "      if isinstance(srv.get('env'), dict) and 'TELEGRAM_BOT_TOKEN' in srv['env']: "
+            "        srv['env']['TELEGRAM_BOT_TOKEN'] = token; "
+            "        changed = True; "
+            "    changed and open(p, 'w').write(json.dumps(d, indent=2)); "
+            "    changed and print(f\\\"  patched {p}\\\"); "
+            "  except Exception as e: "
+            "    print(f\\\"  skip {p}: {e}\\\"); "
+            "\""
+        )
+        subprocess.run(["ssh", "-o", "StrictHostKeyChecking=no", host, patch_mcp_cmd],
+            capture_output=True)
 SYNCEOF
 
 python3 - "$SESSIONS_FILE" "$FILTER_HOST" <<'EOF'
