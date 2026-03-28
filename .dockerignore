@@ -1,0 +1,30 @@
+# Secrets and state — injected via volumes at runtime
+.env
+sessions.json
+hosts.json
+peers-topic.json
+
+# Personal Claude session config (comes in via /root volume mount at runtime)
+.mcp.json
+.claude/
+
+# Personal/draft content — not part of the public image
+POSTS_*.md
+REDDIT_POST.md
+VIRAL_POST.md
+
+# Logs
+*.log
+sync.log
+
+# Build artifacts
+__pycache__/
+*.pyc
+mcp-telegram/node_modules/
+
+# Git
+.git
+.gitignore
+
+# Local dev
+.relay_session_id

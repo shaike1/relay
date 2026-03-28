@@ -260,6 +260,102 @@ Claude loads the MCP server automatically, connects to the Telegram topic, and s
 
 ---
 
+## Running with Docker
+
+Docker gives you two things at once: easy deployment (one command on any server) and isolation (bot + dependencies self-contained, nothing touches the host OS).
+
+### Files included
+
+| File | Purpose |
+|------|---------|
+| `Dockerfile` | Builds the image: Ubuntu 24.04, Python, Bun, Node.js, Claude Code CLI |
+| `docker-compose.yml` | Defines volumes, restart policy, env injection |
+| `docker-entrypoint.sh` | Runs `claude update --yes` on every container start, then launches `bot.py` |
+| `.dockerignore` | Keeps secrets and state out of the image |
+
+### Quick start (pre-built image)
+
+```bash
+# Download just the compose file and env template
+curl -O https://raw.githubusercontent.com/shaike1/relay/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/shaike1/relay/main/.env.example
+
+# Fill in your credentials
+cp .env.example .env && nano .env
+
+# Start
+docker compose up -d
+
+# Follow logs
+docker compose logs -f
+```
+
+No git clone, no build step — the image is pulled from Docker Hub automatically.
+
+### Build from source (optional)
+
+```bash
+git clone https://github.com/shaike1/relay
+cd relay
+# In docker-compose.yml, comment out `image:` and uncomment `build: .`
+docker compose up -d --build
+```
+
+### Upgrading Claude Code
+
+Claude Code auto-updates on every container start via `docker-entrypoint.sh` — no rebuild needed. Just restart:
+
+```bash
+docker compose restart
+```
+
+To pull a newer Topix Relay image:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+### What's mounted vs what's in the image
+
+| Data | Where it lives | Why |
+|------|---------------|-----|
+| `.env` (bot token, IDs) | Host, injected via `env_file` | Never baked into image |
+| `/root` (entire home dir) | Host volume | Covers `~/.claude`, SSH keys, all local session project paths in one mount |
+
+If all your sessions are remote (SSH), you can replace the `/root` mount with targeted mounts:
+```yaml
+volumes:
+  - ~/.claude:/root/.claude
+  - ~/.ssh:/root/.ssh:ro
+```
+
+### Session history
+
+Claude Code conversation history lives in `~/.claude` — which is volume-mounted. It **survives** container restarts and image rebuilds. The only thing that doesn't survive a restart is the tmux scrollback buffer (in-memory terminal output), same as a server reboot.
+
+### Local vs remote sessions
+
+- **Remote sessions** (`"host": "root@server"` in `sessions.json`) — no extra config. The container SSHes out to the remote host as usual.
+- **Local sessions** (`"host": null`) — Claude runs **inside** the container. The default `docker-compose.yml` mounts `/root:/root` which covers all sessions under the home directory. If your projects live elsewhere, add those paths as additional volumes.
+
+### Migrating from systemd
+
+```bash
+# 1. Stop the current relay
+systemctl stop relay
+systemctl disable relay
+
+# 2. Start the Docker container
+docker compose up -d --build
+
+# 3. Verify the bot is running
+docker compose logs -f
+```
+
+Sessions restart automatically — the bot reads `sessions.json` and relaunches Claude in each tmux window on startup.
+
+---
+
 ## Three ways to interact with any session
 
 Because every session runs with `--remote-control`, each Claude instance registers itself with Anthropic's infrastructure and generates a `claude.ai/code/session_...` URL. This means you have three parallel interfaces to every project — all talking to the same live session:

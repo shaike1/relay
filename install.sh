@@ -26,6 +26,36 @@ echo "  Topix Relay — Telegram to Claude Code bridge"
 echo "  https://github.com/shaike1/relay"
 echo ""
 
+# ── 0. Docker fast-path ───────────────────────────────────────────────────────
+
+if command -v docker &>/dev/null && command -v docker compose &>/dev/null 2>/dev/null; then
+  echo -n "  Docker is available. Install with Docker instead of systemd? [Y/n] "
+  read -r USE_DOCKER
+  USE_DOCKER="${USE_DOCKER:-Y}"
+  if [[ "$USE_DOCKER" =~ ^[Yy]$ ]]; then
+    info "Using Docker..."
+
+    # Write .env if missing
+    if [ ! -f "$ENV_FILE" ]; then
+      info "Configuring..."
+      ask "TELEGRAM_BOT_TOKEN:"; read -r BOT_TOKEN
+      ask "OWNER_ID:"; read -r OWNER_ID
+      ask "GROUP_CHAT_ID:"; read -r GROUP_CHAT_ID
+      printf "TELEGRAM_BOT_TOKEN=%s\nOWNER_ID=%s\nGROUP_CHAT_ID=%s\n" \
+        "$BOT_TOKEN" "$OWNER_ID" "$GROUP_CHAT_ID" > "$ENV_FILE"
+      chmod 600 "$ENV_FILE"
+      info ".env written"
+    fi
+
+    docker compose up -d
+    echo ""
+    echo "  ✓ Topix Relay is running in Docker"
+    echo "  Logs: docker compose logs -f"
+    echo ""
+    exit 0
+  fi
+fi
+
 # ── 1. Python deps ────────────────────────────────────────────────────────────
 
 info "Installing Python dependencies..."

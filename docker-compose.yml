@@ -1,0 +1,19 @@
+services:
+  relay:
+    image: shaike1/topix-relay:latest   # pre-built image from Docker Hub
+    # build: .                           # uncomment to build from source instead
+    container_name: relay
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      # Full home dir — covers all local Claude sessions and ~/.claude state.
+      # If your sessions are all remote (SSH), replace this with targeted mounts:
+      #   - ~/.claude:/root/.claude
+      #   - ~/.ssh:/root/.ssh:ro
+      - /root:/root
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
