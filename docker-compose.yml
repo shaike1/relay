@@ -12,6 +12,10 @@ services:
       #   - ~/.claude:/root/.claude
       #   - ~/.ssh:/root/.ssh:ro
       - /root:/root
+      # Shared /tmp — required for local sessions:
+      #   - queue files (/tmp/tg-queue-*.jsonl) written by bot, read by Claude
+      #   - tmux socket (/tmp/tmux-0/default) for tmux commands
+      - /tmp:/tmp
     logging:
       driver: "json-file"
       options:
