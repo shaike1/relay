@@ -16,6 +16,11 @@ services:
       #   - queue files (/tmp/tg-queue-*.jsonl) written by bot, read by Claude
       #   - tmux socket (/tmp/tmux-0/default) for tmux commands
       - /tmp:/tmp
+      # Runtime state files — bot reads these from its WORKDIR (/relay)
+      # but they live on the host at /root/relay/
+      - /root/relay/sessions.json:/relay/sessions.json
+      - /root/relay/hosts.json:/relay/hosts.json
+      - /root/relay/peers-topic.json:/relay/peers-topic.json
     logging:
       driver: "json-file"
       options:
