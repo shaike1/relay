@@ -1,6 +1,6 @@
 services:
   relay:
-    image: shaike1/topix-relay:latest   # pre-built image from Docker Hub
+    image: shaikeme/topix-relay:latest   # pre-built image from Docker Hub
     # build: .                           # uncomment to build from source instead
     container_name: relay
     restart: always
