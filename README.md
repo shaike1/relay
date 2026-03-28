@@ -4,6 +4,15 @@ Control Claude Code from Telegram — one topic per project, no SSH, no terminal
 
 Send a message from your phone. Claude thinks inside the project directory. Replies with formatted code, logs, diffs — right back in the same Telegram topic.
 
+**Runs in Docker.** One command to deploy, auto-restarts on crash, Claude Code auto-updates on every start:
+
+```bash
+curl -O https://raw.githubusercontent.com/shaike1/relay/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/shaike1/relay/main/.env.example
+cp .env.example .env && nano .env
+docker compose up -d
+```
+
 ## Why Relay — what makes it different
 
 There are other ways to control Claude remotely. Topix Relay does something distinct.
@@ -46,7 +55,7 @@ Running Claude Code on a remote server is powerful but fragile:
 
 This is the normal remote dev workflow. It works, but it's constant overhead: maintaining connections, babysitting sessions, manually restarting things after downtime.
 
-**Topix Relay removes that entirely.** Your projects run as persistent tmux sessions managed by a systemd service. Claude auto-resumes its last conversation on restart. You interact through Telegram — which is always open on your phone anyway. A dropped SSH connection changes nothing. A server reboot? The service comes back up, Claude resumes, your Telegram topic is right where you left it.
+**Topix Relay removes that entirely.** Your projects run as persistent tmux sessions inside a Docker container with `restart: always`. Claude auto-resumes its last conversation on restart, and Claude Code auto-updates on every container start. You interact through Telegram — which is always open on your phone anyway. A dropped SSH connection changes nothing. A server reboot? The container comes back up, Claude resumes, your Telegram topic is right where you left it.
 
 To add a new project, send one command in Telegram:
 
