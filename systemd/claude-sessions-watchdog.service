@@ -1,0 +1,9 @@
+[Unit]
+Description=Watchdog — restart any dead Claude relay sessions
+After=claude-sessions.service
+
+[Service]
+Type=oneshot
+ExecStart=/root/relay/scripts/sessions-watchdog.sh /root/relay/sessions.json
+StandardOutput=journal
+StandardError=journal

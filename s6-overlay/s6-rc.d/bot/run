@@ -1,0 +1,4 @@
+#!/command/with-contenv sh
+# Load environment and run the relay bot
+cd /relay
+exec python3 bot.py

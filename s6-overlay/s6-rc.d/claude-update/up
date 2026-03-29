@@ -1,0 +1,3 @@
+#!/command/execlineb -P
+foreground { claude update --yes }
+ifelse { true } { }

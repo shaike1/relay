@@ -1,0 +1,14 @@
+[Unit]
+Description=Start Claude relay sessions on boot
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/root/relay/scripts/start-sessions.sh /root/relay/sessions.json
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
