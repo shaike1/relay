@@ -42,8 +42,7 @@ COPY . .
 
 # s6-rc service definitions for session container (session-specific layout)
 COPY s6-overlay-session/s6-rc.d /etc/s6-overlay/s6-rc.d
-RUN chmod +x /etc/s6-overlay/s6-rc.d/mcp-server/run \
-    && chmod +x /etc/s6-overlay/s6-rc.d/claude-session/run \
+RUN chmod +x /etc/s6-overlay/s6-rc.d/claude-session/run \
     && chmod +x /etc/s6-overlay/s6-rc.d/claude-update/up \
     && chmod +x /relay/scripts/claude-session-loop.sh \
     && chmod +x /relay/scripts/mcp-server-wrapper.sh
