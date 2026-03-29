@@ -33,6 +33,9 @@ RUN npm install -g @anthropic-ai/claude-code
 
 WORKDIR /relay
 
+# Symlink /root/relay → /relay so .mcp.json paths (written by bot with host paths) work in container
+RUN mkdir -p /root && ln -sf /relay /root/relay
+
 # MCP server deps
 COPY mcp-telegram/package.json mcp-telegram/bun.lock* ./mcp-telegram/
 RUN cd mcp-telegram && bun install --frozen-lockfile --silent
