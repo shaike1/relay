@@ -828,14 +828,8 @@ async function poll(): Promise<void> {
 
   // Track Claude activity: updated whenever Claude calls any MCP tool.
   // Used to confirm notification delivery — we only advance lastId after Claude shows activity.
-  // Initialize to 0 (not Date.now()) so that messages queued before startup are delivered
-  // on first poll — the idle gap since epoch is always > 2s.
   let lastActivityTs = 0
-  // idleSince: snapshot of lastActivityTs at the moment the notification was sent.
-  // We only confirm delivery if Claude was idle for >2s before the notification (meaning it
-  // wasn't mid-task on something unrelated). This prevents false confirmations when Claude
-  // calls typing/send_message during unrelated work (e.g. disk cleanup status updates).
-  let pendingDelivery: { message_id: number; sentAt: number; idleSince: number } | null = null
+  let pendingDelivery: { message_id: number; sentAt: number } | null = null
   _updateActivity = () => { lastActivityTs = Date.now() }
 
   let pollCount = 0
@@ -845,14 +839,11 @@ async function poll(): Promise<void> {
     if (pollCount % 600 === 0) void trimQueue(lastId)
 
     try {
-      // If Claude showed activity after we sent a pending notification, confirm delivery.
-      // Guard: only confirm if Claude was idle for >2s before the notification was sent.
-      // This prevents false confirmations when Claude is mid-task on unrelated work.
-      if (pendingDelivery && lastActivityTs > pendingDelivery.sentAt &&
-          pendingDelivery.sentAt - pendingDelivery.idleSince > 2000) {
+      // If Claude showed activity after we sent a pending notification, confirm delivery
+      if (pendingDelivery && lastActivityTs > pendingDelivery.sentAt) {
         lastId = pendingDelivery.message_id
         await saveState(lastId, [...ackedForceIds])
-        process.stderr.write(`[telegram] delivery confirmed for msg ${pendingDelivery.message_id} (idle guard passed)\n`)
+        process.stderr.write(`[telegram] delivery confirmed for msg ${pendingDelivery.message_id}\n`)
         pendingDelivery = null
       }
 
@@ -860,8 +851,7 @@ async function poll(): Promise<void> {
       if (pendingDelivery && Date.now() - pendingDelivery.sentAt > 3000) {
         process.stderr.write(`[telegram] no activity after 3s — retrying notification for msg ${pendingDelivery.message_id}\n`)
         // Don't clear pendingDelivery — keep retrying until Claude responds or message expires
-        pendingDelivery.sentAt = Date.now()     // reset timer for next retry
-        pendingDelivery.idleSince = lastActivityTs  // update idle snapshot for guard
+        pendingDelivery.sentAt = Date.now()  // reset timer for next retry
         // Re-read queue to find and re-send the message
         try {
           const retryFile = Bun.file(QUEUE_FILE)
@@ -938,9 +928,8 @@ async function poll(): Promise<void> {
             const trimmed = [...ackedForceIds].slice(-200)
             await saveState(lastId, trimmed)
           } else if (message_id > lastId) {
-            // Don't advance lastId yet — wait for Claude to show activity (call a tool).
-            // Snapshot lastActivityTs so we can detect if Claude was idle when notified.
-            pendingDelivery = { message_id, sentAt: Date.now(), idleSince: lastActivityTs }
+            // Don't advance lastId yet — wait for Claude to show activity (call a tool)
+            pendingDelivery = { message_id, sentAt: Date.now() }
           }
           sentOne = true
 
