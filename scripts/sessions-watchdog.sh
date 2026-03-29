@@ -23,7 +23,7 @@ for s in sessions:
     if host or not os.path.isdir(path):
         continue
 
-    result = subprocess.run(["tmux", "has-session", "-t", name], capture_output=True)
+    result = subprocess.run(["tmux", "has-session", "-t", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if result.returncode == 0:
         continue  # alive
 

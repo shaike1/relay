@@ -38,7 +38,7 @@ for s in sessions:
     # Check if tmux session already has an active process
     result = subprocess.run(
         ["tmux", "has-session", "-t", name],
-        capture_output=True
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
     if result.returncode == 0:
         print(f"[start-sessions] already running: {name}")
