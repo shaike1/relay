@@ -21,6 +21,25 @@ export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 
 cd "$WORKDIR"
 
+# Start MCP server wrapper if this session has a thread_id in sessions.json
+THREAD_ID=$(python3 -c "
+import json, sys
+try:
+    sessions = json.load(open('/root/relay/sessions.json'))
+    s = next((s for s in sessions if s['session'] == '$SESSION'), None)
+    print(s['thread_id'] if s else '')
+except Exception:
+    print('')
+")
+
+if [ -n "$THREAD_ID" ]; then
+  export TELEGRAM_THREAD_ID="$THREAD_ID"
+  export SESSION_NAME="$SESSION"
+  /root/relay/scripts/mcp-server-wrapper.sh &
+  MCP_WRAPPER_PID=$!
+  trap "kill $MCP_WRAPPER_PID 2>/dev/null || true" EXIT
+fi
+
 while true; do
   if [ -f "$SESSION_ID_FILE" ]; then
     SID=$(cat "$SESSION_ID_FILE")

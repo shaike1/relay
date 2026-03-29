@@ -36,13 +36,19 @@ HOSTS_FILE        = os.path.join(os.path.dirname(__file__), "hosts.json")
 sessions: dict[tuple[int, int], str] = {}        # (chat_id, thread_id) -> session_name
 session_to_thread: dict[str, tuple[int, int]] = {}
 line_counts: dict[str, int] = {}
-_mcp_known:  dict[str, bool] = {}   # cache: once a session is known to have .mcp.json, keep that
+_mcp_known:  dict[str, bool] = {}   # cache: True=MCP known alive, False=invalidated (recheck next poll)
 session_busy: dict[str, bool] = {}   # tracks whether session was "Working…" last poll
 last_status_time: dict[str, float] = {}      # session -> timestamp of last status update
 last_activity_time: dict[str, float] = {}    # session -> timestamp of last line-count change
 last_user_sent: dict[str, float] = {}        # session -> timestamp of last user message sent
 
 ANSI_RE = re.compile(r'\x1b\[[0-9;]*[mGKHF]|\x1b\][^\x07]*\x07|\r')
+
+
+def invalidate_mcp_cache(session: str) -> None:
+    """Force next poll to recheck .mcp.json existence (e.g. after detecting stuck MCP)."""
+    _mcp_known[session] = False
+
 
 # ─── persistent config ────────────────────────────────────────────────────────
 
@@ -503,8 +509,8 @@ async def _poll_one_session(
         await asyncio.to_thread(_check_login_prompt, session, host, chat_id, thread_id, context)
 
         mcp_json = f"{path}/.mcp.json"
-        if _mcp_known.get(session):
-            has_mcp = True   # sticky: once seen, always assume MCP (SSH failures won't flip this)
+        if _mcp_known.get(session) is True:
+            has_mcp = True   # cached: known alive (reset via invalidate_mcp_cache on stuck detection)
         else:
             has_mcp = (
                 (await asyncio.to_thread(run_cmd, ["test", "-f", mcp_json], host)).returncode == 0
@@ -1655,6 +1661,9 @@ async def check_stuck_force(context) -> None:
             session_name = next(
                 (s for (cid, tid), s in sessions.items() if tid == thread_id), f"thread {thread_id}"
             )
+            # Invalidate MCP cache so next poll rechecks .mcp.json — MCP may have died
+            if session_name != f"thread {thread_id}":
+                invalidate_mcp_cache(session_name)
             age_min = int(age / 60)
             text = entry.get("text", "?")
             chat_id = thread_to_chat.get(thread_id, GROUP_CHAT_ID)
