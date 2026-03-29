@@ -12,10 +12,11 @@ services:
       #   - ~/.claude:/root/.claude
       #   - ~/.ssh:/root/.ssh:ro
       - /root:/root
-      # Shared /tmp — required for local sessions:
-      #   - queue files (/tmp/tg-queue-*.jsonl) written by bot, read by Claude
-      #   - tmux socket (/tmp/tmux-0/default) for tmux commands
-      - /tmp:/tmp
+      # Shared /tmp for queue files written by bot, read by session containers.
+      # When running with docker-compose.sessions.yml, relay-queue volume is used
+      # instead (shared named volume mounted at /tmp in both bot and sessions).
+      # For standalone bot-only deployments, the host /tmp bind mount is fine.
+      - relay-queue:/tmp
       # Runtime state files — bot reads these from its WORKDIR (/relay)
       # but they live on the host at /root/relay/
       - /root/relay/sessions.json:/relay/sessions.json
@@ -29,3 +30,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  relay-queue:
+    external: true

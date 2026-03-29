@@ -35,9 +35,13 @@ except Exception:
 if [ -n "$THREAD_ID" ]; then
   export TELEGRAM_THREAD_ID="$THREAD_ID"
   export SESSION_NAME="$SESSION"
-  /root/relay/scripts/mcp-server-wrapper.sh &
-  MCP_WRAPPER_PID=$!
-  trap "kill $MCP_WRAPPER_PID 2>/dev/null || true" EXIT
+  # In containerized mode (S6_SUPERVISED=1), the mcp-server service is managed
+  # by s6-overlay separately — skip launching it here to avoid duplication.
+  if [ "${S6_SUPERVISED:-0}" != "1" ]; then
+    /root/relay/scripts/mcp-server-wrapper.sh &
+    MCP_WRAPPER_PID=$!
+    trap "kill $MCP_WRAPPER_PID 2>/dev/null || true" EXIT
+  fi
 fi
 
 while true; do

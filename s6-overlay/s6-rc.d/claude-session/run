@@ -1,0 +1,4 @@
+#!/command/with-contenv sh
+# Claude session loop service — supervised by s6
+# SESSION_NAME and WORKDIR are injected via docker-compose environment
+exec /relay/scripts/claude-session-loop.sh "${SESSION_NAME}" "${WORKDIR}"

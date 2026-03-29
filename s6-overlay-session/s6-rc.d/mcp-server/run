@@ -1,0 +1,4 @@
+#!/command/with-contenv sh
+# MCP server service — supervised by s6
+# SESSION_NAME and TELEGRAM_THREAD_ID are injected via docker-compose environment
+exec /relay/scripts/mcp-server-wrapper.sh
