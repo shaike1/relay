@@ -328,8 +328,9 @@ let _updateActivity: (() => void) | null = null
 
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args } = req.params
-  // Signal Claude activity so pending delivery can be confirmed
-  if (_updateActivity) _updateActivity()
+  // Only confirm delivery when Claude calls fetch_messages — proves it actually read the message.
+  // (Any other tool call could be unrelated work and would falsely advance lastId.)
+  if (name === 'fetch_messages' && _updateActivity) _updateActivity()
 
   if (name === 'send_message') {
     // Accept 'message' as alias for 'text' — Claude sometimes uses wrong param name
