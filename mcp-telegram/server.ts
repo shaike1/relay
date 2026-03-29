@@ -828,7 +828,9 @@ async function poll(): Promise<void> {
 
   // Track Claude activity: updated whenever Claude calls any MCP tool.
   // Used to confirm notification delivery — we only advance lastId after Claude shows activity.
-  let lastActivityTs = Date.now()
+  // Initialize to 0 (not Date.now()) so that messages queued before startup are delivered
+  // on first poll — the idle gap since epoch is always > 2s.
+  let lastActivityTs = 0
   // idleSince: snapshot of lastActivityTs at the moment the notification was sent.
   // We only confirm delivery if Claude was idle for >2s before the notification (meaning it
   // wasn't mid-task on something unrelated). This prevents false confirmations when Claude
@@ -858,7 +860,8 @@ async function poll(): Promise<void> {
       if (pendingDelivery && Date.now() - pendingDelivery.sentAt > 3000) {
         process.stderr.write(`[telegram] no activity after 3s — retrying notification for msg ${pendingDelivery.message_id}\n`)
         // Don't clear pendingDelivery — keep retrying until Claude responds or message expires
-        pendingDelivery.sentAt = Date.now()  // reset timer for next retry
+        pendingDelivery.sentAt = Date.now()     // reset timer for next retry
+        pendingDelivery.idleSince = lastActivityTs  // update idle snapshot for guard
         // Re-read queue to find and re-send the message
         try {
           const retryFile = Bun.file(QUEUE_FILE)
