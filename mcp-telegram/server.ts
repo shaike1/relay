@@ -637,7 +637,7 @@ type TgMessage = {
 const db = new Database(`/tmp/tg-history-${THREAD_ID}.db`)
 db.run(`CREATE TABLE IF NOT EXISTS messages (
   rowid    INTEGER PRIMARY KEY AUTOINCREMENT,
-  message_id INTEGER,
+  message_id INTEGER UNIQUE,
   user     TEXT,
   text     TEXT,
   ts       TEXT
@@ -645,7 +645,7 @@ db.run(`CREATE TABLE IF NOT EXISTS messages (
 db.run(`CREATE INDEX IF NOT EXISTS idx_ts ON messages(ts)`)
 
 function dbInsert(msg: TgMessage): void {
-  db.run('INSERT INTO messages (message_id, user, text, ts) VALUES (?, ?, ?, ?)',
+  db.run('INSERT OR IGNORE INTO messages (message_id, user, text, ts) VALUES (?, ?, ?, ?)',
     [msg.message_id, msg.user, msg.text, msg.ts])
   db.run('DELETE FROM messages WHERE rowid NOT IN (SELECT rowid FROM messages ORDER BY rowid DESC LIMIT 500)')
 }
