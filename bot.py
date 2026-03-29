@@ -36,6 +36,7 @@ HOSTS_FILE        = os.path.join(os.path.dirname(__file__), "hosts.json")
 sessions: dict[tuple[int, int], str] = {}        # (chat_id, thread_id) -> session_name
 session_to_thread: dict[str, tuple[int, int]] = {}
 line_counts: dict[str, int] = {}
+_mcp_known:  dict[str, bool] = {}   # cache: once a session is known to have .mcp.json, keep that
 session_busy: dict[str, bool] = {}   # tracks whether session was "Working…" last poll
 last_status_time: dict[str, float] = {}      # session -> timestamp of last status update
 last_activity_time: dict[str, float] = {}    # session -> timestamp of last line-count change
@@ -502,10 +503,15 @@ async def _poll_one_session(
         await asyncio.to_thread(_check_login_prompt, session, host, chat_id, thread_id, context)
 
         mcp_json = f"{path}/.mcp.json"
-        has_mcp = (
-            (await asyncio.to_thread(run_cmd, ["test", "-f", mcp_json], host)).returncode == 0
-            if host else os.path.exists(mcp_json)
-        )
+        if _mcp_known.get(session):
+            has_mcp = True   # sticky: once seen, always assume MCP (SSH failures won't flip this)
+        else:
+            has_mcp = (
+                (await asyncio.to_thread(run_cmd, ["test", "-f", mcp_json], host)).returncode == 0
+                if host else os.path.exists(mcp_json)
+            )
+            if has_mcp:
+                _mcp_known[session] = True
         if has_mcp:
             lines = await asyncio.to_thread(tmux_capture, session, host)
             line_counts[session] = len(lines)
@@ -515,7 +521,16 @@ async def _poll_one_session(
         prev  = line_counts.get(session, len(lines))
 
         if len(lines) > prev:
-            text = "\n".join(lines[prev:]).strip()
+            new_lines = [ANSI_RE.sub("", l) for l in lines[prev:]]
+            # Filter out Claude Code TUI chrome (startup screens, update banners, box-drawing)
+            tui_patterns = (
+                "Claude Code", "claude --resume", "/remote-control is active",
+                "Please upgrade", "Resume this session", "bypass permissions",
+                "Remote Control active", "shift+tab to cycle",
+                "─────", "░▒▓", "▐▄▀▌", "Sonnet", "Claude Max",
+            )
+            clean_lines = [l for l in new_lines if not any(p in l for p in tui_patterns)]
+            text = "\n".join(clean_lines).strip()
             if text:
                 for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
                     await context.bot.send_message(
@@ -1542,11 +1557,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             text = f"[File: {filename} — download failed]{(' ' + text) if text else ''}"
 
-    # Always deliver via tmux keyboard input so messages appear in the Claude Code transcript
     user_name = update.effective_user.first_name if update.effective_user else "user"
-    tmux_send(session, f"[{user_name}]: {text}", host)
-    last_user_sent[session] = time.time()
-    logger.info(f"Sent message to tmux '{session}' (thread {thread_id})")
+    msg_id    = update.message.message_id
+
+    if has_mcp:
+        # Deliver via queue file → MCP notification channel.
+        # The MCP server polls every 500ms and sends notifications/claude/channel to Claude.
+        # Messages persist if Claude is busy; no pile-up, deduplication built-in.
+        write_queue(thread_id, {
+            "text":       f"[{user_name}]: {text}",
+            "user":       user_name,
+            "message_id": msg_id,
+        }, host)
+        last_user_sent[session] = time.time()
+        logger.info(f"Queued message for '{session}' (thread {thread_id}) via MCP channel")
+    else:
+        # Fallback for sessions without MCP: send keystrokes directly into tmux
+        tmux_send(session, f"[{user_name}]: {text}", host)
+        last_user_sent[session] = time.time()
+        logger.info(f"Sent message to tmux '{session}' (thread {thread_id})")
 
 
 # ─── main ─────────────────────────────────────────────────────────────────────
@@ -1643,12 +1672,60 @@ async def check_stuck_force(context) -> None:
                 logger.error(f"Failed to send stuck-force alert: {e}")
 
 
+AGENT_TASKS_FILE = '/tmp/agent-tasks.json'
+
+
+async def check_task_timeouts(context: ContextTypes.DEFAULT_TYPE):
+    """Notify requesting session when a task exceeds its TTL."""
+    try:
+        f = AGENT_TASKS_FILE
+        if not os.path.exists(f):
+            return
+        with open(f) as fp:
+            tasks = json.load(fp)
+        now = time.time()
+        changed = False
+        for task_id, task in list(tasks.items()):
+            if task.get("status") != "pending":
+                continue
+            age = now - task.get("created", now)
+            ttl = task.get("ttl", 600)
+            if age < ttl:
+                continue
+            # Task expired — write timeout result to requester's queue
+            from_thread = task.get("from_thread")
+            from_name   = task.get("from", "unknown")
+            to_name     = task.get("to", "unknown")
+            if from_thread:
+                entry = json.dumps({
+                    "text":       f"[Task timeout | task_id:{task_id}]\nTask sent to '{to_name}' expired after {int(age)}s.",
+                    "user":       "relay-bus",
+                    "message_id": -int(time.time() * 1000),
+                    "ts":         now,
+                    "force":      True,
+                    "bus":        {"type": "result", "reply_to": task_id, "status": "timeout",
+                                   "from": "relay-bus", "to": from_name},
+                })
+                qf = f"/tmp/tg-queue-{from_thread}.jsonl"
+                with open(qf, "a") as fq:
+                    fq.write(entry + "\n")
+                logger.warning(f"Task {task_id} (→{to_name}) timed out after {int(age)}s")
+            tasks[task_id]["status"] = "timeout"
+            changed = True
+        if changed:
+            with open(f, "w") as fp:
+                json.dump(tasks, fp, indent=2)
+    except Exception as e:
+        logger.error(f"check_task_timeouts error: {e}")
+
+
 async def post_init(app: Application):
     load_sessions()
     app.job_queue.run_repeating(poll_output, interval=POLL_INTERVAL, first=2)
     app.job_queue.run_repeating(poll_output_remote, interval=20, first=10)
     app.job_queue.run_repeating(keepalive_ping, interval=6 * 3600, first=3600)
     app.job_queue.run_repeating(check_stuck_force, interval=STUCK_FORCE_CHECK_INTERVAL, first=60)
+    app.job_queue.run_repeating(check_task_timeouts, interval=30, first=60)
 
 
 BOT_PID_FILE = '/tmp/relay-bot.pid'

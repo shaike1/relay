@@ -47,7 +47,7 @@ const THREAD_ID = process.env.TELEGRAM_THREAD_ID ? parseInt(process.env.TELEGRAM
 if (!TOKEN || !CHAT_ID || !THREAD_ID) {
   process.stderr.write(
     `telegram channel: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_THREAD_ID required\n` +
-    `  set in ${ENV_FILE} or as environment variables\n`
+    `  set in ${ENV_FILES[0]} or as environment variables\n`
   )
   process.exit(1)
 }
@@ -294,11 +294,42 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
+    {
+      name: 'send_task',
+      description: 'Send a task to another Claude session and get back a task_id. The target session will receive the prompt and should call complete_task when done. Results are automatically routed back to you via your notification channel.',
+      inputSchema: {
+        type: 'object',
+        required: ['to', 'prompt'],
+        properties: {
+          to:     { type: 'string', description: 'Target session name (from list_peers)' },
+          prompt: { type: 'string', description: 'Task description / prompt for the target agent' },
+          ttl:    { type: 'integer', description: 'Seconds before task expires (default: 600)', default: 600 },
+        },
+      },
+    },
+    {
+      name: 'complete_task',
+      description: 'Mark a received task as complete and send the result back to the requesting session. Call this when you finish a task you received via send_task.',
+      inputSchema: {
+        type: 'object',
+        required: ['task_id', 'output'],
+        properties: {
+          task_id: { type: 'string', description: 'The task_id from the task notification you received' },
+          output:  { type: 'string', description: 'The result / output to send back to the requester' },
+          status:  { type: 'string', description: '"ok" (default) or "error"', enum: ['ok', 'error'] },
+        },
+      },
+    },
   ],
 }))
 
+// Forward reference — poll() sets this; CallTool handler updates it
+let _updateActivity: (() => void) | null = null
+
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args } = req.params
+  // Signal Claude activity so pending delivery can be confirmed
+  if (_updateActivity) _updateActivity()
 
   if (name === 'send_message') {
     // Accept 'message' as alias for 'text' — Claude sometimes uses wrong param name
@@ -484,6 +515,110 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   if (name === 'react') {
     const ok = await sendReaction(Number(args?.message_id), String(args?.emoji ?? '👍'))
     return { content: [{ type: 'text', text: ok ? 'Reaction sent.' : 'Failed to send reaction.' }] }
+  }
+
+  if (name === 'send_task') {
+    const targetSession = String(args?.to ?? '')
+    const prompt        = String(args?.prompt ?? '')
+    const ttl           = Number(args?.ttl ?? 600)
+    try {
+      const sessionsPath = new URL('../sessions.json', import.meta.url).pathname
+      const sessions: Array<{ session: string; thread_id: number; host?: string }> =
+        JSON.parse(readFileSync(sessionsPath, 'utf8'))
+      const target = sessions.find(s => s.session === targetSession)
+      if (!target) return { content: [{ type: 'text', text: `Session '${targetSession}' not found. Use list_peers to see available sessions.` }] }
+
+      const selfName = process.env.SESSION_NAME ?? `session-${THREAD_ID}`
+      const taskId   = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+      // Persist task metadata so complete_task can route the result back
+      const TASKS_FILE = '/tmp/agent-tasks.json'
+      let tasks: Record<string, unknown> = {}
+      try {
+        const f = Bun.file(TASKS_FILE)
+        if (await f.exists()) tasks = JSON.parse(await f.text())
+      } catch {}
+      tasks[taskId] = {
+        from:        selfName,
+        from_thread: THREAD_ID,
+        from_host:   null,  // always local — task routing back always hits this host's queue
+        to:          targetSession,
+        to_thread:   target.thread_id,
+        created:     Date.now() / 1000,
+        ttl,
+        status:      'pending',
+      }
+      await Bun.write(TASKS_FILE, JSON.stringify(tasks, null, 2))
+
+      // Write task message into target's queue
+      const queueFile = `/tmp/tg-queue-${target.thread_id}.jsonl`
+      const entry = JSON.stringify({
+        text:       `[Task from ${selfName} | task_id:${taskId}]\n${prompt}`,
+        user:       `agent:${selfName}`,
+        message_id: -Date.now(),
+        ts:         Date.now() / 1000,
+        force:      true,
+        bus: { type: 'task', id: taskId, from: selfName, from_thread: THREAD_ID, to: targetSession, prompt, ttl },
+      })
+
+      if (target.host) {
+        const proc = Bun.spawn(
+          ['ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=5',
+           target.host, `cat >> ${queueFile}`],
+          { stdin: new TextEncoder().encode(entry + '\n') }
+        )
+        await proc.exited
+        if (proc.exitCode !== 0) throw new Error(`SSH exit code ${proc.exitCode}`)
+      } else {
+        await Bun.write(queueFile, entry + '\n', { append: true })
+      }
+
+      void logToPeersTopic(selfName, targetSession, `[task:${taskId}] ${prompt}`)
+      return { content: [{ type: 'text', text: `Task sent to '${targetSession}'. task_id: ${taskId}` }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error sending task: ${e}` }] }
+    }
+  }
+
+  if (name === 'complete_task') {
+    const taskId = String(args?.task_id ?? '')
+    const output = String(args?.output ?? '')
+    const status = String(args?.status ?? 'ok')
+    try {
+      const TASKS_FILE = '/tmp/agent-tasks.json'
+      const f = Bun.file(TASKS_FILE)
+      if (!(await f.exists())) return { content: [{ type: 'text', text: `No pending tasks found.` }] }
+
+      const tasks = JSON.parse(await f.text()) as Record<string, {
+        from: string; from_thread: number; to: string; status: string
+      }>
+      const task = tasks[taskId]
+      if (!task) return { content: [{ type: 'text', text: `Task '${taskId}' not found.` }] }
+      if (task.status !== 'pending') return { content: [{ type: 'text', text: `Task '${taskId}' is already ${task.status}.` }] }
+
+      const selfName = process.env.SESSION_NAME ?? `session-${THREAD_ID}`
+
+      // Route result back to requester's queue
+      const queueFile = `/tmp/tg-queue-${task.from_thread}.jsonl`
+      const entry = JSON.stringify({
+        text:       `[Result from ${selfName} | task_id:${taskId} | status:${status}]\n${output}`,
+        user:       `agent:${selfName}`,
+        message_id: -Date.now(),
+        ts:         Date.now() / 1000,
+        force:      true,
+        bus: { type: 'result', id: `result-${Date.now()}`, from: selfName, to: task.from, reply_to: taskId, status, output },
+      })
+      await Bun.write(queueFile, entry + '\n', { append: true })
+
+      // Update task status
+      tasks[taskId].status = status === 'error' ? 'error' : 'done'
+      await Bun.write(TASKS_FILE, JSON.stringify(tasks, null, 2))
+
+      void logToPeersTopic(selfName, task.from, `[result:${taskId}] ${status}: ${output.slice(0, 200)}`)
+      return { content: [{ type: 'text', text: `Result sent back to '${task.from}'. Task ${taskId} marked ${tasks[taskId].status}.` }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error completing task: ${e}` }] }
+    }
   }
 
   return { content: [{ type: 'text', text: `Unknown tool: ${name}` }] }
@@ -691,6 +826,12 @@ async function poll(): Promise<void> {
     }
   } catch {}
 
+  // Track Claude activity: updated whenever Claude calls any MCP tool.
+  // Used to confirm notification delivery — we only advance lastId after Claude shows activity.
+  let lastActivityTs = Date.now()
+  let pendingDelivery: { message_id: number; sentAt: number } | null = null
+  _updateActivity = () => { lastActivityTs = Date.now() }
+
   let pollCount = 0
   while (true) {
     pollCount++
@@ -698,6 +839,44 @@ async function poll(): Promise<void> {
     if (pollCount % 600 === 0) void trimQueue(lastId)
 
     try {
+      // If Claude showed activity after we sent a pending notification, confirm delivery
+      if (pendingDelivery && lastActivityTs > pendingDelivery.sentAt) {
+        lastId = pendingDelivery.message_id
+        await saveState(lastId, [...ackedForceIds])
+        process.stderr.write(`[telegram] delivery confirmed for msg ${pendingDelivery.message_id} (Claude activity detected)\n`)
+        pendingDelivery = null
+      }
+
+      // Re-send pending notification if Claude hasn't responded within 3s
+      if (pendingDelivery && Date.now() - pendingDelivery.sentAt > 3000) {
+        process.stderr.write(`[telegram] no activity after 3s — retrying notification for msg ${pendingDelivery.message_id}\n`)
+        // Don't clear pendingDelivery — keep retrying until Claude responds or message expires
+        pendingDelivery.sentAt = Date.now()  // reset timer for next retry
+        // Re-read queue to find and re-send the message
+        try {
+          const retryFile = Bun.file(QUEUE_FILE)
+          if (await retryFile.exists()) {
+            for (const line of (await retryFile.text()).split('\n')) {
+              if (!line.trim()) continue
+              try {
+                const e = JSON.parse(line) as QueueEntry & { force?: boolean }
+                if (e.message_id === pendingDelivery.message_id) {
+                  const isoTs = new Date(e.ts * 1000).toISOString()
+                  void mcp.notification({
+                    method: 'notifications/claude/channel',
+                    params: {
+                      content: e.text,
+                      meta: { chat_id: String(CHAT_ID), thread_id: String(THREAD_ID), message_id: e.message_id, user: e.user, ts: isoTs },
+                    },
+                  })
+                  break
+                }
+              } catch {}
+            }
+          }
+        } catch {}
+      }
+
       const file = Bun.file(QUEUE_FILE)
       if (!(await file.exists())) { await Bun.sleep(500); continue }
 
@@ -710,14 +889,17 @@ async function poll(): Promise<void> {
           const entry = JSON.parse(line) as QueueEntry & { force?: boolean }
           const { text: msgText, user, message_id, ts, photo_path, force } = entry
 
-          // Skip already-delivered messages.
-          // Exception: deliver recent regular messages (< 10 min old) even if message_id <= lastId,
-          // in case lastId jumped ahead (e.g. due to a bot outgoing message ID collision).
           const ageMs = Date.now() - ts * 1000
           const isRecent = ageMs < 10 * 60 * 1000
-          if (message_id <= lastId && !force && !isRecent) continue
-          if (message_id <= lastId && !force && isRecent && deliveredForce.has(-message_id)) continue  // dedupe recent
+
+          // Skip already-confirmed regular messages
+          if (message_id <= lastId && !force && !pendingDelivery) continue
+          // Skip if this message is already pending confirmation
+          if (pendingDelivery && message_id === pendingDelivery.message_id) continue
+          // Skip force messages that were recently delivered
           if (force && deliveredForce.has(message_id) && Date.now() - deliveredForce.get(message_id)! < 15_000) continue
+          // Skip old messages that are already behind lastId (not pending, not recent)
+          if (message_id <= lastId && !force && !isRecent) continue
 
           const isoTs = new Date(ts * 1000).toISOString()
 
@@ -740,24 +922,16 @@ async function poll(): Promise<void> {
             },
           })
 
-          // Force messages: always track in deliveredForce; never advance lastId
-          // (their IDs reuse the button-message ID, not sequential message IDs)
           if (force) {
             deliveredForce.set(message_id, Date.now())
-            // Persist so restarts don't re-deliver the same button click
             ackedForceIds.add(message_id)
-            // Trim to last 200 to prevent unbounded growth
             const trimmed = [...ackedForceIds].slice(-200)
             await saveState(lastId, trimmed)
-          } else if (message_id <= lastId && isRecent) {
-            // Recent message delivered despite being behind lastId — mark deduped
-            deliveredForce.set(-message_id, Date.now())
           } else if (message_id > lastId) {
-            // Regular messages advance lastId
-            lastId = message_id
-            await saveState(lastId, [...ackedForceIds])
+            // Don't advance lastId yet — wait for Claude to show activity (call a tool)
+            pendingDelivery = { message_id, sentAt: Date.now() }
           }
-          sentOne = true  // send only one per cycle; next will be picked up on next poll
+          sentOne = true
 
           process.stderr.write(`[telegram] notification sent: ${user}: ${msgText}\n`)
         } catch (e) {

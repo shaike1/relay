@@ -21,6 +21,9 @@ services:
       - /root/relay/sessions.json:/relay/sessions.json
       - /root/relay/hosts.json:/relay/hosts.json
       - /root/relay/peers-topic.json:/relay/peers-topic.json
+      # Source files — mount from host so changes take effect without rebuilding
+      - /root/relay/bot.py:/relay/bot.py
+      - /root/relay/mcp-telegram/server.ts:/relay/mcp-telegram/server.ts
     logging:
       driver: "json-file"
       options:
