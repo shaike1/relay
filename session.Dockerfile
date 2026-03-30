@@ -6,16 +6,24 @@ ENV TERM=xterm-256color
 # s6-overlay for process supervision
 ARG S6_OVERLAY_VERSION=3.2.0.2
 ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp/s6-noarch.tar.xz
-ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-x86_64.tar.xz /tmp/s6-arch.tar.xz
 
-# System deps + extract s6-overlay
+# System deps + extract s6-overlay (arch-aware)
 RUN apt-get update && apt-get install -y \
     python3 python3-pip \
     curl wget git unzip \
     tmux openssh-client \
     jq ca-certificates \
     xz-utils \
+    docker.io \
     && rm -rf /var/lib/apt/lists/* \
+    && ARCH=$(uname -m) \
+    && case "$ARCH" in \
+         x86_64)  S6_ARCH=x86_64 ;; \
+         aarch64) S6_ARCH=aarch64 ;; \
+         armv7l)  S6_ARCH=arm ;; \
+         *)       S6_ARCH=x86_64 ;; \
+       esac \
+    && wget -q "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz" -O /tmp/s6-arch.tar.xz \
     && tar -C / -Jxpf /tmp/s6-noarch.tar.xz \
     && tar -C / -Jxpf /tmp/s6-arch.tar.xz \
     && rm /tmp/s6-noarch.tar.xz /tmp/s6-arch.tar.xz
@@ -46,9 +54,11 @@ COPY . .
 # s6-rc service definitions for session container (session-specific layout)
 COPY s6-overlay-session/s6-rc.d /etc/s6-overlay/s6-rc.d
 RUN chmod +x /etc/s6-overlay/s6-rc.d/claude-session/run \
+    && chmod +x /etc/s6-overlay/s6-rc.d/message-watchdog/run \
     && chmod +x /etc/s6-overlay/s6-rc.d/claude-update/up \
     && chmod +x /relay/scripts/claude-session-loop.sh \
-    && chmod +x /relay/scripts/mcp-server-wrapper.sh
+    && chmod +x /relay/scripts/mcp-server-wrapper.sh \
+    && chmod +x /relay/scripts/message-watchdog.sh
 
 # s6-overlay is the init
 ENTRYPOINT ["/init"]

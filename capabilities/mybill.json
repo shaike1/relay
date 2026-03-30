@@ -1,0 +1,10 @@
+{
+  "session": "mybill",
+  "description": "MyBill — billing and invoicing application development",
+  "domain": ["mybill", "billing", "invoicing", "finance", "web"],
+  "accepts_tasks": [
+    {"type": "feature-development", "description": "Build MyBill features", "example": "Add recurring invoice support"},
+    {"type": "bug-fix", "description": "Fix billing issues", "example": "Invoice totals are wrong"}
+  ],
+  "context": "Billing SaaS project"
+}

@@ -1,0 +1,10 @@
+{
+  "session": "cliproxy",
+  "description": "ClipProxy — clipboard proxy service development",
+  "domain": ["cliproxy", "api", "proxy", "backend"],
+  "accepts_tasks": [
+    {"type": "feature-development", "description": "Build ClipProxy features", "example": "Add rate limiting to ClipProxy API"},
+    {"type": "bug-fix", "description": "Fix ClipProxy bugs", "example": "Proxy connection drops after timeout"}
+  ],
+  "context": "API service running locally"
+}

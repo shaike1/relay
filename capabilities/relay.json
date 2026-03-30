@@ -1,0 +1,11 @@
+{
+  "session": "relay",
+  "description": "The orchestrator — manages all other sessions, routes tasks, monitors health",
+  "domain": ["orchestration", "infrastructure", "monitoring"],
+  "accepts_tasks": [
+    {"type": "route-task", "description": "Route a task to the best-suited session", "example": "Find who can help with X and delegate"},
+    {"type": "system-status", "description": "Report status of all sessions", "example": "Are all sessions healthy?"},
+    {"type": "add-session", "description": "Create a new Claude session for a project", "example": "Create a new session for project Y"}
+  ],
+  "context": "Relay is the hub — it has Docker access, SSH to all hosts, and full visibility into the session network"
+}

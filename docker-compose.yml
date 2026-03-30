@@ -1,7 +1,7 @@
 services:
   relay:
-    image: shaikeme/topix-relay:latest   # pre-built image from Docker Hub
-    # build: .                           # uncomment to build from source instead
+    image: topix-relay:latest
+    build: .                             # build from local Dockerfile
     container_name: relay
     restart: always
     env_file:
@@ -25,6 +25,8 @@ services:
       # Source files — mount from host so changes take effect without rebuilding
       - /root/relay/bot.py:/relay/bot.py
       - /root/relay/mcp-telegram/server.ts:/relay/mcp-telegram/server.ts
+      # Docker socket — allows bot and sessions to manage containers
+      - /var/run/docker.sock:/var/run/docker.sock
     logging:
       driver: "json-file"
       options:

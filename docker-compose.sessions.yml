@@ -21,8 +21,11 @@ services:
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
-      # Claude credentials and global state
+      # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
+      - /root/.claude.json:/root/.claude.json
+      # Docker socket — allows session to manage containers
+      - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/.openclaw/workspace:/root/.openclaw/workspace
     depends_on:
@@ -55,8 +58,11 @@ services:
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
-      # Claude credentials and global state
+      # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
+      - /root/.claude.json:/root/.claude.json
+      # Docker socket — allows session to manage containers
+      - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root:/root
     depends_on:
@@ -89,8 +95,11 @@ services:
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
-      # Claude credentials and global state
+      # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
+      - /root/.claude.json:/root/.claude.json
+      # Docker socket — allows session to manage containers
+      - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/itops-agents:/root/itops-agents
     depends_on:
@@ -123,8 +132,11 @@ services:
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
-      # Claude credentials and global state
+      # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
+      - /root/.claude.json:/root/.claude.json
+      # Docker socket — allows session to manage containers
+      - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/openclaw-3cx:/root/openclaw-3cx
     depends_on:
@@ -157,8 +169,11 @@ services:
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
-      # Claude credentials and global state
+      # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
+      - /root/.claude.json:/root/.claude.json
+      # Docker socket — allows session to manage containers
+      - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/relay:/root/relay
     depends_on:
@@ -191,8 +206,11 @@ services:
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
-      # Claude credentials and global state
+      # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
+      - /root/.claude.json:/root/.claude.json
+      # Docker socket — allows session to manage containers
+      - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/cliproxyapi:/root/cliproxyapi
     depends_on:
@@ -225,8 +243,11 @@ services:
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
-      # Claude credentials and global state
+      # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
+      - /root/.claude.json:/root/.claude.json
+      # Docker socket — allows session to manage containers
+      - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/.openclaw/extensions/claude-runner:/root/.openclaw/extensions/claude-runner
     depends_on:
@@ -259,8 +280,11 @@ services:
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
-      # Claude credentials and global state
+      # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
+      - /root/.claude.json:/root/.claude.json
+      # Docker socket — allows session to manage containers
+      - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/.openclaw/workspace/skills/oref-native:/root/.openclaw/workspace/skills/oref-native
     depends_on:
@@ -293,8 +317,11 @@ services:
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
-      # Claude credentials and global state
+      # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
+      - /root/.claude.json:/root/.claude.json
+      # Docker socket — allows session to manage containers
+      - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/clawdbot:/root/clawdbot
     depends_on:
@@ -327,8 +354,11 @@ services:
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
-      # Claude credentials and global state
+      # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
+      - /root/.claude.json:/root/.claude.json
+      # Docker socket — allows session to manage containers
+      - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/.openclaw:/root/.openclaw
     depends_on:
@@ -362,8 +392,11 @@ services:
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
-      # Claude credentials and global state
+      # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
+      - /root/.claude.json:/root/.claude.json
+      # Docker socket — allows session to manage containers
+      - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/mybill:/root/mybill
     depends_on:
@@ -396,10 +429,50 @@ services:
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
-      # Claude credentials and global state
+      # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
+      - /root/.claude.json:/root/.claude.json
+      # Docker socket — allows session to manage containers
+      - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/tala-planner:/root/tala-planner
+    depends_on:
+      - relay
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "claude"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  session-mikrotik:
+    image: relay-session:latest
+    build:
+      context: .
+      dockerfile: session.Dockerfile
+    container_name: relay-session-mikrotik
+    restart: always
+    env_file:
+      - .env
+    environment:
+      SESSION_NAME: "mikrotik"
+      TELEGRAM_THREAD_ID: "6252"
+      WORKDIR: "/root/mikrotik"
+    volumes:
+      # Shared queue between bot and session containers
+      - relay-queue:/tmp
+      # Claude credentials and global state (directory + auth file)
+      - /root/.claude:/root/.claude
+      - /root/.claude.json:/root/.claude.json
+      # Docker socket — allows session to manage containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Project working directory
+      - /root/mikrotik:/root/mikrotik
     depends_on:
       - relay
     logging:

@@ -1,0 +1,11 @@
+{
+  "session": "mikrotik",
+  "description": "MikroTik network infrastructure — router configuration, firewall rules, network automation",
+  "domain": ["mikrotik", "networking", "infrastructure", "firewall", "vpn"],
+  "accepts_tasks": [
+    {"type": "network-config", "description": "Configure MikroTik router settings", "example": "Set up a new VLAN"},
+    {"type": "firewall-rules", "description": "Manage firewall rules", "example": "Block traffic from IP range X"},
+    {"type": "vpn-setup", "description": "Configure VPN tunnels", "example": "Set up WireGuard between two sites"}
+  ],
+  "context": "Direct access to MikroTik network devices"
+}

@@ -16,6 +16,16 @@ For **every** message you receive — whether via `notifications/claude/channel`
 
 **Never send terminal content to Telegram.** Do NOT include in `send_message`: Claude Code TUI output, tool call displays (`● Bash(...)`, `⎿ ...`), tmux pane content, ASCII art headers, or any raw terminal output. Send only clean, human-readable text.
 
+## Thinking summary (optional but encouraged)
+
+When you work through a non-trivial problem, briefly share your reasoning at the top of your `send_message` response using italic-style prefix:
+
+`<i>חשבתי: [1-2 משפטים על מה שעשית/החלטת]</i>`
+
+Example: `<i>חשבתי: בדקתי את הלוגים, ראיתי שגיאת auth — הסיבה היא token פג תוקף.</i>`
+
+Keep it short (one sentence). Skip it for trivial replies.
+
 ## Formatting rules
 
 - Short answers: plain text or `<code>` for commands/values

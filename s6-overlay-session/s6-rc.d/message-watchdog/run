@@ -1,0 +1,6 @@
+#!/command/with-contenv sh
+# Only run if this session has a Telegram thread configured
+[ -n "${TELEGRAM_THREAD_ID:-}" ] || { echo "[message-watchdog] no TELEGRAM_THREAD_ID, exiting"; exit 0; }
+# Ensure script is executable (bind mounts can strip permissions)
+chmod +x /relay/scripts/message-watchdog.sh 2>/dev/null || true
+exec /relay/scripts/message-watchdog.sh

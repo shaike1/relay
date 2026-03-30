@@ -1,0 +1,10 @@
+{
+  "session": "edushare",
+  "description": "Edushare — educational content sharing platform development",
+  "domain": ["edushare", "education", "web", "fullstack"],
+  "accepts_tasks": [
+    {"type": "feature-development", "description": "Build Edushare features", "example": "Add user permissions to Edushare"},
+    {"type": "bug-fix", "description": "Fix bugs in Edushare", "example": "Login flow is broken"}
+  ],
+  "context": "Runs on remote host 100.64.0.12 (ARM64)"
+}

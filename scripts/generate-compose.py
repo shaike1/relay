@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-generate-compose.py — reads sessions.json and generates docker-compose.sessions.yml
+generate-compose.py — reads sessions.json and generates docker-compose files
 
 Usage:
-    python3 scripts/generate-compose.py
+    python3 scripts/generate-compose.py           # local sessions only
+    python3 scripts/generate-compose.py --remote  # also generate remote host compose files
     python3 scripts/generate-compose.py --output path/to/docker-compose.sessions.yml
 
-Skips remote sessions (those with host != null).
+Local sessions (host == null) → docker-compose.sessions.yml  (relay-session:latest, named volume)
+Remote sessions (host != null) → docker-compose.remote-<HOST>.yml  (shaikeme/relay-session:latest, /tmp bind mount)
 """
 
 import json
@@ -20,6 +22,7 @@ RELAY_DIR = os.path.dirname(SCRIPT_DIR)
 SESSIONS_FILE = os.path.join(RELAY_DIR, "sessions.json")
 
 DEFAULT_OUTPUT = os.path.join(RELAY_DIR, "docker-compose.sessions.yml")
+REMOTE_IMAGE = "shaikeme/relay-sessions:latest"
 
 
 def sanitize_service_name(session_name: str) -> str:
@@ -30,6 +33,60 @@ def sanitize_service_name(session_name: str) -> str:
 def path_to_volume_name(path: str) -> str:
     """Convert a host path to a safe docker volume-label (for comments only)."""
     return path.replace("/", "-").lstrip("-")
+
+
+def _session_service_block(name: str, thread_id: int, workdir: str,
+                           allowed_users: list | None,
+                           image: str, tmp_volume: str,
+                           depends_on_relay: bool,
+                           with_build: bool = False,
+                           env_file: str = ".env") -> list[str]:
+    """Return lines for a single session service block."""
+    svc = sanitize_service_name(name)
+    lines = []
+    lines.append(f"  {svc}:")
+    lines.append(f"    image: {image}")
+    if with_build:
+        lines.append(f"    build:")
+        lines.append(f"      context: .")
+        lines.append(f"      dockerfile: session.Dockerfile")
+    lines.append(f"    container_name: relay-session-{name}")
+    lines.append(f"    restart: always")
+    lines.append(f"    env_file:")
+    lines.append(f"      - {env_file}")
+    lines.append(f"    environment:")
+    lines.append(f"      SESSION_NAME: \"{name}\"")
+    lines.append(f"      TELEGRAM_THREAD_ID: \"{thread_id}\"")
+    lines.append(f"      WORKDIR: \"{workdir}\"")
+    if allowed_users:
+        allowed = ",".join(str(u) for u in allowed_users)
+        lines.append(f"      ALLOWED_USERS: \"{allowed}\"")
+    lines.append(f"    volumes:")
+    lines.append(f"      # Shared queue between bot and session containers")
+    lines.append(f"      - {tmp_volume}:/tmp")
+    lines.append(f"      # Claude credentials and global state (directory + auth file)")
+    lines.append(f"      - /root/.claude:/root/.claude")
+    lines.append(f"      - /root/.claude.json:/root/.claude.json")
+    lines.append(f"      # Docker socket — allows session to manage containers")
+    lines.append(f"      - /var/run/docker.sock:/var/run/docker.sock")
+    lines.append(f"      # Project working directory")
+    lines.append(f"      - {workdir}:{workdir}")
+    if depends_on_relay:
+        lines.append(f"    depends_on:")
+        lines.append(f"      - relay")
+    lines.append(f"    logging:")
+    lines.append(f"      driver: \"json-file\"")
+    lines.append(f"      options:")
+    lines.append(f"        max-size: \"10m\"")
+    lines.append(f"        max-file: \"3\"")
+    lines.append(f"    healthcheck:")
+    lines.append(f"      test: [\"CMD\", \"pgrep\", \"-f\", \"claude\"]")
+    lines.append(f"      interval: 30s")
+    lines.append(f"      timeout: 10s")
+    lines.append(f"      retries: 3")
+    lines.append(f"      start_period: 30s")
+    lines.append(f"")
+    return lines
 
 
 def generate_compose(sessions: list, output_path: str) -> None:
@@ -50,51 +107,16 @@ def generate_compose(sessions: list, output_path: str) -> None:
     ]
 
     for session in local_sessions:
-        name = session["session"]
-        thread_id = session["thread_id"]
-        workdir = session["path"]
-        svc = sanitize_service_name(name)
-
-        lines.append(f"  {svc}:")
-        lines.append(f"    image: relay-session:latest")
-        lines.append(f"    build:")
-        lines.append(f"      context: .")
-        lines.append(f"      dockerfile: session.Dockerfile")
-        lines.append(f"    container_name: relay-session-{name}")
-        lines.append(f"    restart: always")
-        lines.append(f"    env_file:")
-        lines.append(f"      - .env")
-        lines.append(f"    environment:")
-        lines.append(f"      SESSION_NAME: \"{name}\"")
-        lines.append(f"      TELEGRAM_THREAD_ID: \"{thread_id}\"")
-        lines.append(f"      WORKDIR: \"{workdir}\"")
-
-        # allowed_users passthrough if present
-        if "allowed_users" in session:
-            allowed = ",".join(str(u) for u in session["allowed_users"])
-            lines.append(f"      ALLOWED_USERS: \"{allowed}\"")
-
-        lines.append(f"    volumes:")
-        lines.append(f"      # Shared queue between bot and session containers")
-        lines.append(f"      - relay-queue:/tmp")
-        lines.append(f"      # Claude credentials and global state")
-        lines.append(f"      - /root/.claude:/root/.claude")
-        lines.append(f"      # Project working directory")
-        lines.append(f"      - {workdir}:{workdir}")
-        lines.append(f"    depends_on:")
-        lines.append(f"      - relay")
-        lines.append(f"    logging:")
-        lines.append(f"      driver: \"json-file\"")
-        lines.append(f"      options:")
-        lines.append(f"        max-size: \"10m\"")
-        lines.append(f"        max-file: \"3\"")
-        lines.append(f"    healthcheck:")
-        lines.append(f"      test: [\"CMD\", \"pgrep\", \"-f\", \"claude\"]")
-        lines.append(f"      interval: 30s")
-        lines.append(f"      timeout: 10s")
-        lines.append(f"      retries: 3")
-        lines.append(f"      start_period: 30s")
-        lines.append(f"")
+        lines += _session_service_block(
+            name=session["session"],
+            thread_id=session["thread_id"],
+            workdir=session["path"],
+            allowed_users=session.get("allowed_users"),
+            image="relay-session:latest",
+            tmp_volume="relay-queue",
+            depends_on_relay=True,
+            with_build=True,
+        )
 
     lines.append("volumes:")
     lines.append("  relay-queue:")
@@ -111,16 +133,70 @@ def generate_compose(sessions: list, output_path: str) -> None:
         print(f"  - {s['session']} (thread={s['thread_id']}, path={s['path']})")
 
 
+def generate_remote_compose(sessions: list, host: str, output_path: str) -> None:
+    """Generate a docker-compose file for session containers running on a remote host.
+
+    Remote containers pull shaikeme/relay-session:latest from Docker Hub and
+    bind-mount the host /tmp so the relay bot can write queue files via SSH.
+    """
+    remote_sessions = [s for s in sessions if s.get("host") == host]
+
+    if not remote_sessions:
+        print(f"No sessions for host {host}", file=sys.stderr)
+        return
+
+    short_host = host.split("@")[-1].replace(".", "-")
+    lines = [
+        f"# AUTO-GENERATED by scripts/generate-compose.py — do not edit by hand.",
+        f"# Regenerate with: python3 scripts/generate-compose.py --remote",
+        f"#",
+        f"# Remote session containers for {host}.",
+        f"# Deploy: scp this file + .env to {host}, then: docker compose -f <file> up -d",
+        f"# /tmp is bind-mounted from the host so the relay bot can write queue files via SSH.",
+        f"",
+        f"services:",
+    ]
+
+    for session in remote_sessions:
+        lines += _session_service_block(
+            name=session["session"],
+            thread_id=session["thread_id"],
+            workdir=session["path"],
+            allowed_users=session.get("allowed_users"),
+            image=REMOTE_IMAGE,
+            tmp_volume="/tmp",   # bind mount — SSH writes from relay bot land here
+            depends_on_relay=False,
+            env_file="/root/relay/.env",
+        )
+
+    content = "\n".join(lines)
+
+    with open(output_path, "w") as f:
+        f.write(content)
+
+    print(f"Generated {output_path} with {len(remote_sessions)} sessions for {host}:")
+    for s in remote_sessions:
+        print(f"  - {s['session']} (thread={s['thread_id']}, path={s['path']})")
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Generate docker-compose.sessions.yml from sessions.json")
-    parser.add_argument("--output", default=DEFAULT_OUTPUT, help="Output file path")
+    parser = argparse.ArgumentParser(description="Generate docker-compose files from sessions.json")
+    parser.add_argument("--output", default=DEFAULT_OUTPUT, help="Output file path for local sessions")
     parser.add_argument("--sessions", default=SESSIONS_FILE, help="sessions.json path")
+    parser.add_argument("--remote", action="store_true", help="Also generate compose files for remote hosts")
     args = parser.parse_args()
 
     with open(args.sessions) as f:
         sessions = json.load(f)
 
     generate_compose(sessions, args.output)
+
+    if args.remote:
+        remote_hosts = sorted({s["host"] for s in sessions if s.get("host")})
+        for host in remote_hosts:
+            short_host = host.split("@")[-1].replace(".", "-")
+            remote_output = os.path.join(RELAY_DIR, f"docker-compose.remote-{short_host}.yml")
+            generate_remote_compose(sessions, host, remote_output)
 
 
 if __name__ == "__main__":

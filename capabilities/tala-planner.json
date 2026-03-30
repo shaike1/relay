@@ -1,0 +1,10 @@
+{
+  "session": "tala-planner",
+  "description": "Tala planner — project/task management app development",
+  "domain": ["tala", "project-management", "web", "fullstack"],
+  "accepts_tasks": [
+    {"type": "feature-development", "description": "Build Tala features", "example": "Add dashboard export to Tala"},
+    {"type": "bug-fix", "description": "Fix bugs in Tala planner", "example": "Export to DOCX is missing"}
+  ],
+  "context": "Active project with Redis backend"
+}

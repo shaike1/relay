@@ -1,0 +1,26 @@
+services:
+  nomacode:
+    image: node:22-slim
+    container_name: relay-nomacode
+    restart: always
+    working_dir: /nomacode
+    command: >
+      sh -c "npm install --omit=dev --quiet 2>/dev/null; node bin/nomacode.js"
+    environment:
+      PORT: "3000"
+      HOST: "0.0.0.0"
+      SHELL: "/root/relay/scripts/relay-menu.sh"
+    ports:
+      - "3333:3000"
+    volumes:
+      # Nomacode source
+      - /root/nomacode:/nomacode
+      # Full home dir access — so sessions can see all projects
+      - /root:/root
+      # Docker socket — so nomacode can exec into containers
+      - /var/run/docker.sock:/var/run/docker.sock
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

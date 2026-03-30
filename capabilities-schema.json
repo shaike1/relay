@@ -1,0 +1,14 @@
+{
+  "$schema": "relay-capabilities/v1",
+  "session": "example",
+  "description": "One sentence describing what this session does",
+  "domain": ["category1", "category2"],
+  "accepts_tasks": [
+    {
+      "type": "task-type-slug",
+      "description": "What kind of task this session can handle",
+      "example": "Example task request"
+    }
+  ],
+  "context": "Any extra context about this session's specialty or current focus"
+}

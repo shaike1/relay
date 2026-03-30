@@ -635,6 +635,9 @@ type TgMessage = {
 }
 
 const db = new Database(`/tmp/tg-history-${THREAD_ID}.db`)
+// Allow up to 10s for any existing lock to clear (e.g. after container restart)
+db.run('PRAGMA busy_timeout = 10000')
+db.run('PRAGMA journal_mode = WAL')
 db.run(`CREATE TABLE IF NOT EXISTS messages (
   rowid    INTEGER PRIMARY KEY AUTOINCREMENT,
   message_id INTEGER UNIQUE,

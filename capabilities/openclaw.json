@@ -1,0 +1,10 @@
+{
+  "session": "openclaw",
+  "description": "OpenClaw platform workspace — main development environment for the OpenClaw AI platform",
+  "domain": ["openclaw", "platform", "ai-tools", "development"],
+  "accepts_tasks": [
+    {"type": "feature-development", "description": "Build new features for OpenClaw", "example": "Add X capability to OpenClaw"},
+    {"type": "debugging", "description": "Debug OpenClaw platform issues", "example": "Why is skill Y failing?"}
+  ],
+  "context": "Primary workspace for the OpenClaw product"
+}

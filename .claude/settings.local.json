@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__telegram__send_message",
+      "mcp__telegram__typing",
+      "mcp__telegram__fetch_messages"
+    ]
+  }
+}

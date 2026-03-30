@@ -1,0 +1,10 @@
+{
+  "session": "itops-dev",
+  "description": "IT Operations agents — automation scripts and ops tooling development",
+  "domain": ["itops", "automation", "devops", "scripts", "infrastructure"],
+  "accepts_tasks": [
+    {"type": "automation", "description": "Write automation scripts for IT operations", "example": "Script to auto-renew SSL certs"},
+    {"type": "monitoring", "description": "Set up monitoring and alerting", "example": "Alert when disk >90%"}
+  ],
+  "context": "IT ops automation workspace"
+}

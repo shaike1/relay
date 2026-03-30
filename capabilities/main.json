@@ -1,0 +1,10 @@
+{
+  "session": "main",
+  "description": "General-purpose session — ad-hoc tasks, experiments, and tasks that don't belong to a specific project",
+  "domain": ["general", "adhoc", "research", "experiments"],
+  "accepts_tasks": [
+    {"type": "research", "description": "Research a topic or technology", "example": "What are the best options for X?"},
+    {"type": "adhoc", "description": "Any one-off task", "example": "Write a script to do Y"}
+  ],
+  "context": "Runs from /root — can access all files on this host"
+}

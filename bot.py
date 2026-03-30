@@ -233,7 +233,7 @@ def write_mcp_json(path: str, thread_id: int, host: str | None = None, session: 
         "mcpServers": {
             "telegram": {
                 "command": "/root/.bun/bin/bun",
-                "args": ["run", "--cwd", "/root/relay/mcp-telegram", "--silent", "start"],
+                "args": ["run", "--cwd", "/root/relay/mcp-telegram", "server.ts"],
                 "env": {
                     "TELEGRAM_THREAD_ID": str(thread_id),
                     # TOKEN and CHAT_ID are loaded from /root/relay/.env by server.ts
@@ -496,6 +496,22 @@ async def _poll_one_session(
     host = cfg.get("host")
     path = cfg.get("path", "/root")
     try:
+        # Check MCP first — if .mcp.json exists, the session manages itself via the
+        # Telegram MCP channel. Skip all tmux management to avoid creating duplicate
+        # Claude instances in the bot container alongside session containers.
+        mcp_json = f"{path}/.mcp.json"
+        if _mcp_known.get(session) is True:
+            has_mcp = True
+        else:
+            has_mcp = (
+                (await asyncio.to_thread(run_cmd, ["test", "-f", mcp_json], host)).returncode == 0
+                if host else os.path.exists(mcp_json)
+            )
+            if has_mcp:
+                _mcp_known[session] = True
+        if has_mcp:
+            return
+
         if not await asyncio.to_thread(tmux_exists, session, host):
             logger.warning(f"Session '{session}' gone — reprovisioning")
             await asyncio.to_thread(
@@ -507,21 +523,6 @@ async def _poll_one_session(
 
         # Check for login prompt
         await asyncio.to_thread(_check_login_prompt, session, host, chat_id, thread_id, context)
-
-        mcp_json = f"{path}/.mcp.json"
-        if _mcp_known.get(session) is True:
-            has_mcp = True   # cached: known alive (reset via invalidate_mcp_cache on stuck detection)
-        else:
-            has_mcp = (
-                (await asyncio.to_thread(run_cmd, ["test", "-f", mcp_json], host)).returncode == 0
-                if host else os.path.exists(mcp_json)
-            )
-            if has_mcp:
-                _mcp_known[session] = True
-        if has_mcp:
-            lines = await asyncio.to_thread(tmux_capture, session, host)
-            line_counts[session] = len(lines)
-            return
 
         lines = await asyncio.to_thread(tmux_capture, session, host)
         prev  = line_counts.get(session, len(lines))
@@ -610,7 +611,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/mcp-add &lt;name&gt; &lt;binary&gt; [args...] [KEY=VAL...] — install MCP + restart\n\n"
         "<b>Info:</b>\n"
         "/sessions — list all sessions\n"
-        "/status — show topic↔session map",
+        "/status — show topic↔session map\n"
+        "/directory [query] — show session capability directory (or search it)\n"
+        "/delegate &lt;task&gt; — route a task to the best-suited session",
         parse_mode="HTML"
     )
 
@@ -1229,6 +1232,202 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Could not send /status to relay topic: {e}")
 
 
+CAPABILITIES_DIR = os.path.join(os.path.dirname(__file__), "capabilities")
+
+
+def load_all_capabilities() -> list[dict]:
+    """Load all session capability manifests from capabilities/."""
+    caps = []
+    if not os.path.isdir(CAPABILITIES_DIR):
+        return caps
+    for fname in sorted(os.listdir(CAPABILITIES_DIR)):
+        if not fname.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(CAPABILITIES_DIR, fname)) as f:
+                caps.append(json.load(f))
+        except Exception:
+            pass
+    return caps
+
+
+_STOP_WORDS = {
+    "a", "an", "the", "and", "or", "in", "on", "to", "for", "of", "with",
+    "add", "set", "get", "run", "use", "new", "configure", "create", "update",
+    "build", "fix", "show", "make", "do", "is", "it", "me", "my", "from",
+}
+
+
+def find_capable_sessions(query: str, caps: list[dict]) -> list[dict]:
+    """Return sessions sorted by relevance score for the query.
+
+    Scoring (higher = better match):
+    - +10 if session name appears in query
+    - +5  for each domain keyword that appears in query
+    - +1  for each non-stopword query term found in description/tasks
+    """
+    words = [w for w in query.lower().split() if w not in _STOP_WORDS and len(w) > 2]
+    if not words:
+        return caps  # no meaningful terms — return all
+
+    scored = []
+    for cap in caps:
+        score = 0
+        session = cap.get("session", "").lower()
+        domains = [d.lower() for d in cap.get("domain", [])]
+        description = cap.get("description", "").lower()
+        context = cap.get("context", "").lower()
+        task_text = " ".join(
+            t.get("description", "") + " " + t.get("example", "")
+            for t in cap.get("accepts_tasks", [])
+        ).lower()
+
+        q_lower = query.lower()
+
+        # Session name in query → strong signal
+        if session in q_lower:
+            score += 10
+
+        # Domain keywords in query → strong signal
+        for domain in domains:
+            if domain in q_lower:
+                score += 5
+
+        # Non-stopword query terms in description/tasks/context
+        haystack = f"{description} {task_text} {context}"
+        for word in words:
+            if word in haystack:
+                score += 1
+
+        if score > 0:
+            scored.append((score, cap))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [cap for _, cap in scored]
+
+
+@owner_only
+async def cmd_directory(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show session capability directory, or search it: /directory [query]"""
+    query = " ".join(context.args) if context.args else ""
+    caps = load_all_capabilities()
+
+    if not caps:
+        await update.message.reply_text("No capabilities defined yet. Add JSON files to capabilities/.")
+        return
+
+    if query:
+        matches = find_capable_sessions(query, caps)
+        if not matches:
+            await update.message.reply_text(f"No sessions found for: <i>{_esc(query)}</i>", parse_mode="HTML")
+            return
+        lines = [f'<b>Sessions matching \"{_esc(query)}\":</b>']
+        for cap in matches:
+            domains = ", ".join(cap.get("domain", []))
+            lines.append(f"\n• <b>{_esc(cap['session'])}</b> — {_esc(cap.get('description',''))}")
+            if domains:
+                lines.append(f"  <i>{_esc(domains)}</i>")
+    else:
+        lines = ["<b>Session Directory</b>"]
+        for cap in caps:
+            domains = ", ".join(cap.get("domain", []))
+            lines.append(f"\n• <b>{_esc(cap['session'])}</b> — {_esc(cap.get('description',''))}")
+            if domains:
+                lines.append(f"  <i>{_esc(domains)}</i>")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
+@owner_only
+async def cmd_delegate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Route a task to the best-suited session: /delegate <task description>
+
+    Searches the capabilities directory for the best match, writes the task
+    to that session's MCP queue, and reports back which session received it.
+    The target session will respond in its own Telegram topic.
+    """
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /delegate &lt;task description&gt;\n"
+            "Example: <code>/delegate Configure a new VLAN on MikroTik</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    task = " ".join(context.args)
+    caps = load_all_capabilities()
+    if not caps:
+        await update.message.reply_text("No capabilities defined. Add JSON files to capabilities/.")
+        return
+
+    matches = find_capable_sessions(task, caps)
+    # Exclude relay itself from routing targets
+    matches = [m for m in matches if m.get("session") != "relay"]
+
+    if not matches:
+        await update.message.reply_text(
+            f"No session found for: <i>{_esc(task)}</i>\n"
+            "Try <code>/directory</code> to see what's available.",
+            parse_mode="HTML",
+        )
+        return
+
+    # Pick the first (best keyword) match
+    target_cap = matches[0]
+    target_session = target_cap["session"]
+
+    # Find target session config (thread_id, host)
+    configs = get_configs()
+    target_cfg = next((c for c in configs if c.get("session") == target_session), None)
+    if not target_cfg:
+        await update.message.reply_text(f"Session <code>{_esc(target_session)}</code> not found in sessions.json.", parse_mode="HTML")
+        return
+
+    target_thread = target_cfg.get("thread_id")
+    target_host   = target_cfg.get("host")
+    from_thread   = update.message.message_thread_id or (update.message.chat_id if update.message.chat_id != GROUP_CHAT_ID else None)
+
+    # Write task to target session's MCP queue
+    import uuid
+    task_id = str(uuid.uuid4())[:8]
+    write_queue(target_thread, {
+        "text":       f"[Relay delegate | task_id:{task_id}]\n{task}",
+        "user":       "relay-orchestrator",
+        "message_id": -int(time.time() * 1000),
+        "force":      True,
+        "bus": {
+            "type":        "task",
+            "task_id":     task_id,
+            "from":        "relay",
+            "to":          target_session,
+            "from_thread": from_thread,
+            "reply_to":    from_thread,
+        },
+    }, target_host)
+
+    # Report to sender
+    target_link = f"(topic {target_thread})"
+    try:
+        chat_obj = await context.bot.get_chat(GROUP_CHAT_ID)
+        invite   = getattr(chat_obj, "invite_link", None)
+        if invite:
+            target_link = f'<a href="{invite}?thread={target_thread}">{target_session}</a>'
+    except Exception:
+        pass
+
+    if len(matches) > 1:
+        alts = ", ".join(m["session"] for m in matches[1:3])
+        alt_note = f"\n<i>Alternatives: {_esc(alts)}</i>"
+    else:
+        alt_note = ""
+
+    await update.message.reply_text(
+        f"✓ Task delegated to <b>{_esc(target_session)}</b> {target_link}\n"
+        f"<code>{_esc(task)}</code>{alt_note}",
+        parse_mode="HTML",
+    )
+
+
 def _all_tmux_sessions(host: str | None = None) -> list[str]:
     """Return all running tmux session names on a host."""
     r = run_cmd(["tmux", "list-sessions", "-F", "#{session_name}"], host)
@@ -1343,12 +1542,25 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Blocked button click from user_id={uid} on thread={thread_id}")
             return
         host = cfg.get("host")
+        path = cfg.get("path", "/root")
         logger.info(f"Button click: thread={thread_id} host={host!r} label={label!r}")
         session_name = next((s for (cid, tid), s in sessions.items() if tid == thread_id), None)
         if session_name:
-            tmux_send(session_name, f"[{user}] ▶ {label}", host)
+            # Use MCP queue for sessions that have .mcp.json (containerized sessions)
+            mcp_json = f"{path}/.mcp.json"
+            has_mcp = (run_cmd(["test", "-f", mcp_json], host).returncode == 0
+                       if host else os.path.exists(mcp_json))
+            if has_mcp:
+                write_queue(thread_id, {
+                    "text":       f"[{user}] ▶ {label}",
+                    "user":       user,
+                    "message_id": query.message.message_id,
+                }, host)
+                logger.info(f"Button click queued for '{session_name}' via MCP channel")
+            else:
+                tmux_send(session_name, f"[{user}] ▶ {label}", host)
+                logger.info(f"Button click sent to tmux '{session_name}'")
             last_user_sent[session_name] = time.time()
-            logger.info(f"Button click sent to tmux '{session_name}'")
         # Keep buttons visible so the user can click them again
         # Echo the selection back into the chat so it's visible
         try:
@@ -1600,6 +1812,11 @@ STUCK_FORCE_ALERT_AFTER = 60 * 60      # 1 hour — alert if force msg undeliver
 STUCK_FORCE_CHECK_INTERVAL = 15 * 60  # check every 15 minutes
 _alerted_force: set[tuple[int, int]] = set()  # (thread_id, message_id) already alerted
 
+NO_REPLY_THRESHOLD = 10 * 60         # 10 min: restart if user msg sits unread this long
+NO_REPLY_CHECK_INTERVAL = 3 * 60     # check every 3 minutes
+NO_REPLY_MIN_RESTART_GAP = 30 * 60   # don't restart same session more than once per 30 min
+_no_reply_restarted: dict[str, float] = {}  # session -> timestamp of last auto-restart
+
 
 async def check_stuck_force(context) -> None:
     """Alert via Telegram if a button click (force msg) has been undelivered for >1h."""
@@ -1681,6 +1898,115 @@ async def check_stuck_force(context) -> None:
                 logger.error(f"Failed to send stuck-force alert: {e}")
 
 
+async def check_no_reply(context) -> None:
+    """Auto-restart a session container and alert if a user message sits unread for NO_REPLY_THRESHOLD.
+
+    Works for MCP-enabled (containerised) sessions by inspecting the queue file:
+    if the oldest unread non-force message is older than the threshold we restart
+    the Docker container and notify the session's Telegram topic.
+    """
+    import glob, time as _time
+    now = _time.time()
+    configs = {cfg["session"]: cfg for cfg in get_configs()}
+
+    for qf in glob.glob("/tmp/tg-queue-*.jsonl"):
+        basename = os.path.basename(qf)
+        if "remote" in basename:
+            continue
+        try:
+            thread_id = int(basename.removeprefix("tg-queue-").removesuffix(".jsonl"))
+        except ValueError:
+            continue
+
+        # Read lastId (highest message_id Claude has processed)
+        state_file = qf.replace(".jsonl", ".state")
+        last_id = 0
+        try:
+            raw = open(state_file).read().strip()
+            if raw.startswith('{'):
+                last_id = int(json.loads(raw).get("lastId", 0))
+            else:
+                last_id = int(raw)
+        except Exception:
+            pass
+
+        # Find the oldest unread (non-force) message
+        oldest_unread_ts = None
+        try:
+            for line in open(qf):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except Exception:
+                    continue
+                if entry.get("force"):
+                    continue  # force/button msgs handled by check_stuck_force
+                if entry.get("message_id", 0) <= last_id:
+                    continue  # already processed
+                ts = entry.get("ts", now)
+                if oldest_unread_ts is None or ts < oldest_unread_ts:
+                    oldest_unread_ts = ts
+        except Exception:
+            continue
+
+        if oldest_unread_ts is None:
+            continue  # queue is drained
+
+        age = now - oldest_unread_ts
+        if age < NO_REPLY_THRESHOLD:
+            continue
+
+        session_name = next(
+            (s for (cid, tid), s in sessions.items() if tid == thread_id), None
+        )
+        if not session_name:
+            continue
+
+        # Rate-limit: skip if restarted recently
+        if now - _no_reply_restarted.get(session_name, 0) < NO_REPLY_MIN_RESTART_GAP:
+            continue
+
+        cfg = configs.get(session_name, {})
+        host = cfg.get("host")
+        container = f"relay-session-{session_name}"
+        chat_id_for_session = next(
+            (cid for (cid, tid), s in sessions.items() if tid == thread_id), GROUP_CHAT_ID
+        )
+        age_min = int(age / 60)
+        logger.warning(f"[no-reply] {session_name}: unread msg {age_min}m old — restarting {container}")
+
+        # Restart the Docker container
+        restart_ok = False
+        try:
+            if host:
+                r = await asyncio.to_thread(run_cmd, ["docker", "restart", container], host, 30)
+            else:
+                r = await asyncio.to_thread(
+                    lambda c=container: subprocess.run(
+                        ["docker", "restart", c], capture_output=True, text=True, timeout=30
+                    )
+                )
+            restart_ok = r.returncode == 0
+        except Exception as e:
+            logger.error(f"[no-reply] restart {container} failed: {e}")
+
+        _no_reply_restarted[session_name] = now
+
+        # Send alert to the session's Telegram topic
+        status = "✓ הופעל מחדש" if restart_ok else "✗ הפעלה מחדש נכשלה"
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id_for_session,
+                message_thread_id=thread_id,
+                text=f"⚠️ <b>{_esc(session_name)}</b> לא הגיב {age_min} דק׳ — מפעיל מחדש\n{status}",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.error(f"[no-reply] alert send failed: {e}")
+
+
 AGENT_TASKS_FILE = '/tmp/agent-tasks.json'
 
 
@@ -1734,6 +2060,7 @@ async def post_init(app: Application):
     app.job_queue.run_repeating(poll_output_remote, interval=20, first=10)
     app.job_queue.run_repeating(keepalive_ping, interval=6 * 3600, first=3600)
     app.job_queue.run_repeating(check_stuck_force, interval=STUCK_FORCE_CHECK_INTERVAL, first=60)
+    app.job_queue.run_repeating(check_no_reply, interval=NO_REPLY_CHECK_INTERVAL, first=120)
     app.job_queue.run_repeating(check_task_timeouts, interval=30, first=60)
 
 
@@ -1779,6 +2106,8 @@ def main():
     app.add_handler(CommandHandler("snap",    cmd_snap))
     app.add_handler(CommandHandler("sessions",cmd_sessions))
     app.add_handler(CommandHandler("status",  cmd_status))
+    app.add_handler(CommandHandler("directory", cmd_directory))
+    app.add_handler(CommandHandler("delegate",  cmd_delegate))
     app.add_handler(CommandHandler("switch",  cmd_switch))
     app.add_handler(CommandHandler("agents",  cmd_agents))
     app.add_handler(CallbackQueryHandler(handle_callback))

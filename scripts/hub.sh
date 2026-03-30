@@ -1,0 +1,109 @@
+#!/bin/bash
+# hub.sh — interactive session picker for relay containers (local + remote).
+# Works in both SSH terminals and web terminals (nomacode).
+#
+# Usage:
+#   ./scripts/hub.sh            # show session menu
+#   ./scripts/hub.sh --list     # just list available sessions
+
+set -euo pipefail
+
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
+
+REMOTE_HOST="${RELAY_REMOTE_HOST:-root@100.64.0.12}"
+
+list_local() {
+    docker ps --format '{{.Names}}' 2>/dev/null | grep '^relay-session-' | sed 's/relay-session-//' | sort
+}
+
+list_remote() {
+    ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$REMOTE_HOST" \
+        "docker ps --format '{{.Names}}' 2>/dev/null | grep '^relay-session-' | sed 's/relay-session-//'" 2>/dev/null | sort
+}
+
+if [[ "${1:-}" == "--list" ]]; then
+    echo "=== Local sessions ==="
+    list_local
+    echo "=== Remote sessions ($REMOTE_HOST) ==="
+    list_remote
+    exit 0
+fi
+
+# Set initial terminal title
+printf '\033]0;relay-hub\007'
+
+# Interactive menu
+while true; do
+    clear
+    echo "╔══════════════════════════════════════════╗"
+    echo "║           RELAY SESSION HUB              ║"
+    echo "╚══════════════════════════════════════════╝"
+    echo ""
+
+    declare -a names
+    declare -a hosts
+    i=1
+
+    echo "  LOCAL:"
+    while IFS= read -r s; do
+        [ -z "$s" ] && continue
+        status=$(docker inspect --format='{{.State.Status}}' "relay-session-$s" 2>/dev/null || echo "?")
+        printf "  %2d) %-22s [%s]\n" "$i" "$s" "$status"
+        names[$i]="$s"
+        hosts[$i]="local"
+        ((i++))
+    done < <(list_local)
+
+    echo ""
+    echo "  REMOTE ($REMOTE_HOST):"
+    while IFS= read -r s; do
+        [ -z "$s" ] && continue
+        printf "  %2d) %-22s [remote]\n" "$i" "$s"
+        names[$i]="$s"
+        hosts[$i]="remote"
+        ((i++))
+    done < <(list_remote)
+
+    total=$((i - 1))
+    echo ""
+    echo "  r) Refresh    q) Quit"
+    echo ""
+    read -rp "Select session [1-${total}]: " choice
+
+    [[ "$choice" == "q" ]] && exit 0
+    [[ "$choice" == "r" ]] && continue
+    [[ -z "$choice" ]] && continue
+
+    session="${names[$choice]:-}"
+    host="${hosts[$choice]:-}"
+    if [ -z "$session" ]; then
+        echo "Invalid choice."
+        sleep 1
+        continue
+    fi
+
+    container="relay-session-$session"
+    echo ""
+    echo "Connecting to $session... (Ctrl+B d to detach from tmux)"
+    sleep 0.5
+
+    # Set terminal title to session name
+    printf '\033]0;%s\007' "$session"
+
+    if [ "$host" = "local" ]; then
+        docker exec -it "$container" \
+            tmux -S "/tmp/tmux-${session}.sock" attach -t "$session" 2>/dev/null \
+            || docker exec -it "$container" bash
+    else
+        ssh -t -o StrictHostKeyChecking=no "$REMOTE_HOST" \
+            "docker exec -it $container tmux -S /tmp/tmux-${session}.sock attach -t $session 2>/dev/null || docker exec -it $container bash"
+    fi
+
+    # Reset terminal title back to hub when returning
+    printf '\033]0;relay-hub\007'
+
+    echo ""
+    echo "Disconnected from $session. Press Enter to return to menu..."
+    read -r
+done

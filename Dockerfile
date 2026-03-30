@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     tmux openssh-client \
     jq ca-certificates \
     xz-utils \
+    docker.io \
     && rm -rf /var/lib/apt/lists/* \
     && tar -C / -Jxpf /tmp/s6-noarch.tar.xz \
     && tar -C / -Jxpf /tmp/s6-arch.tar.xz \
