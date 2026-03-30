@@ -6,10 +6,9 @@
 #   ./scripts/hub.sh            # show session menu
 #   ./scripts/hub.sh --list     # just list available sessions
 
-set -euo pipefail
-
 export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
+export TERM="${TERM:-xterm-256color}"
 
 REMOTE_HOST="${RELAY_REMOTE_HOST:-root@100.64.0.12}"
 
@@ -35,7 +34,7 @@ printf '\033]0;relay-hub\007'
 
 # Interactive menu
 while true; do
-    clear
+    echo "---"
     echo "╔══════════════════════════════════════════╗"
     echo "║           RELAY SESSION HUB              ║"
     echo "╚══════════════════════════════════════════╝"
