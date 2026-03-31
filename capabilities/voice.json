@@ -1,0 +1,11 @@
+{
+  "session": "voice",
+  "description": "Voice/3CX workspace — claude-phone integration with OpenClaw via SIP/3CX for AI voice calls",
+  "domain": ["voice", "3cx", "sip", "phone", "claude-phone", "openclaw-3cx"],
+  "accepts_tasks": [
+    {"type": "voice-feature", "description": "Build or fix voice call features", "example": "Fix echo cancellation in SIP handler"},
+    {"type": "3cx-integration", "description": "3CX/SIP configuration and integration", "example": "Configure outbound call routing"},
+    {"type": "debugging", "description": "Debug voice/SIP issues", "example": "Why does the call drop after 30s?"}
+  ],
+  "context": "claude-phone project: voice interface for OpenClaw via SIP/3CX. Runs on ARM64 (Oracle Cloud). Phone → 3CX Cloud → SIP tunnel → local agent."
+}
