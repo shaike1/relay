@@ -83,11 +83,14 @@ while true; do
 
     total=$((i - 1))
     echo ""
-    echo "  r) Refresh    q) Quit"
+    echo "  r) Refresh    q) Quit to shell    x) Exit"
     echo ""
     read -rp "Select session [1-${total}]: " choice
 
-    [[ "$choice" == "q" ]] && exit 0
+    [[ "$choice" == "x" ]] && exit 0
+    if [[ "$choice" == "q" ]]; then
+        exec /bin/bash --login
+    fi
     [[ "$choice" == "r" ]] && continue
     [[ -z "$choice" ]] && continue
 
