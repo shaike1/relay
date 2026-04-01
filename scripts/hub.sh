@@ -111,9 +111,16 @@ while true; do
     printf '\033]0;%s\007' "$session"
 
     if [ "$host" = "local" ]; then
-        docker exec -it "$container" \
-            tmux -S "/tmp/tmux-${session}.sock" attach -t "$session" 2>/dev/null \
-            || docker exec -it "$container" bash
+        # Try direct tmux attach via shared relay-queue volume (avoids nested docker exec -it PTY issues)
+        DIRECT_SOCK="/tmp/relay-sessions/tmux-${session}.sock"
+        if [ -S "$DIRECT_SOCK" ]; then
+            tmux -S "$DIRECT_SOCK" attach -t "$session" 2>/dev/null \
+                || docker exec -it "$container" bash
+        else
+            docker exec -it "$container" \
+                tmux -S "/tmp/tmux-${session}.sock" attach -t "$session" 2>/dev/null \
+                || docker exec -it "$container" bash
+        fi
     else
         ssh -t -o StrictHostKeyChecking=no "$REMOTE_HOST" \
             "docker exec -it $container tmux -S /tmp/tmux-${session}.sock attach -t $session 2>/dev/null || docker exec -it $container bash"

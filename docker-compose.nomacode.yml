@@ -21,6 +21,12 @@ services:
       - /root:/root
       # Docker socket — so nomacode can exec into containers
       - /var/run/docker.sock:/var/run/docker.sock
+      # Shared relay /tmp — allows hub.sh to attach to tmux sessions directly
+      - relay-queue:/tmp/relay-sessions
+
+volumes:
+  relay-queue:
+    external: true
     logging:
       driver: "json-file"
       options:
