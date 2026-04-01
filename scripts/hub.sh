@@ -114,7 +114,9 @@ while true; do
         # Try direct tmux attach via shared relay-queue volume (avoids nested docker exec -it PTY issues)
         DIRECT_SOCK="/tmp/relay-sessions/tmux-${session}.sock"
         if [ -S "$DIRECT_SOCK" ]; then
-            tmux -S "$DIRECT_SOCK" attach -t "$session" 2>/dev/null \
+            # new-session -t links to existing session without blocking active clients
+            tmux -S "$DIRECT_SOCK" new-session -t "$session" 2>/dev/null \
+                || tmux -S "$DIRECT_SOCK" attach -t "$session" 2>/dev/null \
                 || docker exec -it "$container" bash
         else
             docker exec -it "$container" \
