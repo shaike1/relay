@@ -10,6 +10,18 @@ export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
 export TERM="${TERM:-xterm-256color}"
 
+# When used as a login shell, SSH calls: hub.sh -c "command"
+# Pass the command through to bash so non-interactive SSH works correctly.
+if [[ "${1:-}" == "-c" ]]; then
+    exec /bin/bash -c "${2:-}"
+fi
+
+# If no TTY available (e.g. non-interactive SSH, SCP, port forwarding),
+# fall back to plain bash shell.
+if [[ ! -t 0 && ! -t 1 ]]; then
+    exec /bin/bash "$@"
+fi
+
 REMOTE_HOST="${RELAY_REMOTE_HOST:-root@100.64.0.12}"
 
 list_local() {
