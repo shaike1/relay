@@ -10,16 +10,21 @@ export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
 export TERM="${TERM:-xterm-256color}"
 
+# When used as ForceCommand in sshd_config, SSH sets SSH_ORIGINAL_COMMAND.
+# Pass it through so non-interactive SSH (scp, rsync, commands) works correctly.
+if [[ -n "${SSH_ORIGINAL_COMMAND:-}" ]]; then
+    exec /bin/bash -c "$SSH_ORIGINAL_COMMAND"
+fi
+
 # When used as a login shell, SSH calls: hub.sh -c "command"
-# Pass the command through to bash so non-interactive SSH works correctly.
 if [[ "${1:-}" == "-c" ]]; then
     exec /bin/bash -c "${2:-}"
 fi
 
 # If no TTY available (e.g. non-interactive SSH, SCP, port forwarding),
-# fall back to plain bash shell.
+# fall back to plain bash shell. Only pass args that bash understands (not --list etc).
 if [[ ! -t 0 && ! -t 1 ]]; then
-    exec /bin/bash "$@"
+    exec /bin/bash
 fi
 
 REMOTE_HOST="${RELAY_REMOTE_HOST:-root@100.64.0.12}"
@@ -108,7 +113,7 @@ while true; do
             || docker exec -it "$container" bash
     else
         ssh -t -o StrictHostKeyChecking=no "$REMOTE_HOST" \
-            "docker exec -it $container tmux -S /tmp/tmux-${session}.sock attach -t $session 2>/dev/null || docker exec -it $container bash"
+            "docker exec -it $container tmux -S /tmp/tmux-${container}.sock attach -t $container 2>/dev/null || docker exec -it $container bash"
     fi
 
     # Reset terminal title back to hub when returning
