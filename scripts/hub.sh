@@ -57,8 +57,8 @@ while true; do
     echo "╚══════════════════════════════════════════╝"
     echo ""
 
-    declare -a names
-    declare -a hosts
+    names=()
+    hosts=()
     i=1
 
     echo "  LOCAL:"
@@ -116,7 +116,7 @@ while true; do
             || docker exec -it "$container" bash
     else
         ssh -t -o StrictHostKeyChecking=no "$REMOTE_HOST" \
-            "docker exec -it $container tmux -S /tmp/tmux-${container}.sock attach -t $container 2>/dev/null || docker exec -it $container bash"
+            "docker exec -it $container tmux -S /tmp/tmux-${session}.sock attach -t $session 2>/dev/null || docker exec -it $container bash"
     fi
 
     # Reset terminal title back to hub when returning

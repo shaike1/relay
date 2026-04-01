@@ -11,7 +11,7 @@ services:
       HOST: "0.0.0.0"
       SHELL: "/root/relay/scripts/hub.sh"
       NOMACODE_USER: "relay"
-      NOMACODE_PASS: "relay2026"
+      NOMACODE_PASS: "PKNfwGoX4-8-LHsxhVphvQ"
     ports:
       - "7070:3000"
     volumes:
