@@ -339,6 +339,32 @@ https://claude.ai/code/session_<your-session-id>
 
 **Tip:** The URL changes on each restart. Use `/snap` to capture the current pane and find the latest URL, or add a `/url` bot command to extract and send it directly to the Telegram topic.
 
+## Shared Codex Topic
+
+Relay can also run one shared `codex` topic alongside the per-project Claude topics.
+
+- Send a plain message to run Codex in the shared topic's default workdir.
+- Tag a project to route Codex using the same `sessions.json` inventory as Claude sessions.
+- Local tags run on the relay host. Remote tags run over SSH on the tagged host.
+- Remote tagged runs require a valid Codex login on that remote host (`/root/.codex/auth.json`).
+
+Supported tag formats:
+
+```text
+relay: show sessions.json
+@openclaw inspect the latest changes
+[teamy] review docker status
+```
+
+Helpers inside the shared `codex` topic:
+
+```text
+help
+projects
+```
+
+`projects` lists the available session tags and their host. This lets Codex work across the same project map as the Claude sessions without needing a separate topic per project.
+
 ---
 
 ## Bot commands

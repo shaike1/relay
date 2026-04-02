@@ -2,11 +2,12 @@
 # codex-session-loop.sh <session_name> <work_dir>
 # Run the Codex relay loop — shared session mode.
 #
-# For a "shared" codex session (SESSION_NAME=codex), messages can be prefixed
-# with a project name to set the working directory:
-#   "openclaw: check the latest PR"   → runs in /root/.openclaw/workspace
-#   "relay: show sessions.json"        → runs in /root/relay
-#   "check the code"                   → runs in WORKDIR (default)
+# For a "shared" codex session (SESSION_NAME=codex), messages can be tagged
+# with a project/session name to choose where Codex runs:
+#   "openclaw: check the latest PR"   → runs on the host for session "openclaw"
+#   "@relay show sessions.json"       → runs in /root/relay
+#   "[teamy] inspect docker logs"     → runs on the remote host for "teamy"
+#   "check the code"                  → runs in WORKDIR (default)
 #
 # For dedicated sessions, the workdir is fixed.
 set -euo pipefail
@@ -56,18 +57,88 @@ DEFAULT_WORKDIR="${WORKDIR}"
 
 log() { echo "[codex:\${SESSION_NAME}] \$*" >&2; }
 
-# Load project paths from sessions.json for workdir routing
-get_workdir() {
+# Resolve a tagged session from sessions.json.
+# Output: session<TAB>path<TAB>host
+resolve_target() {
     local project="\$1"
+    python3 -c "
+import json
+import re
+
+def normalize(value: str) -> str:
+    return re.sub(r'[^a-z0-9]+', '', value.lower())
+
+try:
+    sessions = json.load(open('/root/relay/sessions.json'))
+    raw = '\$project'.strip()
+    normalized = normalize(raw)
+
+    exact = next((s for s in sessions if s.get('session', '').lower() == raw.lower()), None)
+    if exact:
+        print(f\"{exact['session']}\t{exact['path']}\t{exact.get('host') or ''}\")
+    else:
+        normalized_matches = [s for s in sessions if normalize(s.get('session', '')) == normalized]
+        if len(normalized_matches) == 1:
+            match = normalized_matches[0]
+            print(f\"{match['session']}\t{match['path']}\t{match.get('host') or ''}\")
+except Exception:
+    print('')
+" 2>/dev/null || echo ""
+}
+
+strip_sender_prefix() {
+    local msg="\$1"
+    if [[ "\$msg" =~ ^\[[^]]+\]:[[:space:]]*(.*)$ ]]; then
+        printf '%s\n' "\${BASH_REMATCH[1]}"
+    else
+        printf '%s\n' "\$msg"
+    fi
+}
+
+print_help() {
+    echo "Codex shared topic routes by session tag."
+    echo "Formats:"
+    echo "  relay: show sessions.json"
+    echo "  @openclaw inspect recent commits"
+    echo "  [teamy] review docker status"
+    echo "  plain message -> default workdir (${WORKDIR})"
+    echo "Use 'projects' to list available tags."
+}
+
+print_projects() {
     python3 -c "
 import json
 try:
     sessions = json.load(open('/root/relay/sessions.json'))
-    s = next((s for s in sessions if s.get('session','').lower() == '\$project'.lower() and s.get('host') is None), None)
-    print(s['path'] if s else '')
-except Exception:
-    print('')
-" 2>/dev/null || echo ""
+    for s in sessions:
+        name = s.get('session', '')
+        host = s.get('host') or 'local'
+        if name and name != 'codex':
+            print(f'- {name} ({host})')
+except Exception as exc:
+    print(f'Unable to list projects: {exc}')
+" 2>/dev/null || echo "Unable to list projects."
+}
+
+run_codex_local() {
+    local target_dir="\$1"
+    local prompt="\$2"
+    cd "\$target_dir"
+    "\$CODEX_BIN" exec resume --last --dangerously-bypass-approvals-and-sandbox "\$prompt" 2>&1 \
+        || "\$CODEX_BIN" exec --dangerously-bypass-approvals-and-sandbox "\$prompt" 2>&1
+    cd "\$DEFAULT_WORKDIR"
+}
+
+run_codex_remote() {
+    local remote_host="\$1"
+    local target_dir="\$2"
+    local prompt="\$3"
+    local q_dir q_prompt
+    q_dir=\$(printf '%q' "\$target_dir")
+    q_prompt=\$(printf '%q' "\$prompt")
+
+    ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no "\$remote_host" \
+        "cd \$q_dir && if [ ! -x /root/.nvm/versions/node/v22.22.0/bin/codex ]; then REMOTE_CODEX_BIN=codex; else REMOTE_CODEX_BIN=/root/.nvm/versions/node/v22.22.0/bin/codex; fi; \"\\\$REMOTE_CODEX_BIN\" exec resume --last --dangerously-bypass-approvals-and-sandbox \$q_prompt 2>&1 || \"\\\$REMOTE_CODEX_BIN\" exec --dangerously-bypass-approvals-and-sandbox \$q_prompt 2>&1"
 }
 
 log "Codex shared session ready. Waiting for messages on thread ${THREAD_ID:-?}..."
@@ -78,8 +149,9 @@ echo "║          CODEX SHARED SESSION            ║"
 echo "╠══════════════════════════════════════════╣"
 echo "║ Thread: ${THREAD_ID:-?}"
 echo "║ Default workdir: ${WORKDIR}"
-echo "║ Format: [project:] <task>"
-echo "║ Example: relay: show sessions.json"
+echo "║ Tags: project: task | @project task"
+echo "║       [project] task | plain message"
+echo "║ Helpers: help | projects"
 echo "╚══════════════════════════════════════════╝"
 echo ""
 
@@ -130,26 +202,60 @@ if msgs:
         echo "[\$(date '+%H:%M:%S')] \$msg"
         echo "─────────────────────────────"
 
-        # Check for project prefix: "projectname: task"
+        CLEAN_MSG=\$(strip_sender_prefix "\$msg")
+        TARGET_SESSION=""
         TARGET_DIR="\$DEFAULT_WORKDIR"
-        TASK="\$msg"
-        if echo "\$msg" | grep -q "^[a-zA-Z_-]*:"; then
-            prefix=\$(echo "\$msg" | cut -d: -f1 | tr -d ' ')
-            task_part=\$(echo "\$msg" | cut -d: -f2- | sed 's/^ *//')
-            proj_dir=\$(get_workdir "\$prefix")
-            if [ -n "\$proj_dir" ] && [ -d "\$proj_dir" ]; then
-                TARGET_DIR="\$proj_dir"
+        TARGET_HOST=""
+        TASK="\$CLEAN_MSG"
+
+        lower_msg=\$(printf '%s' "\$CLEAN_MSG" | tr '[:upper:]' '[:lower:]')
+        if [ "\$lower_msg" = "help" ] || [ "\$lower_msg" = "/help" ]; then
+            print_help
+            continue
+        fi
+        if [ "\$lower_msg" = "projects" ] || [ "\$lower_msg" = "/projects" ] || [ "\$lower_msg" = "list projects" ]; then
+            print_projects
+            continue
+        fi
+
+        prefix=""
+        task_part=""
+        if [[ "\$CLEAN_MSG" =~ ^@([A-Za-z0-9._-]+)[[:space:]]+(.+)$ ]]; then
+            prefix="\${BASH_REMATCH[1]}"
+            task_part="\${BASH_REMATCH[2]}"
+        elif [[ "\$CLEAN_MSG" =~ ^\[([A-Za-z0-9._ -]+)\][[:space:]]*(.+)$ ]]; then
+            prefix="\${BASH_REMATCH[1]}"
+            task_part="\${BASH_REMATCH[2]}"
+        elif [[ "\$CLEAN_MSG" =~ ^([A-Za-z0-9._ -]+):[[:space:]]*(.+)$ ]]; then
+            prefix="\${BASH_REMATCH[1]}"
+            task_part="\${BASH_REMATCH[2]}"
+        fi
+
+        if [ -n "\$prefix" ]; then
+            prefix=\$(echo "\$prefix" | sed 's/^ *//; s/ *$//')
+            resolved=\$(resolve_target "\$prefix")
+            if [ -n "\$resolved" ]; then
+                TARGET_SESSION=\$(printf '%s' "\$resolved" | cut -f1)
+                TARGET_DIR=\$(printf '%s' "\$resolved" | cut -f2)
+                TARGET_HOST=\$(printf '%s' "\$resolved" | cut -f3)
                 TASK="\$task_part"
-                echo "→ Project: \$prefix (\$TARGET_DIR)"
+                echo "→ Session: \$TARGET_SESSION (\${TARGET_HOST:-local})"
+                echo "→ Workdir: \$TARGET_DIR"
+            else
+                echo "Unknown project tag: \$prefix"
+                echo "Send 'projects' to list available tags."
+                continue
             fi
         fi
 
-        cd "\$TARGET_DIR"
         FULL_PROMPT="Working directory: \$TARGET_DIR. Task: \$TASK"
-        \$CODEX_BIN exec resume --last --dangerously-bypass-approvals-and-sandbox "\$FULL_PROMPT" 2>&1 \
-            || \$CODEX_BIN exec --dangerously-bypass-approvals-and-sandbox "\$FULL_PROMPT" 2>&1 \
-            || log "Codex failed for: \$TASK"
-        cd "\$DEFAULT_WORKDIR"
+        if [ -n "\$TARGET_HOST" ]; then
+            run_codex_remote "\$TARGET_HOST" "\$TARGET_DIR" "\$FULL_PROMPT" \
+                || log "Remote Codex failed for: \$TASK"
+        else
+            run_codex_local "\$TARGET_DIR" "\$FULL_PROMPT" \
+                || log "Codex failed for: \$TASK"
+        fi
     done <<< "\$MESSAGES"
 
     echo "\$NEW_LAST_ID" > "\$STATE_FILE"
