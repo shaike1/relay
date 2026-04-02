@@ -84,6 +84,21 @@ if [ -n "$THREAD_ID" ]; then
     MCP_WRAPPER_PID=$!
     trap "kill $MCP_WRAPPER_PID 2>/dev/null || true" EXIT
   fi
+
+  # Inject a startup message so Claude knows to announce itself and check context.
+  # This ensures sessions are productive immediately after restart, not idle.
+  QUEUE_FILE="/tmp/tg-queue-${THREAD_ID}.jsonl"
+  STARTUP_MSG='You just started. Call typing then send_message with '"'"'חזרתי ✓'"'"' to announce you'"'"'re online, then fetch_messages and respond to all pending messages.'
+  printf '%s\n' "$(python3 -c "
+import json, time
+print(json.dumps({
+    'text': '''$STARTUP_MSG''',
+    'user': 'system',
+    'message_id': -int(time.time() * 1000),
+    'ts': time.time(),
+    'force': True
+}))
+")" >> "$QUEUE_FILE"
 fi
 
 # Inner loop script that Claude runs inside tmux
