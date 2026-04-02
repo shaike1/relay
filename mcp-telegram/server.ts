@@ -321,6 +321,28 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
+    {
+      name: 'get_session_context',
+      description: 'Read what another session is currently working on. Returns the session\'s memory/session_context.md if available, plus its project path and type.',
+      inputSchema: {
+        type: 'object',
+        required: ['session'],
+        properties: {
+          session: { type: 'string', description: 'Target session name (from list_peers)' },
+        },
+      },
+    },
+    {
+      name: 'broadcast',
+      description: 'Send a message to ALL other active sessions at once. Useful for announcements, status updates, or requesting help from any available agent.',
+      inputSchema: {
+        type: 'object',
+        required: ['text'],
+        properties: {
+          text: { type: 'string', description: 'Message to broadcast to all sessions' },
+        },
+      },
+    },
   ],
 }))
 
@@ -444,7 +466,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   if (name === 'list_peers') {
     try {
       const sessionsPath = new URL('../sessions.json', import.meta.url).pathname
-      const sessions: Array<{ session: string; thread_id: number; host?: string; path?: string }> =
+      const sessions: Array<{ session: string; thread_id: number; host?: string; path?: string; type?: string }> =
         JSON.parse(readFileSync(sessionsPath, 'utf8'))
       const lines: string[] = []
       for (const s of sessions) {
@@ -469,7 +491,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           }
         } catch {}
         const host = s.host ?? 'local'
-        lines.push(`${s.session} (${host}) — last active: ${lastActive}`)
+        const type = s.type ?? 'claude'
+        const path = s.path ?? ''
+        lines.push(`${s.session} [${type}] (${host}) ${path} — last active: ${lastActive}`)
       }
       return { content: [{ type: 'text', text: lines.join('\n') || 'No other sessions.' }] }
     } catch (e) {
@@ -623,6 +647,113 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       return { content: [{ type: 'text', text: `Result sent back to '${task.from}'. Task ${taskId} marked ${tasks[taskId].status}.` }] }
     } catch (e) {
       return { content: [{ type: 'text', text: `Error completing task: ${e}` }] }
+    }
+  }
+
+  if (name === 'get_session_context') {
+    const targetSession = String(args?.session ?? '')
+    try {
+      const sessionsPath = new URL('../sessions.json', import.meta.url).pathname
+      const sessions: Array<{ session: string; thread_id: number; host?: string; path?: string; type?: string }> =
+        JSON.parse(readFileSync(sessionsPath, 'utf8'))
+      const target = sessions.find(s => s.session === targetSession)
+      if (!target) return { content: [{ type: 'text', text: `Session '${targetSession}' not found. Use list_peers to see available sessions.` }] }
+
+      const info: string[] = [
+        `Session: ${target.session}`,
+        `Type: ${target.type ?? 'claude'}`,
+        `Path: ${target.path ?? 'unknown'}`,
+        `Host: ${target.host ?? 'local'}`,
+      ]
+
+      // Try to read the session's memory/session_context.md
+      const contextPaths = [
+        `${target.path ?? '/root'}/.claude/memory/session_context.md`,
+        `/root/.claude/projects/-${(target.path ?? '/root').replace(/\//g, '-')}/memory/session_context.md`,
+      ]
+      let context = ''
+      for (const cp of contextPaths) {
+        try {
+          if (target.host) {
+            const proc = Bun.spawn(
+              ['ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=3',
+               target.host, `cat ${cp} 2>/dev/null`]
+            )
+            const out = await new Response(proc.stdout).text()
+            if (out.trim()) { context = out.trim(); break }
+          } else {
+            const f = Bun.file(cp)
+            if (await f.exists()) { context = (await f.text()).trim(); break }
+          }
+        } catch {}
+      }
+
+      // Also check auto-memory session_context
+      if (!context) {
+        const autoMemoryPath = `/root/.claude/projects/-${(target.path ?? '/root').replace(/\//g, '-')}/memory/session_context.md`
+        try {
+          const f = Bun.file(autoMemoryPath)
+          if (await f.exists()) context = (await f.text()).trim()
+        } catch {}
+      }
+
+      if (context) {
+        info.push('', '--- Session Context ---', context)
+      } else {
+        info.push('', 'No session context available.')
+      }
+
+      return { content: [{ type: 'text', text: info.join('\n') }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error reading session context: ${e}` }] }
+    }
+  }
+
+  if (name === 'broadcast') {
+    const text = String(args?.text ?? '')
+    try {
+      const sessionsPath = new URL('../sessions.json', import.meta.url).pathname
+      const sessions: Array<{ session: string; thread_id: number; host?: string }> =
+        JSON.parse(readFileSync(sessionsPath, 'utf8'))
+      const selfName = process.env.SESSION_NAME ?? `session-${THREAD_ID}`
+      const sent: string[] = []
+      const failed: string[] = []
+
+      for (const target of sessions) {
+        if (target.thread_id === THREAD_ID) continue  // skip self
+        const queueFile = `/tmp/tg-queue-${target.thread_id}.jsonl`
+        const entry = JSON.stringify({
+          text: `[Broadcast from ${selfName}]\n${text}`,
+          user: `peer:${selfName}`,
+          message_id: -Date.now(),
+          thread_id: target.thread_id,
+          ts: Date.now() / 1000,
+          force: true,
+        })
+
+        try {
+          if (target.host) {
+            const proc = Bun.spawn(
+              ['ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=5',
+               target.host, `cat >> ${queueFile}`],
+              { stdin: new TextEncoder().encode(entry + '\n') }
+            )
+            await proc.exited
+            if (proc.exitCode !== 0) throw new Error(`SSH exit ${proc.exitCode}`)
+          } else {
+            await Bun.write(queueFile, entry + '\n', { append: true })
+          }
+          sent.push(target.session)
+        } catch {
+          failed.push(target.session)
+        }
+      }
+
+      void logToPeersTopic(selfName, 'broadcast', text.slice(0, 200))
+      const result = `Broadcast sent to ${sent.length} sessions: ${sent.join(', ')}`
+      return { content: [{ type: 'text', text: failed.length ? `${result}\nFailed: ${failed.join(', ')}` : result }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error broadcasting: ${e}` }] }
     }
   }
 
