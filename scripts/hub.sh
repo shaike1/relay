@@ -21,6 +21,26 @@ if [[ "${1:-}" == "-c" ]]; then
     exec /bin/bash -c "${2:-}"
 fi
 
+# Explicit non-interactive modes must run before the no-TTY fallback.
+if [[ "${1:-}" == "--list" ]]; then
+    REMOTE_HOST="${RELAY_REMOTE_HOST:-root@100.64.0.12}"
+
+    list_local() {
+        docker ps --format '{{.Names}}' 2>/dev/null | grep '^relay-session-' | sed 's/relay-session-//' | sort
+    }
+
+    list_remote() {
+        ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$REMOTE_HOST" \
+            "docker ps --format '{{.Names}}' 2>/dev/null | grep '^relay-session-' | sed 's/relay-session-//'" 2>/dev/null | sort
+    }
+
+    echo "=== Local sessions ==="
+    list_local
+    echo "=== Remote sessions ($REMOTE_HOST) ==="
+    list_remote
+    exit 0
+fi
+
 # If no TTY available (e.g. non-interactive SSH, SCP, port forwarding),
 # fall back to plain bash shell. Only pass args that bash understands (not --list etc).
 if [[ ! -t 0 && ! -t 1 ]]; then
@@ -37,14 +57,6 @@ list_remote() {
     ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$REMOTE_HOST" \
         "docker ps --format '{{.Names}}' 2>/dev/null | grep '^relay-session-' | sed 's/relay-session-//'" 2>/dev/null | sort
 }
-
-if [[ "${1:-}" == "--list" ]]; then
-    echo "=== Local sessions ==="
-    list_local
-    echo "=== Remote sessions ($REMOTE_HOST) ==="
-    list_remote
-    exit 0
-fi
 
 # Set initial terminal title
 printf '\033]0;relay-hub\007'
@@ -89,7 +101,7 @@ while true; do
 
     [[ "$choice" == "x" ]] && exit 0
     if [[ "$choice" == "q" ]]; then
-        exec /bin/bash --login
+        exec env RELAY_HUB_BYPASS=1 /bin/bash --login
     fi
     [[ "$choice" == "r" ]] && continue
     [[ -z "$choice" ]] && continue

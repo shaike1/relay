@@ -1,3 +1,3 @@
 #!/command/execlineb -P
-foreground { claude update --yes }
+foreground { /bin/sh -lc "if [ \"\${CLAUDE_AUTO_UPDATE:-0}\" = \"1\" ]; then claude update </dev/null >/dev/null 2>&1 || true; fi" }
 ifelse { true } { }

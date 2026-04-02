@@ -233,7 +233,7 @@ Docker gives you two things at once: easy deployment (one command on any server)
 |------|---------|
 | `Dockerfile` | Builds the image: Ubuntu 24.04, Python, Bun, Node.js, Claude Code CLI |
 | `docker-compose.yml` | Defines volumes, restart policy, env injection |
-| `docker-entrypoint.sh` | Runs `claude update --yes` on every container start, then launches `bot.py` |
+| `docker-entrypoint.sh` | Optionally runs `claude update` when `CLAUDE_AUTO_UPDATE=1`, then launches `bot.py` |
 | `.dockerignore` | Keeps secrets and state out of the image |
 
 ### Quick start (pre-built image)
@@ -539,6 +539,8 @@ chmod +x /root/relay/watchdog.sh
 
 Edit `watchdog.sh` and set `PRIMARY` to your primary server's SSH address.
 
+The default probe now checks the primary `relay` Docker container first and falls back to a `relay` systemd service if you run the bot that way. This keeps the backup in standby when the primary is containerized.
+
 ```ini
 # /etc/systemd/system/relay-watchdog.service
 [Unit]
@@ -560,6 +562,36 @@ WantedBy=multi-user.target
 
 ```bash
 systemctl enable --now relay-watchdog
+```
+
+Keep the backup `relay.service` disabled at boot. The watchdog should be the only component that starts or stops the backup bot:
+
+```bash
+systemctl disable relay
+systemctl stop relay
+systemctl reset-failed relay
+```
+
+If you run the backup relay under systemd, use a wrapper that sources `/root/relay/.env` before launching the bot:
+
+```ini
+# /etc/systemd/system/relay.service
+[Unit]
+Description=Relay — Telegram to Claude Code bridge (backup)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/relay
+ExecStart=/root/relay/scripts/run-relay-bot.sh
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
 ```
 
 The backup relay needs its own `sessions.json` with hosts flipped (what is `null` on primary becomes `"root@primary-ip"` on backup, and vice versa). Use `sync-sessions.sh` to keep it in sync automatically.

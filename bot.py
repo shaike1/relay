@@ -1,11 +1,14 @@
 import asyncio
-import os
+import hashlib
 import json
-import re
-import subprocess
 import logging
+import os
+import re
+import socket
+import subprocess
 import time
 from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import Conflict as TelegramConflict
 from telegram.ext import (
     Application, MessageHandler, CommandHandler,
     CallbackQueryHandler, filters, ContextTypes
@@ -1795,6 +1798,47 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last_user_sent[session] = time.time()
         logger.info(f"Sent message to tmux '{session}' (thread {thread_id})")
 
+    # ─── @mention topic linking ───────────────────────────────────────────────
+    # When a user types @sessionname, reply with a clickable link to that topic
+    # and forward a notification to the mentioned session's queue.
+    raw_text = update.message.text or ""
+    mentions = re.findall(r'@([\w-]+)', raw_text)
+    if mentions:
+        configs = get_configs()
+        # chat_id for deep link: strip the -100 prefix
+        abs_chat = str(abs(GROUP_CHAT_ID))
+        if abs_chat.startswith("100"):
+            abs_chat = abs_chat[3:]
+        linked_parts = []
+        for m in mentions:
+            target = next((c for c in configs if c.get("session") == m), None)
+            if target and target.get("thread_id") != thread_id:
+                link = f"https://t.me/c/{abs_chat}/{target['thread_id']}"
+                linked_parts.append(f'<a href="{link}">@{m}</a>')
+                # Forward notification to the mentioned topic
+                target_host = target.get("host")
+                write_queue(target.get("thread_id"), {
+                    "text":       f"[mention from {session}] {user_name}: {raw_text}",
+                    "user":       f"mention:{session}",
+                    "message_id": -int(time.time() * 1000),
+                    "thread_id":  target.get("thread_id"),
+                    "force":      True,
+                }, target_host)
+                logger.info(f"@mention: {session} → {m} (thread {target['thread_id']})")
+        if linked_parts:
+            try:
+                link_text = "🔗 " + " ".join(linked_parts)
+                await context.bot.send_message(
+                    chat_id=GROUP_CHAT_ID,
+                    message_thread_id=thread_id,
+                    text=link_text,
+                    parse_mode="HTML",
+                    reply_to_message_id=msg_id,
+                    disable_web_page_preview=True,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send @mention link: {e}")
+
 
 # ─── main ─────────────────────────────────────────────────────────────────────
 
@@ -2065,6 +2109,72 @@ async def post_init(app: Application):
 
 
 BOT_PID_FILE = '/tmp/relay-bot.pid'
+CONFLICT_MARKER_FILE = '/tmp/relay-bot.conflict.json'
+_conflict_count = 0
+
+
+def token_fingerprint(token: str) -> str:
+    if not token:
+        return "missing"
+    return hashlib.sha256(token.encode()).hexdigest()[:12]
+
+
+def read_pid_file() -> str:
+    try:
+        return open(BOT_PID_FILE).read().strip()
+    except OSError:
+        return "(missing)"
+
+
+def write_conflict_marker(reason: str, error: Exception | None = None, extra: dict | None = None) -> None:
+    payload = {
+        "ts": int(time.time()),
+        "reason": reason,
+        "pid": os.getpid(),
+        "hostname": socket.gethostname(),
+        "mode": "webhook" if WEBHOOK_URL else "polling",
+        "pid_file": read_pid_file(),
+        "token_fingerprint": token_fingerprint(TOKEN),
+        "webhook_url": WEBHOOK_URL or None,
+        "error": str(error) if error else None,
+    }
+    if extra:
+        payload.update(extra)
+    try:
+        with open(CONFLICT_MARKER_FILE, "w") as f:
+            json.dump(payload, f, indent=2)
+    except OSError as e:
+        logger.warning(f"Failed writing conflict marker {CONFLICT_MARKER_FILE}: {e}")
+
+
+def log_duplicate_poller(reason: str, error: Exception | None = None, extra: dict | None = None) -> None:
+    global _conflict_count
+    _conflict_count += 1
+    details = {
+        "conflict_count": _conflict_count,
+        **(extra or {}),
+    }
+    write_conflict_marker(reason, error=error, extra=details)
+    logger.error(
+        "Duplicate Telegram poller suspected: %s | pid=%s host=%s mode=%s token_fp=%s pid_file=%s conflicts=%s webhook=%s error=%s",
+        reason,
+        os.getpid(),
+        socket.gethostname(),
+        "webhook" if WEBHOOK_URL else "polling",
+        token_fingerprint(TOKEN),
+        read_pid_file(),
+        _conflict_count,
+        WEBHOOK_URL or "-",
+        error or "-",
+    )
+
+
+async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    err = context.error
+    if isinstance(err, TelegramConflict):
+        log_duplicate_poller("Telegram getUpdates conflict", error=err)
+        return
+    logger.error("Unhandled Telegram application error", exc_info=(type(err), err, err.__traceback__))
 
 
 def main():
@@ -2076,6 +2186,7 @@ def main():
         try:
             old_pid = int(open(BOT_PID_FILE).read().strip())
             os.kill(old_pid, 0)  # raises if process doesn't exist
+            log_duplicate_poller("Local PID lock already held", extra={"existing_pid": old_pid})
             logger.error(f"Another bot instance already running (pid {old_pid}). Exiting.")
             return
         except (ProcessLookupError, ValueError):
@@ -2084,10 +2195,18 @@ def main():
     import atexit
     atexit.register(lambda: os.unlink(BOT_PID_FILE) if os.path.exists(BOT_PID_FILE) else None)
 
-    app = Application.builder().token(TOKEN).post_init(post_init).build()
+    app = (Application.builder()
+           .token(TOKEN)
+           .post_init(post_init)
+           .get_updates_read_timeout(15)
+           .get_updates_write_timeout(15)
+           .get_updates_connect_timeout(10)
+           .get_updates_pool_timeout(10)
+           .build())
 
     # Debug: log everything before any filtering
     app.add_handler(MessageHandler(filters.ALL, debug_all), group=-1)
+    app.add_error_handler(handle_error)
 
     app.add_handler(CommandHandler("start",   cmd_start))
     app.add_handler(CommandHandler("new",        cmd_new))
@@ -2113,7 +2232,14 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND, handle_message))
 
-    logger.info("Bot starting...")
+    logger.info(
+        "Bot starting... pid=%s host=%s mode=%s token_fp=%s pid_file=%s",
+        os.getpid(),
+        socket.gethostname(),
+        "webhook" if WEBHOOK_URL else "polling",
+        token_fingerprint(TOKEN),
+        BOT_PID_FILE,
+    )
     if WEBHOOK_URL:
         webhook_full = f"{WEBHOOK_URL}/tg"
         logger.info(f"Starting in webhook mode: {webhook_full} → localhost:{WEBHOOK_PORT}")
@@ -2128,7 +2254,7 @@ def main():
             kwargs["cert"] = WEBHOOK_CERT   # uploaded to Telegram for self-signed cert verification
         app.run_webhook(**kwargs)
     else:
-        app.run_polling(drop_pending_updates=True)
+        app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
