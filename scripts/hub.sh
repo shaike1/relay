@@ -117,7 +117,7 @@ while true; do
             2>/dev/null || true
         sleep 0.5
         docker exec -it "$container" \
-            tmux -S "/tmp/tmux-${session}.sock" attach -t "$session" 2>/dev/null \
+            tmux -S "/tmp/tmux-${session}.sock" attach -d -t "$session" 2>/dev/null \
             || docker exec -it "$container" bash
     else
         ssh -t -o StrictHostKeyChecking=no "$REMOTE_HOST" \
