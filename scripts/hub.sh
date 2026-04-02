@@ -54,7 +54,7 @@ list_local() {
 }
 
 list_remote() {
-    ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$REMOTE_HOST" \
+    ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no "$REMOTE_HOST" \
         "docker ps --format '{{.Names}}' 2>/dev/null | grep '^relay-session-' | sed 's/relay-session-//'" 2>/dev/null | sort
 }
 
@@ -73,15 +73,21 @@ while true; do
     hosts=()
     i=1
 
+    # Fetch local and remote lists in parallel
+    local_tmp=$(mktemp)
+    remote_tmp=$(mktemp)
+    list_local > "$local_tmp" &
+    list_remote > "$remote_tmp" &
+    wait
+
     echo "  LOCAL:"
     while IFS= read -r s; do
         [ -z "$s" ] && continue
-        status=$(docker inspect --format='{{.State.Status}}' "relay-session-$s" 2>/dev/null || echo "?")
-        printf "  %2d) %-22s [%s]\n" "$i" "$s" "$status"
+        printf "  %2d) %-22s\n" "$i" "$s"
         names[$i]="$s"
         hosts[$i]="local"
         ((i++))
-    done < <(list_local)
+    done < "$local_tmp"
 
     echo ""
     echo "  REMOTE ($REMOTE_HOST):"
@@ -91,7 +97,8 @@ while true; do
         names[$i]="$s"
         hosts[$i]="remote"
         ((i++))
-    done < <(list_remote)
+    done < "$remote_tmp"
+    rm -f "$local_tmp" "$remote_tmp"
 
     total=$((i - 1))
     echo ""
@@ -116,20 +123,15 @@ while true; do
 
     container="relay-session-$session"
     echo ""
-    echo "Connecting to $session... (Ctrl+B d to detach from tmux)"
-    sleep 0.5
+    echo "Connecting to $session..."
 
     # Set terminal title to session name
     printf '\033]0;%s\007' "$session"
 
     if [ "$host" = "local" ]; then
-        # Clean up ALL stale tmux clients before connecting (prevents small-terminal size lock)
-        docker exec "$container" \
-            sh -c "tmux -S /tmp/tmux-${session}.sock list-clients -F '#{client_tty}' 2>/dev/null | while read tty; do tmux -S /tmp/tmux-${session}.sock detach-client -t \"\$tty\" 2>/dev/null; done; true" \
-            2>/dev/null || true
-        sleep 0.5
+        # Detach stale clients and attach in a single docker exec to reduce round-trips
         docker exec -it "$container" \
-            sh -c "tmux -S /tmp/tmux-${session}.sock attach -d -t ${session} 2>/dev/null || bash" \
+            sh -c "tmux -S /tmp/tmux-${session}.sock list-clients -F '#{client_tty}' 2>/dev/null | while read tty; do tmux -S /tmp/tmux-${session}.sock detach-client -t \"\$tty\" 2>/dev/null; done; tmux -S /tmp/tmux-${session}.sock attach -d -t ${session} 2>/dev/null || bash" \
             2>/dev/null \
             || docker exec -it "$container" bash
     else

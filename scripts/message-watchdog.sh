@@ -6,13 +6,14 @@ set -euo pipefail
 
 THREAD_ID="${TELEGRAM_THREAD_ID:?TELEGRAM_THREAD_ID required}"
 SESSION="${SESSION_NAME:?SESSION_NAME required}"
+SESSION_TYPE="${SESSION_TYPE:-claude}"
 QUEUE="/tmp/tg-queue-${THREAD_ID}.jsonl"
 STATE="/tmp/tg-queue-${THREAD_ID}.state"
 TMUX_SOCKET="/tmp/tmux-${SESSION}.sock"
 NUDGE="You have a pending Telegram message. Call fetch_messages and respond."
 
 INTERVAL=5
-IDLE_GRACE=300         # 5 minutes between tmux nudges (MCP sessions get direct delivery)
+IDLE_GRACE=60          # 60 seconds between tmux nudges
 MCP_CHECK_INTERVAL=30  # seconds between MCP health checks
 
 last_nudge=0
@@ -24,16 +25,20 @@ tmux_s() { tmux -S "$TMUX_SOCKET" "$@"; }
 while true; do
   sleep "$INTERVAL"
 
-  # MCP health check: if Claude is running but bun (MCP server) is not, restart the container
-  now=$(date +%s)
-  if [ $((now - last_mcp_check)) -ge "$MCP_CHECK_INTERVAL" ]; then
-    last_mcp_check=$now
-    claude_running=$(pgrep -f 'claude' > /dev/null 2>&1 && echo 1 || echo 0)
-    mcp_running=$(pgrep -f 'bun.*mcp-telegram' > /dev/null 2>&1 && echo 1 || echo 0)
-    if [ "$claude_running" = "1" ] && [ "$mcp_running" = "0" ]; then
-      echo "[watchdog:${SESSION}] MCP server missing — restarting container to reload .mcp.json" >&2
-      # Kill claude so s6 restarts the whole session (which reloads .mcp.json)
-      pkill -f 'claude' 2>/dev/null || true
+  # Claude launches the MCP server eagerly. Codex can keep MCP wiring dormant
+  # until the interactive session actually touches a tool, so skip the hard
+  # restart check there and only keep the queue nudge behavior.
+  if [ "$SESSION_TYPE" != "codex" ]; then
+    now=$(date +%s)
+    if [ $((now - last_mcp_check)) -ge "$MCP_CHECK_INTERVAL" ]; then
+      last_mcp_check=$now
+      claude_running=$(pgrep -f 'claude' > /dev/null 2>&1 && echo 1 || echo 0)
+      mcp_running=$(pgrep -f 'bun.*mcp-telegram' > /dev/null 2>&1 && echo 1 || echo 0)
+      if [ "$claude_running" = "1" ] && [ "$mcp_running" = "0" ]; then
+        echo "[watchdog:${SESSION}] MCP server missing — restarting container to reload .mcp.json" >&2
+        # Kill claude so s6 restarts the whole session (which reloads .mcp.json)
+        pkill -f 'claude' 2>/dev/null || true
+      fi
     fi
   fi
 
@@ -66,12 +71,6 @@ print(count)
 " 2>/dev/null || echo 0)
 
   [ "$pending" -gt 0 ] || continue
-
-  # If MCP server is running, it handles message delivery — skip tmux nudge
-  # (MCP delivers via notifications/claude/channel; tmux nudges are only for non-MCP sessions)
-  if pgrep -f 'bun.*mcp-telegram' > /dev/null 2>&1; then
-    continue
-  fi
 
   # Check if tmux session is alive in this container's socket
   tmux_s has-session -t "$SESSION" 2>/dev/null || continue
