@@ -111,6 +111,11 @@ while true; do
     printf '\033]0;%s\007' "$session"
 
     if [ "$host" = "local" ]; then
+        # Clean up stale tmux clients before connecting (prevents small-terminal size lock)
+        docker exec "$container" \
+            sh -c "tmux -S /tmp/tmux-${session}.sock list-clients -F '#{client_tty}' 2>/dev/null | xargs -I{} tmux -S /tmp/tmux-${session}.sock detach-client -t {} 2>/dev/null; true" \
+            2>/dev/null || true
+        sleep 0.3
         docker exec -it "$container" \
             tmux -S "/tmp/tmux-${session}.sock" attach -t "$session" 2>/dev/null \
             || docker exec -it "$container" bash
