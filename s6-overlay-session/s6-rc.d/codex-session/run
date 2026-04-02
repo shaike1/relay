@@ -1,0 +1,6 @@
+#!/command/with-contenv sh
+# Codex session loop service — supervised by s6
+# SESSION_NAME, WORKDIR, and CODEX_BIN are injected via docker-compose environment
+chmod +x /relay/scripts/codex-session-loop.sh /relay/scripts/message-watchdog.sh 2>/dev/null || true
+export S6_SUPERVISED=1
+exec /relay/scripts/codex-session-loop.sh "${SESSION_NAME}" "${WORKDIR}"
