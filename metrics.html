@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Relay Metrics</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh; background: #0d1117; color: #c9d1d9;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 14px;
+    padding: 20px;
+  }
+  .header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 24px; padding-bottom: 12px; border-bottom: 1px solid #21262d;
+  }
+  .header h1 { font-size: 18px; font-weight: 400; color: #f0f6fc; }
+  .header .refresh { color: #58a6ff; cursor: pointer; font-size: 12px; }
+  .header .refresh:hover { text-decoration: underline; }
+  .stats {
+    display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap;
+  }
+  .stat {
+    background: #161b22; border: 1px solid #21262d; border-radius: 6px;
+    padding: 12px 16px; min-width: 120px;
+  }
+  .stat .label { font-size: 11px; color: #8b949e; text-transform: uppercase; }
+  .stat .value { font-size: 24px; color: #f0f6fc; margin-top: 4px; }
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 12px;
+  }
+  .card {
+    background: #161b22; border: 1px solid #21262d; border-radius: 8px;
+    padding: 16px; transition: border-color 0.2s;
+  }
+  .card:hover { border-color: #30363d; }
+  .card .top { display: flex; justify-content: space-between; align-items: center; }
+  .card .name { font-size: 15px; color: #f0f6fc; font-weight: 500; }
+  .card .badge {
+    font-size: 11px; padding: 2px 8px; border-radius: 12px;
+    text-transform: uppercase; font-weight: 500;
+  }
+  .badge-running { background: #0d4429; color: #3fb950; border: 1px solid #238636; }
+  .badge-idle { background: #2d1b00; color: #d29922; border: 1px solid #9e6a03; }
+  .badge-down { background: #3d1419; color: #f85149; border: 1px solid #da3633; }
+  .card .type {
+    font-size: 11px; color: #8b949e; margin-top: 4px;
+    display: flex; gap: 8px; align-items: center;
+  }
+  .card .type .tag {
+    background: #21262d; padding: 1px 6px; border-radius: 4px; color: #58a6ff;
+  }
+  .card .details {
+    margin-top: 12px; font-size: 12px; color: #8b949e;
+    display: grid; grid-template-columns: auto 1fr; gap: 4px 12px;
+  }
+  .card .details .key { color: #6e7681; }
+  .card .details .val { color: #c9d1d9; }
+  .card .pending {
+    margin-top: 8px; font-size: 12px; color: #d29922;
+  }
+  .updated { font-size: 11px; color: #484f58; text-align: center; margin-top: 20px; }
+  .error { color: #f85149; text-align: center; padding: 40px; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>Relay Live Metrics</h1>
+    <span class="refresh" onclick="load()">Refresh</span>
+  </div>
+  <div class="stats" id="stats"></div>
+  <div class="grid" id="grid"></div>
+  <div class="updated" id="updated"></div>
+
+<script>
+const API = '/api/relay-metrics';
+
+function badgeClass(status) {
+  if (status === 'running') return 'badge-running';
+  if (status === 'not found' || status === 'exited' || status === 'error') return 'badge-down';
+  return 'badge-idle';
+}
+
+function badgeLabel(status, lastAgo, pending) {
+  if (status !== 'running') return status;
+  if (pending > 0) return 'active';
+  if (lastAgo && lastAgo.includes('s ago')) return 'active';
+  if (lastAgo && (lastAgo.includes('m ago') || lastAgo.includes('h '))) {
+    const match = lastAgo.match(/(\d+)h/);
+    if (match && parseInt(match[1]) > 1) return 'idle';
+  }
+  return 'running';
+}
+
+function render(data) {
+  const running = data.filter(d => d.status === 'running').length;
+  const total = data.length;
+  const pending = data.reduce((sum, d) => sum + (d.pending_messages || 0), 0);
+  const types = {};
+  data.forEach(d => { types[d.type] = (types[d.type] || 0) + 1; });
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><div class="label">Sessions</div><div class="value">${running}/${total}</div></div>
+    <div class="stat"><div class="label">Pending Msgs</div><div class="value">${pending}</div></div>
+    ${Object.entries(types).map(([t,c]) => `<div class="stat"><div class="label">${t}</div><div class="value">${c}</div></div>`).join('')}
+  `;
+
+  document.getElementById('grid').innerHTML = data.map(d => {
+    const label = badgeLabel(d.status, d.last_active_ago, d.pending_messages);
+    const cls = badgeClass(d.status);
+    return `
+    <div class="card">
+      <div class="top">
+        <span class="name">${d.session}</span>
+        <span class="badge ${cls}">${label}</span>
+      </div>
+      <div class="type">
+        <span class="tag">${d.type}</span>
+        <span>${d.host}</span>
+      </div>
+      <div class="details">
+        <span class="key">Path</span><span class="val">${d.path}</span>
+        <span class="key">Last active</span><span class="val">${d.last_active_ago || 'unknown'}</span>
+        <span class="key">Container</span><span class="val">${d.container}</span>
+      </div>
+      ${d.pending_messages > 0 ? `<div class="pending">${d.pending_messages} pending message(s)</div>` : ''}
+    </div>`;
+  }).join('');
+
+  document.getElementById('updated').textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+}
+
+async function load() {
+  try {
+    const r = await fetch(API);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    render(await r.json());
+  } catch (e) {
+    document.getElementById('grid').innerHTML = `<div class="error">Error loading metrics: ${e.message}</div>`;
+  }
+}
+
+load();
+setInterval(load, 10000); // Auto-refresh every 10s
+</script>
+</body>
+</html>
