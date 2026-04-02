@@ -21,6 +21,7 @@ import { readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import { Database } from 'bun:sqlite'
+import { buildMessageThreadParams, buildTypingThreadParams } from './threading.ts'
 
 // ── config ────────────────────────────────────────────────────────────────────
 
@@ -141,9 +142,9 @@ async function sendMessage(text: string, replyTo?: number, buttons?: string[][])
     const chunk = chunks[i]
     const body: Record<string, unknown> = {
       chat_id: CHAT_ID,
-      message_thread_id: THREAD_ID,
       text: chunk,
       parse_mode: 'HTML',
+      ...buildMessageThreadParams(THREAD_ID),
     }
     if (replyTo) { body.reply_to_message_id = replyTo; replyTo = undefined }
     // Attach buttons only to the last chunk
@@ -176,8 +177,8 @@ async function editMessage(messageId: number, text: string): Promise<boolean> {
 async function sendTyping(): Promise<void> {
   await tg('sendChatAction', {
     chat_id: CHAT_ID,
-    message_thread_id: THREAD_ID,
     action: 'typing',
+    ...buildTypingThreadParams(THREAD_ID),
   })
 }
 
@@ -405,7 +406,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const fileName = filePath.split('/').pop() ?? 'file'
       const form = new FormData()
       form.append('chat_id', String(CHAT_ID))
-      form.append('message_thread_id', String(THREAD_ID))
+      const threadParams = buildMessageThreadParams(THREAD_ID)
+      if (threadParams?.message_thread_id != null) {
+        form.append('message_thread_id', String(threadParams.message_thread_id))
+      }
       form.append('document', new File([blob], fileName))
       if (caption) form.append('caption', caption)
       const r = await fetch(`${BASE}/sendDocument`, { method: 'POST', body: form })

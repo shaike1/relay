@@ -40,7 +40,6 @@ def _session_service_block(name: str, thread_id: int, workdir: str,
                            image: str, tmp_volume: str,
                            depends_on_relay: bool,
                            with_build: bool = False,
-                           env_file: str = ".env",
                            session_type: str = "claude") -> list[str]:
     """Return lines for a single session service block."""
     svc = sanitize_service_name(name)
@@ -57,8 +56,6 @@ def _session_service_block(name: str, thread_id: int, workdir: str,
         lines.append(f"      dockerfile: {dockerfile}")
     lines.append(f"    container_name: relay-session-{name}")
     lines.append(f"    restart: always")
-    lines.append(f"    env_file:")
-    lines.append(f"      - {env_file}")
     lines.append(f"    environment:")
     lines.append(f"      SESSION_NAME: \"{name}\"")
     lines.append(f"      TELEGRAM_THREAD_ID: \"{thread_id}\"")
@@ -71,6 +68,8 @@ def _session_service_block(name: str, thread_id: int, workdir: str,
     lines.append(f"    volumes:")
     lines.append(f"      # Shared queue between bot and session containers")
     lines.append(f"      - {tmp_volume}:/tmp")
+    lines.append(f"      # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex")
+    lines.append(f"      - /root/relay/.env:/root/relay/.env:ro")
     if session_type == "codex":
         lines.append(f"      # Codex credentials and config")
         lines.append(f"      - /root/.codex:/root/.codex")
@@ -180,7 +179,6 @@ def generate_remote_compose(sessions: list, host: str, output_path: str) -> None
             image=REMOTE_IMAGE,
             tmp_volume="/tmp",   # bind mount — SSH writes from relay bot land here
             depends_on_relay=False,
-            env_file="/root/relay/.env",
         )
 
     content = "\n".join(lines)

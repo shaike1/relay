@@ -23,6 +23,45 @@ export TMUX_SOCKET
 
 cd "$WORKDIR"
 
+scrub_telegram_plugin_settings() {
+  python3 - "$WORKDIR" <<'PY'
+import json
+import pathlib
+import sys
+
+workdir = pathlib.Path(sys.argv[1])
+settings_path = workdir / ".claude" / "settings.json"
+if not settings_path.exists():
+    raise SystemExit(0)
+
+try:
+    data = json.loads(settings_path.read_text())
+except Exception:
+    raise SystemExit(0)
+
+enabled = data.get("enabledPlugins")
+if not isinstance(enabled, dict):
+    raise SystemExit(0)
+
+if "telegram@claude-plugins-official" not in enabled:
+    raise SystemExit(0)
+
+enabled.pop("telegram@claude-plugins-official", None)
+if not enabled:
+    data.pop("enabledPlugins", None)
+
+settings_path.write_text(json.dumps(data, indent=2) + "\n")
+PY
+}
+
+prepare_claude_env() {
+  scrub_telegram_plugin_settings
+  # Relay sessions use the custom mcp-telegram bridge for outbound delivery.
+  # Do not leak the Telegram bot token into Claude itself, or the official
+  # Telegram plugin can start polling and steal getUpdates from relay.
+  unset TELEGRAM_BOT_TOKEN GROUP_CHAT_ID OWNER_ID
+}
+
 # Helper: run tmux with this session's socket
 tmux_s() { tmux -S "$TMUX_SOCKET" "$@"; }
 
@@ -57,7 +96,10 @@ export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 export TELEGRAM_THREAD_ID="${TELEGRAM_THREAD_ID:-}"
 export SESSION_NAME="${SESSION}"
 cd "$WORKDIR"
+$(declare -f scrub_telegram_plugin_settings)
+$(declare -f prepare_claude_env)
 while true; do
+  prepare_claude_env
   if [ -f "$SESSION_ID_FILE" ]; then
     SID=\$(cat "$SESSION_ID_FILE")
     claude --dangerously-skip-permissions --permission-mode auto --remote-control --resume "\$SID" 2>/dev/null \
@@ -100,6 +142,7 @@ else
   rm -f "$INNER_SCRIPT"
 
   while true; do
+    prepare_claude_env
     if [ -f "$SESSION_ID_FILE" ]; then
       SID=$(cat "$SESSION_ID_FILE")
       claude --dangerously-skip-permissions --permission-mode auto --remote-control --resume "$SID" 2>/dev/null \

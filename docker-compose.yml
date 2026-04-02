@@ -6,6 +6,8 @@ services:
     restart: always
     env_file:
       - .env
+    environment:
+      RELAY_BOT_ROLE: "primary"
     volumes:
       # Full home dir — covers all local Claude sessions and ~/.claude state.
       # If your sessions are all remote (SSH), replace this with targeted mounts:

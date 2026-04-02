@@ -13,6 +13,15 @@ from telegram.ext import (
     Application, MessageHandler, CommandHandler,
     CallbackQueryHandler, filters, ContextTypes
 )
+try:
+    from telegram_topics import normalize_forum_thread_id
+except ModuleNotFoundError:
+    def normalize_forum_thread_id(message_thread_id: int | None, is_forum: bool | None) -> int | None:
+        if message_thread_id is not None:
+            return int(message_thread_id)
+        if is_forum:
+            return 1
+        return None
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -23,6 +32,7 @@ logger = logging.getLogger(__name__)
 OWNER_ID      = int(os.environ.get("OWNER_ID", "0"))
 GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID", "0"))
 TOKEN         = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+RELAY_BOT_ROLE = os.environ.get("RELAY_BOT_ROLE", "").strip().lower()
 
 # Webhook config (optional — falls back to polling if not set)
 WEBHOOK_URL   = os.environ.get("WEBHOOK_URL", "")   # e.g. https://YOUR_PUBLIC_IP:88
@@ -586,7 +596,10 @@ def _esc(t: str) -> str:
 
 def _session_from_update(update: Update) -> tuple[str | None, dict]:
     chat_id   = update.effective_chat.id
-    thread_id = update.message.message_thread_id
+    thread_id = normalize_forum_thread_id(
+        getattr(update.message, "message_thread_id", None),
+        getattr(update.effective_chat, "is_forum", False),
+    )
     session   = sessions.get((chat_id, thread_id))
     cfg       = next((c for c in get_configs() if c.get("session") == session), {})
     return session, cfg
@@ -1446,7 +1459,10 @@ async def cmd_switch(update: Update, context: ContextTypes.DEFAULT_TYPE):
            /switch <session>  — switch this topic to that session
     """
     chat_id   = update.effective_chat.id
-    thread_id = update.message.message_thread_id
+    thread_id = normalize_forum_thread_id(
+        getattr(update.message, "message_thread_id", None),
+        getattr(update.effective_chat, "is_forum", False),
+    )
 
     if not thread_id:
         await update.message.reply_text("Must be used inside a topic.")
@@ -1662,7 +1678,10 @@ def write_queue(thread_id: int, message: dict, host: str | None = None):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id   = update.effective_chat.id
-    thread_id = update.message.message_thread_id
+    thread_id = normalize_forum_thread_id(
+        getattr(update.message, "message_thread_id", None),
+        getattr(update.effective_chat, "is_forum", False),
+    )
 
     logger.info(f"Message: chat={chat_id} thread={thread_id} text={update.message.text!r}")
 
@@ -2178,6 +2197,12 @@ async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 def main():
+    if RELAY_BOT_ROLE != "primary":
+        raise RuntimeError(
+            "Relay bot polling is disabled unless RELAY_BOT_ROLE=primary. "
+            "This prevents multiple hosts from polling the same Telegram bot token."
+        )
+
     if not TOKEN:
         raise ValueError("TELEGRAM_BOT_TOKEN not set")
 

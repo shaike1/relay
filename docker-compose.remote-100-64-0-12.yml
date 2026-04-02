@@ -10,8 +10,6 @@ services:
     image: shaikeme/relay-sessions:latest
     container_name: relay-session-edushare
     restart: always
-    env_file:
-      - /root/relay/.env
     environment:
       SESSION_NAME: "edushare"
       TELEGRAM_THREAD_ID: "12"
@@ -19,6 +17,8 @@ services:
     volumes:
       # Shared queue between bot and session containers
       - /tmp:/tmp
+      # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
+      - /root/relay/.env:/root/relay/.env:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -42,8 +42,6 @@ services:
     image: shaikeme/relay-sessions:latest
     container_name: relay-session-teamy
     restart: always
-    env_file:
-      - /root/relay/.env
     environment:
       SESSION_NAME: "teamy"
       TELEGRAM_THREAD_ID: "14"
@@ -51,6 +49,8 @@ services:
     volumes:
       # Shared queue between bot and session containers
       - /tmp:/tmp
+      # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
+      - /root/relay/.env:/root/relay/.env:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -74,8 +74,6 @@ services:
     image: shaikeme/relay-sessions:latest
     container_name: relay-session-right-api-web
     restart: always
-    env_file:
-      - /root/relay/.env
     environment:
       SESSION_NAME: "right-api-web"
       TELEGRAM_THREAD_ID: "138"
@@ -83,6 +81,8 @@ services:
     volumes:
       # Shared queue between bot and session containers
       - /tmp:/tmp
+      # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
+      - /root/relay/.env:/root/relay/.env:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -106,8 +106,6 @@ services:
     image: shaikeme/relay-sessions:latest
     container_name: relay-session-headscale
     restart: always
-    env_file:
-      - /root/relay/.env
     environment:
       SESSION_NAME: "headscale"
       TELEGRAM_THREAD_ID: "210"
@@ -115,6 +113,8 @@ services:
     volumes:
       # Shared queue between bot and session containers
       - /tmp:/tmp
+      # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
+      - /root/relay/.env:/root/relay/.env:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -138,8 +138,6 @@ services:
     image: shaikeme/relay-sessions:latest
     container_name: relay-session-duplicacy
     restart: always
-    env_file:
-      - /root/relay/.env
     environment:
       SESSION_NAME: "duplicacy"
       TELEGRAM_THREAD_ID: "236"
@@ -147,6 +145,8 @@ services:
     volumes:
       # Shared queue between bot and session containers
       - /tmp:/tmp
+      # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
+      - /root/relay/.env:/root/relay/.env:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
