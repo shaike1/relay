@@ -116,8 +116,11 @@ while true; do
             sh -c "tmux -S /tmp/tmux-${session}.sock list-clients -F '#{client_tty}' 2>/dev/null | while read tty; do tmux -S /tmp/tmux-${session}.sock detach-client -t \"\$tty\" 2>/dev/null; done; true" \
             2>/dev/null || true
         sleep 0.5
+        # Use 'script' as PTY wrapper — ensures tmux gets a clean terminal for resize negotiation
         docker exec -it "$container" \
-            tmux -S "/tmp/tmux-${session}.sock" attach -d -t "$session" 2>/dev/null \
+            script -q /dev/null -c "tmux -S /tmp/tmux-${session}.sock attach -d -t ${session}" 2>/dev/null \
+            || docker exec -it "$container" \
+                tmux -S "/tmp/tmux-${session}.sock" attach -d -t "$session" 2>/dev/null \
             || docker exec -it "$container" bash
     else
         ssh -t -o StrictHostKeyChecking=no "$REMOTE_HOST" \
