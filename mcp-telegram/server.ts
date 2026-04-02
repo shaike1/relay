@@ -343,6 +343,45 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
+    {
+      name: 'knowledge_write',
+      description: 'Write a finding, decision, or learning to the shared Knowledge Library. All sessions can read from this library. Use tags to categorize entries (e.g. "docker", "auth", "bug-fix"). Entries persist across restarts.',
+      inputSchema: {
+        type: 'object',
+        required: ['title', 'content'],
+        properties: {
+          title:   { type: 'string', description: 'Short title for the knowledge entry' },
+          content: { type: 'string', description: 'The finding, decision, or learning to store' },
+          tags:    { type: 'array', items: { type: 'string' }, description: 'Tags for categorization (e.g. ["docker", "relay", "bug-fix"])' },
+        },
+      },
+    },
+    {
+      name: 'knowledge_read',
+      description: 'Search the shared Knowledge Library for relevant entries. Returns entries matching the query or tag. All sessions contribute to this library.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search term to find relevant entries (searches title, content, tags)' },
+          tag:   { type: 'string', description: 'Filter by specific tag' },
+          limit: { type: 'integer', description: 'Max entries to return (default: 10)', default: 10 },
+        },
+      },
+    },
+    {
+      name: 'auto_dispatch',
+      description: 'Automatically find the best session to handle a task based on project path, session type, and recent activity. Then sends the task to that session. Like send_task but with automatic routing.',
+      inputSchema: {
+        type: 'object',
+        required: ['prompt'],
+        properties: {
+          prompt:        { type: 'string', description: 'Task description' },
+          prefer_type:   { type: 'string', description: 'Preferred session type: "claude", "codex", or "copilot"', enum: ['claude', 'codex', 'copilot'] },
+          prefer_project: { type: 'string', description: 'Preferred project path substring (e.g. "relay", "openclaw")' },
+          ttl:           { type: 'integer', description: 'Seconds before task expires (default: 600)', default: 600 },
+        },
+      },
+    },
   ],
 }))
 
@@ -754,6 +793,188 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       return { content: [{ type: 'text', text: failed.length ? `${result}\nFailed: ${failed.join(', ')}` : result }] }
     } catch (e) {
       return { content: [{ type: 'text', text: `Error broadcasting: ${e}` }] }
+    }
+  }
+
+  // ── Knowledge Library ─────────────────────────────────────────────────────
+
+  const KNOWLEDGE_FILE = '/tmp/relay-knowledge.json'
+
+  if (name === 'knowledge_write') {
+    const title   = String(args?.title ?? '')
+    const content = String(args?.content ?? '')
+    const tags    = (args?.tags as string[]) ?? []
+    try {
+      let entries: Array<{ id: string; title: string; content: string; tags: string[]; author: string; ts: number }> = []
+      try {
+        const f = Bun.file(KNOWLEDGE_FILE)
+        if (await f.exists()) entries = JSON.parse(await f.text())
+      } catch {}
+
+      const selfName = process.env.SESSION_NAME ?? `session-${THREAD_ID}`
+      const entry = {
+        id: `k-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        title,
+        content,
+        tags,
+        author: selfName,
+        ts: Date.now() / 1000,
+      }
+      entries.push(entry)
+
+      // Keep last 200 entries
+      if (entries.length > 200) entries = entries.slice(-200)
+      await Bun.write(KNOWLEDGE_FILE, JSON.stringify(entries, null, 2))
+
+      return { content: [{ type: 'text', text: `Knowledge saved: "${title}" (${tags.join(', ') || 'no tags'})` }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error writing knowledge: ${e}` }] }
+    }
+  }
+
+  if (name === 'knowledge_read') {
+    const query = String(args?.query ?? '').toLowerCase()
+    const tag   = String(args?.tag ?? '').toLowerCase()
+    const limit = Number(args?.limit ?? 10)
+    try {
+      let entries: Array<{ id: string; title: string; content: string; tags: string[]; author: string; ts: number }> = []
+      try {
+        const f = Bun.file(KNOWLEDGE_FILE)
+        if (await f.exists()) entries = JSON.parse(await f.text())
+      } catch {}
+
+      let filtered = entries
+      if (tag) {
+        filtered = filtered.filter(e => e.tags.some(t => t.toLowerCase().includes(tag)))
+      }
+      if (query) {
+        filtered = filtered.filter(e =>
+          e.title.toLowerCase().includes(query) ||
+          e.content.toLowerCase().includes(query) ||
+          e.tags.some(t => t.toLowerCase().includes(query))
+        )
+      }
+
+      // Most recent first
+      filtered = filtered.reverse().slice(0, limit)
+
+      if (filtered.length === 0) {
+        return { content: [{ type: 'text', text: 'No matching knowledge entries found.' }] }
+      }
+
+      const lines = filtered.map(e => {
+        const ago = Math.round((Date.now() / 1000 - e.ts) / 60)
+        const timeStr = ago < 60 ? `${ago}m ago` : `${Math.round(ago / 60)}h ago`
+        return `[${e.author} ${timeStr}] ${e.title}\nTags: ${e.tags.join(', ') || 'none'}\n${e.content}`
+      })
+      return { content: [{ type: 'text', text: lines.join('\n---\n') }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error reading knowledge: ${e}` }] }
+    }
+  }
+
+  // ── Auto Dispatch ──────────────────────────────────────────────────────────
+
+  if (name === 'auto_dispatch') {
+    const prompt       = String(args?.prompt ?? '')
+    const preferType   = args?.prefer_type as string | undefined
+    const preferProject = args?.prefer_project as string | undefined
+    const ttl          = Number(args?.ttl ?? 600)
+    try {
+      const sessionsPath = new URL('../sessions.json', import.meta.url).pathname
+      const sessions: Array<{ session: string; thread_id: number; host?: string; path?: string; type?: string }> =
+        JSON.parse(readFileSync(sessionsPath, 'utf8'))
+
+      const selfName = process.env.SESSION_NAME ?? `session-${THREAD_ID}`
+      const candidates = sessions.filter(s => s.thread_id !== THREAD_ID)
+
+      // Score each session
+      const scored = candidates.map(s => {
+        let score = 0
+        const type = s.type ?? 'claude'
+
+        // Type preference
+        if (preferType && type === preferType) score += 10
+
+        // Project path match
+        if (preferProject && s.path?.toLowerCase().includes(preferProject.toLowerCase())) score += 20
+
+        // Check last activity — prefer recently active sessions
+        try {
+          const raw = readFileSync(`/tmp/tg-last-sent-${s.thread_id}`, 'utf8').trim()
+          const ts = parseFloat(raw)
+          if (!isNaN(ts)) {
+            const agoMin = (Date.now() / 1000 - ts) / 60
+            if (agoMin < 5) score += 5        // active in last 5 min
+            else if (agoMin < 30) score += 3   // active in last 30 min
+            else if (agoMin < 120) score += 1  // active in last 2 hours
+          }
+        } catch {}
+
+        // Local sessions preferred over remote (faster)
+        if (!s.host) score += 2
+
+        return { session: s, score }
+      })
+
+      // Sort by score descending
+      scored.sort((a, b) => b.score - a.score)
+
+      if (scored.length === 0) {
+        return { content: [{ type: 'text', text: 'No available sessions to dispatch to.' }] }
+      }
+
+      const best = scored[0]
+      const target = best.session
+      const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+      // Persist task metadata
+      const TASKS_FILE = '/tmp/agent-tasks.json'
+      let tasks: Record<string, unknown> = {}
+      try {
+        const f = Bun.file(TASKS_FILE)
+        if (await f.exists()) tasks = JSON.parse(await f.text())
+      } catch {}
+      tasks[taskId] = {
+        from: selfName, from_thread: THREAD_ID, to: target.session,
+        to_thread: target.thread_id, created: Date.now() / 1000, ttl, status: 'pending',
+      }
+      await Bun.write(TASKS_FILE, JSON.stringify(tasks, null, 2))
+
+      // Write to target queue
+      const queueFile = `/tmp/tg-queue-${target.thread_id}.jsonl`
+      const entry = JSON.stringify({
+        text: `[Task from ${selfName} | task_id:${taskId}]\n${prompt}`,
+        user: `agent:${selfName}`,
+        message_id: -Date.now(),
+        ts: Date.now() / 1000,
+        force: true,
+        bus: { type: 'task', id: taskId, from: selfName, from_thread: THREAD_ID, to: target.session, prompt, ttl },
+      })
+
+      if (target.host) {
+        const proc = Bun.spawn(
+          ['ssh', '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=5',
+           target.host, `cat >> ${queueFile}`],
+          { stdin: new TextEncoder().encode(entry + '\n') }
+        )
+        await proc.exited
+        if (proc.exitCode !== 0) throw new Error(`SSH exit ${proc.exitCode}`)
+      } else {
+        await Bun.write(queueFile, entry + '\n', { append: true })
+      }
+
+      const type = target.type ?? 'claude'
+      const reasons = [
+        preferType && type === preferType ? `type=${type}` : null,
+        preferProject && target.path?.toLowerCase().includes(preferProject.toLowerCase()) ? `project match` : null,
+        !target.host ? 'local' : null,
+      ].filter(Boolean).join(', ')
+
+      void logToPeersTopic(selfName, target.session, `[auto-dispatch:${taskId}] ${prompt.slice(0, 200)}`)
+      return { content: [{ type: 'text', text: `Auto-dispatched to '${target.session}' [${type}] (score: ${best.score}${reasons ? ', ' + reasons : ''}). task_id: ${taskId}` }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error auto-dispatching: ${e}` }] }
     }
   }
 
