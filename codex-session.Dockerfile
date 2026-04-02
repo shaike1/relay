@@ -53,10 +53,12 @@ COPY . .
 
 # s6-rc service definitions for codex session container
 COPY s6-overlay-session/s6-rc.d /etc/s6-overlay/s6-rc.d
-RUN chmod +x /etc/s6-overlay/s6-rc.d/codex-session/run \
-    && chmod +x /etc/s6-overlay/s6-rc.d/message-watchdog/run \
-    && chmod +x /relay/scripts/codex-session-loop.sh \
-    && chmod +x /relay/scripts/message-watchdog.sh
+# Activate codex-session instead of claude-session in the user bundle
+RUN rm -f /etc/s6-overlay/s6-rc.d/user/contents.d/claude-session \
+    && rm -f /etc/s6-overlay/s6-rc.d/user/contents.d/message-watchdog \
+    && touch /etc/s6-overlay/s6-rc.d/user/contents.d/codex-session \
+    && chmod +x /etc/s6-overlay/s6-rc.d/codex-session/run \
+    && chmod +x /relay/scripts/codex-session-loop.sh
 
 # s6-overlay is the init
 ENTRYPOINT ["/init"]
