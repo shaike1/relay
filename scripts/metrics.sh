@@ -18,6 +18,29 @@ except Exception:
 metrics = []
 now = time.time()
 
+# Pre-fetch all container memory stats in one call
+# Only if we can do it fast (timeout 8s — on host it's ~3s, inside container it can hang)
+mem_stats = {}
+try:
+    result = subprocess.run(
+        ["docker", "stats", "--no-stream", "--format", "{{.Name}}|{{.MemUsage}}"],
+        capture_output=True, text=True, timeout=8
+    )
+    if result.returncode == 0:
+        for line in result.stdout.strip().split("\n"):
+            if "|" not in line: continue
+            cname, mem = line.split("|", 1)
+            mem_str = mem.split("/")[0].strip()
+            try:
+                if "GiB" in mem_str:
+                    mem_stats[cname] = round(float(mem_str.replace("GiB", "").strip()) * 1024)
+                elif "MiB" in mem_str:
+                    mem_stats[cname] = round(float(mem_str.replace("MiB", "").strip()))
+            except: pass
+except subprocess.TimeoutExpired:
+    pass  # Skip memory stats if too slow (inside container)
+except: pass
+
 for s in sessions:
     name = s.get("session", "?")
     thread_id = s.get("thread_id", 0)
@@ -56,9 +79,10 @@ for s in sessions:
             # Calculate uptime
             if len(parts) > 1 and parts[0] == "running":
                 try:
-                    from datetime import datetime
-                    started = datetime.fromisoformat(parts[1].replace("Z", "+00:00"))
-                    uptime_s = int((datetime.now(started.tzinfo) - started).total_seconds())
+                    from datetime import datetime, timezone
+                    ts_str = parts[1].split(".")[0]  # strip nanoseconds
+                    started = datetime.strptime(ts_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+                    uptime_s = int((datetime.now(timezone.utc) - started).total_seconds())
                     if uptime_s < 3600:
                         entry["uptime"] = f"{uptime_s // 60}m"
                     elif uptime_s < 86400:
@@ -72,20 +96,9 @@ for s in sessions:
     except Exception:
         entry["status"] = "error"
 
-    # Check container memory usage (from cgroup)
-    try:
-        result = subprocess.run(
-            ["docker", "stats", "--no-stream", "--format", "{{.MemUsage}}", container],
-            capture_output=True, text=True, timeout=5
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            mem_str = result.stdout.strip().split("/")[0].strip()
-            if "GiB" in mem_str:
-                entry["memory_mb"] = round(float(mem_str.replace("GiB", "").strip()) * 1024)
-            elif "MiB" in mem_str:
-                entry["memory_mb"] = round(float(mem_str.replace("MiB", "").strip()))
-    except Exception:
-        pass
+    # Memory from pre-fetched batch stats
+    if container in mem_stats:
+        entry["memory_mb"] = mem_stats[container]
 
     # Check last activity
     last_sent_file = f"/tmp/tg-last-sent-{thread_id}"

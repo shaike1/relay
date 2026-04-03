@@ -20,6 +20,18 @@
   .header .refresh { color: #58a6ff; cursor: pointer; font-size: 12px; }
   .header .refresh:hover { text-decoration: underline; }
 
+  /* View toggle */
+  .view-toggle {
+    display: flex; gap: 2px; background: #21262d; border-radius: 6px; padding: 2px;
+  }
+  .view-btn {
+    background: transparent; border: none; color: #8b949e; cursor: pointer;
+    font-size: 11px; font-family: inherit; padding: 4px 10px; border-radius: 4px;
+    transition: all 0.2s;
+  }
+  .view-btn:hover { color: #c9d1d9; }
+  .view-btn.active { background: #161b22; color: #58a6ff; }
+
   /* Sort controls */
   .sort-bar {
     display: flex; gap: 8px; align-items: center; margin-bottom: 16px;
@@ -70,6 +82,21 @@
     display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
     gap: 12px;
   }
+
+  /* Group view */
+  .group-section { margin-bottom: 24px; }
+  .group-header {
+    font-size: 13px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px;
+    padding: 8px 0; margin-bottom: 8px; border-bottom: 1px solid #21262d;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .group-header .group-name { color: #58a6ff; }
+  .group-header .group-count { font-size: 11px; color: #6e7681; }
+  .group-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 12px;
+  }
+
   .card {
     background: #161b22; border: 1px solid #21262d; border-radius: 8px;
     padding: 16px; transition: border-color 0.2s; cursor: pointer;
@@ -145,6 +172,24 @@
   }
   .card.expanded .expand-hint { display: none; }
 
+  /* Log viewer */
+  .log-btn {
+    background: #21262d; border: 1px solid #30363d; border-radius: 4px;
+    color: #58a6ff; cursor: pointer; font-size: 11px; font-family: inherit;
+    padding: 4px 10px; margin-top: 10px; transition: all 0.2s;
+  }
+  .log-btn:hover { background: #30363d; }
+  .log-viewer {
+    margin-top: 10px; background: #0d1117; border: 1px solid #21262d;
+    border-radius: 4px; padding: 10px; max-height: 300px; overflow-y: auto;
+    font-size: 11px; line-height: 1.5; color: #8b949e; white-space: pre-wrap;
+    word-break: break-all; display: none;
+  }
+  .log-viewer.visible { display: block; }
+  .log-viewer .log-line { }
+  .log-viewer .log-loading { color: #6e7681; font-style: italic; }
+  .log-viewer .log-error { color: #f85149; }
+
   .updated { font-size: 11px; color: #484f58; text-align: center; margin-top: 20px; }
   .error { color: #f85149; text-align: center; padding: 40px; }
 </style>
@@ -153,6 +198,10 @@
   <div class="header">
     <h1>Relay Live Metrics</h1>
     <div class="header-controls">
+      <div class="view-toggle">
+        <button class="view-btn active" id="view-grid" onclick="setView('grid')">Grid</button>
+        <button class="view-btn" id="view-grouped" onclick="setView('grouped')">Grouped</button>
+      </div>
       <a href="/config" style="color:#58a6ff;font-size:12px;text-decoration:none">Config</a>
       <span class="refresh" onclick="load()">Refresh</span>
     </div>
@@ -166,7 +215,19 @@
 <script>
 const API = '/api/relay-metrics';
 let currentSort = 'status';
+let currentView = 'grid';
 let currentData = [];
+
+// Group mapping: derive from path or explicit group field
+function getGroup(d) {
+  if (d.group) return d.group;
+  const path = (d.path || '').toLowerCase();
+  if (path.includes('openclaw') || d.session === 'voice') return 'OpenClaw';
+  if (path.includes('relay') || d.session === 'main' || d.session === 'copilot' || d.session === 'codex') return 'Infrastructure';
+  if (path.includes('itops')) return 'IT Ops';
+  if (d.host && d.host !== 'local') return 'Remote';
+  return 'Projects';
+}
 
 function badgeClass(status) {
   if (status === 'running') return 'badge-running';
@@ -185,7 +246,6 @@ function badgeLabel(status, lastAgo, pending) {
   return 'running';
 }
 
-// Parse "Xh Ym ago" or "Xs ago" into minutes
 function parseAgoMinutes(ago) {
   if (!ago || ago === 'unknown') return Infinity;
   let total = 0;
@@ -198,7 +258,6 @@ function parseAgoMinutes(ago) {
   return total || Infinity;
 }
 
-// Activity score 0-100 based on recency
 function activityScore(d) {
   if (d.status !== 'running') return 0;
   const mins = parseAgoMinutes(d.last_active_ago);
@@ -218,7 +277,6 @@ function activityColor(score) {
   return '#3d1419';
 }
 
-// Health score: weighted average of session states
 function computeHealth(data) {
   if (data.length === 0) return { score: 0, running: 0, idle: 0, down: 0 };
   let running = 0, idle = 0, down = 0;
@@ -228,7 +286,6 @@ function computeHealth(data) {
     else if (label === 'idle') idle++;
     else down++;
   });
-  // Score: running=100%, idle=40%, down=0%
   const score = Math.round(((running * 100) + (idle * 40)) / data.length);
   return { score, running, idle, down };
 }
@@ -255,12 +312,149 @@ function sortData(data, by) {
     if (by === 'type') {
       return (a.type || '').localeCompare(b.type || '') || a.session.localeCompare(b.session);
     }
+    if (by === 'group') {
+      return getGroup(a).localeCompare(getGroup(b)) || a.session.localeCompare(b.session);
+    }
     return 0;
   });
 }
 
-function toggleCard(id) {
+function toggleCard(id, event) {
+  // Don't toggle if clicking log button or log viewer
+  if (event && (event.target.closest('.log-btn') || event.target.closest('.log-viewer'))) return;
   document.getElementById(id)?.classList.toggle('expanded');
+}
+
+// Log viewer
+async function toggleLogs(session, event) {
+  event.stopPropagation();
+  const viewer = document.getElementById(`logs-${session}`);
+  if (!viewer) return;
+  if (viewer.classList.contains('visible')) {
+    viewer.classList.remove('visible');
+    return;
+  }
+  viewer.classList.add('visible');
+  viewer.innerHTML = '<span class="log-loading">Loading logs...</span>';
+  try {
+    const r = await fetch(`/api/session-logs?session=${encodeURIComponent(session)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const text = await r.text();
+    if (!text.trim()) {
+      viewer.innerHTML = '<span class="log-loading">No logs available</span>';
+    } else {
+      viewer.textContent = text;
+    }
+  } catch (e) {
+    viewer.innerHTML = `<span class="log-error">Failed to load logs: ${e.message}</span>`;
+  }
+  viewer.scrollTop = viewer.scrollHeight;
+}
+
+function renderCard(d) {
+  const label = badgeLabel(d.status, d.last_active_ago, d.pending_messages);
+  const cls = badgeClass(d.status);
+  const score = activityScore(d);
+  const aColor = activityColor(score);
+  const cardId = `card-${d.session}`;
+
+  return `
+  <div class="card" id="${cardId}" onclick="toggleCard('${cardId}', event)">
+    <div class="top">
+      <span class="name">${d.session}</span>
+      <span class="badge ${cls}">${label}</span>
+    </div>
+    <div class="type">
+      <span class="tag">${d.type}</span>
+      <span>${d.host}</span>
+    </div>
+    <div class="activity-bar">
+      <span class="activity-label">Activity</span>
+      <div class="activity-track">
+        <div class="activity-fill" style="width:${score}%;background:${aColor}"></div>
+      </div>
+      <span class="activity-text">${score}%</span>
+    </div>
+    <div class="details">
+      <span class="key">Last active</span><span class="val">${d.last_active_ago || 'unknown'}</span>
+      ${d.uptime ? `<span class="key">Uptime</span><span class="val">${d.uptime}</span>` : ''}
+      ${d.memory_mb ? `<span class="key">Memory</span><span class="val">${d.memory_mb} MB</span>` : ''}
+      ${d.pending_messages > 0 ? `<span class="key">Pending</span><span class="val" style="color:#d29922">${d.pending_messages} message(s)</span>` : ''}
+    </div>
+    <div class="expand-hint">click to expand</div>
+    <div class="expanded-details">
+      <div class="detail-grid">
+        <span class="key">Container</span><span class="val">${d.container}</span>
+        <span class="key">Path</span><span class="val">${d.path}</span>
+        <span class="key">Thread ID</span><span class="val">${d.thread_id}</span>
+        <span class="key">Status</span><span class="val">${d.status}</span>
+        ${d.context ? `<span class="key">Context</span><span class="val">${d.context}</span>` : ''}
+        ${d.last_active ? `<span class="key">Last active (ts)</span><span class="val">${new Date(d.last_active * 1000).toLocaleString()}</span>` : ''}
+      </div>
+      <button class="log-btn" onclick="toggleLogs('${d.session}', event)">Logs</button>
+      <div class="log-viewer" id="logs-${d.session}"></div>
+    </div>
+  </div>`;
+}
+
+function renderGridView(data) {
+  const sorted = sortData(data, currentSort);
+  document.getElementById('grid').innerHTML = sorted.map(d => renderCard(d)).join('');
+}
+
+function renderGroupedView(data) {
+  const groups = {};
+  data.forEach(d => {
+    const g = getGroup(d);
+    if (!groups[g]) groups[g] = [];
+    groups[g].push(d);
+  });
+
+  // Sort groups: Infrastructure first, then alphabetical
+  const groupOrder = ['Infrastructure', 'OpenClaw', 'IT Ops', 'Projects', 'Remote'];
+  const sortedGroupNames = Object.keys(groups).sort((a, b) => {
+    const ia = groupOrder.indexOf(a);
+    const ib = groupOrder.indexOf(b);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+
+  let html = '';
+  for (const name of sortedGroupNames) {
+    const items = sortData(groups[name], currentSort);
+    const running = items.filter(d => d.status === 'running').length;
+    html += `
+    <div class="group-section">
+      <div class="group-header">
+        <span class="group-name">${name}</span>
+        <span class="group-count">${running}/${items.length} running</span>
+      </div>
+      <div class="group-grid">
+        ${items.map(d => renderCard(d)).join('')}
+      </div>
+    </div>`;
+  }
+  document.getElementById('grid').innerHTML = html;
+}
+
+function setView(view) {
+  currentView = view;
+  document.getElementById('view-grid').classList.toggle('active', view === 'grid');
+  document.getElementById('view-grouped').classList.toggle('active', view === 'grouped');
+  renderContent(currentData);
+}
+
+function setSort(key) {
+  currentSort = key;
+  renderSortBar();
+  renderContent(currentData);
+}
+
+function renderContent(data) {
+  if (currentView === 'grouped') {
+    renderGroupedView(data);
+  } else {
+    renderGridView(data);
+  }
 }
 
 function renderHealth(data) {
@@ -298,59 +492,6 @@ function renderSortBar() {
     ).join('');
 }
 
-function setSort(key) {
-  currentSort = key;
-  renderSortBar();
-  renderGrid(currentData);
-}
-
-function renderGrid(data) {
-  const sorted = sortData(data, currentSort);
-  document.getElementById('grid').innerHTML = sorted.map((d, i) => {
-    const label = badgeLabel(d.status, d.last_active_ago, d.pending_messages);
-    const cls = badgeClass(d.status);
-    const score = activityScore(d);
-    const aColor = activityColor(score);
-    const cardId = `card-${d.session}`;
-
-    return `
-    <div class="card" id="${cardId}" onclick="toggleCard('${cardId}')">
-      <div class="top">
-        <span class="name">${d.session}</span>
-        <span class="badge ${cls}">${label}</span>
-      </div>
-      <div class="type">
-        <span class="tag">${d.type}</span>
-        <span>${d.host}</span>
-      </div>
-      <div class="activity-bar">
-        <span class="activity-label">Activity</span>
-        <div class="activity-track">
-          <div class="activity-fill" style="width:${score}%;background:${aColor}"></div>
-        </div>
-        <span class="activity-text">${score}%</span>
-      </div>
-      <div class="details">
-        <span class="key">Last active</span><span class="val">${d.last_active_ago || 'unknown'}</span>
-        ${d.uptime ? `<span class="key">Uptime</span><span class="val">${d.uptime}</span>` : ''}
-        ${d.memory_mb ? `<span class="key">Memory</span><span class="val">${d.memory_mb} MB</span>` : ''}
-        ${d.pending_messages > 0 ? `<span class="key">Pending</span><span class="val" style="color:#d29922">${d.pending_messages} message(s)</span>` : ''}
-      </div>
-      <div class="expand-hint">click to expand</div>
-      <div class="expanded-details">
-        <div class="detail-grid">
-          <span class="key">Container</span><span class="val">${d.container}</span>
-          <span class="key">Path</span><span class="val">${d.path}</span>
-          <span class="key">Thread ID</span><span class="val">${d.thread_id}</span>
-          <span class="key">Status</span><span class="val">${d.status}</span>
-          ${d.context ? `<span class="key">Context</span><span class="val">${d.context}</span>` : ''}
-          ${d.last_active ? `<span class="key">Last active (ts)</span><span class="val">${new Date(d.last_active * 1000).toLocaleString()}</span>` : ''}
-        </div>
-      </div>
-    </div>`;
-  }).join('');
-}
-
 function render(data) {
   currentData = data;
   const running = data.filter(d => d.status === 'running').length;
@@ -370,7 +511,7 @@ function render(data) {
   `;
 
   renderSortBar();
-  renderGrid(data);
+  renderContent(data);
 
   document.getElementById('updated').textContent = `Updated: ${new Date().toLocaleTimeString()}`;
 }
