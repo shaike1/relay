@@ -123,37 +123,16 @@ const TG_CHAT_ID = process.env.GROUP_CHAT_ID || '';
 const QUEUE_DIR = '/tmp';
 const BOT_WEBHOOK_URL = process.env.BOT_WEBHOOK_URL || 'http://relay:18793/tg';
 
-// Webhook endpoint — Telegram POSTs updates here, we forward to bot.py + write to queue
+// Webhook-managed thread IDs — only these topics are handled via webhook.
+// Other topics are handled by the main relay bot's polling (separate bot token).
+const WEBHOOK_THREADS = new Set(
+  (process.env.WEBHOOK_THREADS || '8542').split(',').map(Number)
+);
+
+// Webhook endpoint — Telegram POSTs updates here, writes to queue for managed topics
 app.post(`/webhook/${WEBHOOK_SECRET}`, (req, res) => {
   res.json({ ok: true }); // respond to Telegram immediately
-
-  const update = req.body;
-  if (!update) return;
-
-  // Forward the full update to bot.py's webhook endpoint
-  const http = require('http');
-  const payload = JSON.stringify(update);
-  const botUrl = new URL(BOT_WEBHOOK_URL);
-  const fwdReq = http.request(botUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
-  }, (fwdRes) => {
-    let data = '';
-    fwdRes.on('data', c => data += c);
-    fwdRes.on('end', () => {
-      if (fwdRes.statusCode >= 400) console.error(`[webhook] bot.py returned ${fwdRes.statusCode}: ${data}`);
-    });
-  });
-  fwdReq.on('error', (err) => {
-    console.error(`[webhook] bot.py forward error: ${err.message} — falling back to direct queue write`);
-    // Fallback: write directly to queue if bot.py is down
-    directQueueWrite(update);
-  });
-  fwdReq.write(payload);
-  fwdReq.end();
-
-  // Also write to queue as backup (sessions can read even if bot.py is down)
-  directQueueWrite(update);
+  directQueueWrite(req.body);
 });
 
 function directQueueWrite(update) {
@@ -163,6 +142,10 @@ function directQueueWrite(update) {
   if (msg.from && msg.from.is_bot) return;
   const threadId = msg.message_thread_id;
   if (!threadId) return;
+
+  // Only handle topics managed by this webhook — skip others to avoid duplicates
+  // with the main relay bot's polling
+  if (!WEBHOOK_THREADS.has(threadId)) return;
 
   const queueFile = path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`);
   const entry = {
@@ -175,7 +158,7 @@ function directQueueWrite(update) {
   };
   try {
     fs.appendFileSync(queueFile, JSON.stringify(entry) + '\n');
-    console.log(`[webhook] queue: ${msg.from.first_name}: ${msg.text.substring(0, 60)}`);
+    console.log(`[webhook] ${threadId}: ${msg.from.first_name}: ${msg.text.substring(0, 60)}`);
   } catch (err) {
     console.error(`[webhook] Queue write error:`, err.message);
   }
