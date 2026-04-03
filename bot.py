@@ -56,6 +56,12 @@ last_activity_time: dict[str, float] = {}    # session -> timestamp of last line
 last_user_sent: dict[str, float] = {}        # session -> timestamp of last user message sent
 
 ANSI_RE = re.compile(r'\x1b\[[0-9;]*[mGKHF]|\x1b\][^\x07]*\x07|\r')
+RATE_LIMIT_PATTERNS = [
+    re.compile(r"you'?ve hit your limit", re.I),
+    re.compile(r"stop and wait for limit to reset", re.I),
+    re.compile(r"switch to extra usage", re.I),
+    re.compile(r"upgrade your plan", re.I),
+]
 
 
 def invalidate_mcp_cache(session: str) -> None:
@@ -141,6 +147,44 @@ def tmux_capture(session: str, host: str | None = None) -> list[str]:
     while lines and not lines[-1].strip():
         lines.pop()
     return lines
+
+
+def session_container_capture(session: str, host: str | None = None) -> list[str]:
+    container = f"relay-session-{session}"
+    socket = f"/tmp/tmux-{session}.sock"
+    r = run_cmd(
+        ["docker", "exec", container, "tmux", "-S", socket, "capture-pane", "-p", "-J", "-S", "-", "-t", session],
+        host,
+        timeout=8,
+    )
+    if r.returncode != 0:
+        return []
+    lines = r.stdout.splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return lines
+
+
+def tmux_capture_clean(session: str, host: str | None = None) -> list[str]:
+    lines = session_container_capture(session, host) or tmux_capture(session, host)
+    clean = [ANSI_RE.sub("", line).strip() for line in lines]
+    return [line for line in clean if line]
+
+
+def detect_rate_limit_state(session: str, host: str | None = None) -> str | None:
+    lines = tmux_capture_clean(session, host)
+    if not lines:
+        return None
+
+    text = "\n".join(lines)
+    if not any(pattern.search(text) for pattern in RATE_LIMIT_PATTERNS):
+        return None
+
+    for line in reversed(lines):
+        if "reset" in line.lower() or "resets" in line.lower():
+            return line
+
+    return "Rate limit screen detected in the session pane."
 
 
 def tmux_send(session: str, keys: str, host: str | None = None):
@@ -256,8 +300,21 @@ def write_mcp_json(path: str, thread_id: int, host: str | None = None, session: 
             }
         }
     }
+    # Add copilot MCP for local sessions (copilot CLI must be installed locally)
+    if not host:
+        mcp_config["mcpServers"]["copilot"] = {
+            "command": "/root/.bun/bin/bun",
+            "args": ["run", "--cwd", "/root/relay/mcp-copilot", "server.ts"],
+        }
     content = json.dumps(mcp_config, indent=2)
     mcp_path = f"{path}/.mcp.json"
+
+    # Skip if another session already owns this path (avoid overwriting shared workdirs)
+    configs = get_configs()
+    owners = [c for c in configs if c.get("path") == path]
+    if len(owners) > 1 and os.path.exists(mcp_path):
+        logger.info(f"Skipped .mcp.json write for {session} — path {path} shared with other sessions")
+        return
 
     if host:
         escaped = content.replace("'", "'\\''")
@@ -1879,6 +1936,8 @@ NO_REPLY_THRESHOLD = 10 * 60         # 10 min: restart if user msg sits unread t
 NO_REPLY_CHECK_INTERVAL = 3 * 60     # check every 3 minutes
 NO_REPLY_MIN_RESTART_GAP = 30 * 60   # don't restart same session more than once per 30 min
 _no_reply_restarted: dict[str, float] = {}  # session -> timestamp of last auto-restart
+RATE_LIMIT_ALERT_COOLDOWN = 60 * 60  # don't re-alert same rate-limited session more than hourly
+_rate_limited_alerted: dict[str, float] = {}  # session -> timestamp of last rate-limit alert
 
 
 async def check_stuck_force(context) -> None:
@@ -2038,6 +2097,29 @@ async def check_no_reply(context) -> None:
             (cid for (cid, tid), s in sessions.items() if tid == thread_id), GROUP_CHAT_ID
         )
         age_min = int(age / 60)
+
+        rate_limit_detail = await asyncio.to_thread(detect_rate_limit_state, session_name, host)
+        if rate_limit_detail:
+            logger.warning(
+                f"[no-reply] {session_name}: unread msg {age_min}m old but session is rate-limited"
+            )
+            if now - _rate_limited_alerted.get(session_name, 0) >= RATE_LIMIT_ALERT_COOLDOWN:
+                _rate_limited_alerted[session_name] = now
+                try:
+                    await context.bot.send_message(
+                        chat_id=chat_id_for_session,
+                        message_thread_id=thread_id,
+                        text=(
+                            f"⚠️ <b>{_esc(session_name)}</b> הגיע למגבלת שימוש, אז אני לא מפעיל אותו מחדש.\n"
+                            f"<code>{_esc(rate_limit_detail)}</code>\n"
+                            f"המשך אפשרי: להמתין לאיפוס המגבלה או לבחור <b>extra usage</b> / שדרוג מתוך הסשן."
+                        ),
+                        parse_mode="HTML",
+                    )
+                except Exception as e:
+                    logger.error(f"[no-reply] rate-limit alert send failed: {e}")
+            continue
+
         logger.warning(f"[no-reply] {session_name}: unread msg {age_min}m old — restarting {container}")
 
         # Restart the Docker container

@@ -14,3 +14,8 @@ CLAUDE.md
 *.log
 peers-topic.json
 backup-rclone.sh
+.omx/
+.relay_session_id
+mcp-copilot/node_modules/
+mcp-copilot/bun.lock
+queues-backup/
