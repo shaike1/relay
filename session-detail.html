@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Session: {{SESSION_NAME}}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh; background: #0d1117; color: #c9d1d9;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 14px;
+    padding: 20px;
+  }
+  .header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #21262d;
+  }
+  .header h1 { font-size: 18px; font-weight: 400; color: #f0f6fc; }
+  .header h1 .session-name { color: #58a6ff; }
+  .nav { display: flex; gap: 16px; font-size: 12px; }
+  .nav a { color: #58a6ff; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+
+  /* Info bar */
+  .info-bar {
+    display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap;
+  }
+  .info-item {
+    background: #161b22; border: 1px solid #21262d; border-radius: 6px;
+    padding: 10px 16px; min-width: 100px;
+  }
+  .info-item .lbl { font-size: 10px; color: #8b949e; text-transform: uppercase; }
+  .info-item .val { font-size: 16px; color: #f0f6fc; margin-top: 2px; }
+  .info-item .val.running { color: #3fb950; }
+  .info-item .val.down { color: #f85149; }
+
+  /* Actions */
+  .actions { display: flex; gap: 8px; margin-bottom: 20px; }
+  .btn {
+    background: #21262d; border: 1px solid #30363d; border-radius: 6px;
+    padding: 8px 16px; color: #c9d1d9; cursor: pointer; font-family: inherit;
+    font-size: 12px; transition: all 0.2s;
+  }
+  .btn:hover { border-color: #58a6ff; color: #58a6ff; }
+  .btn-primary { background: #238636; border-color: #2ea043; color: #fff; }
+  .btn-danger { border-color: #da3633; color: #f85149; }
+
+  /* Tabs */
+  .tabs {
+    display: flex; gap: 0; margin-bottom: 0; border-bottom: 1px solid #21262d;
+  }
+  .tab {
+    background: transparent; border: none; border-bottom: 2px solid transparent;
+    color: #8b949e; cursor: pointer; font-family: inherit; font-size: 13px;
+    padding: 10px 16px; transition: all 0.2s;
+  }
+  .tab:hover { color: #c9d1d9; }
+  .tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+
+  /* Panels */
+  .panel { display: none; padding: 16px 0; }
+  .panel.active { display: block; }
+
+  /* Terminal output */
+  .terminal {
+    background: #0d1117; border: 1px solid #21262d; border-radius: 6px;
+    padding: 12px; font-size: 12px; line-height: 1.6; color: #8b949e;
+    max-height: 500px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+  }
+  .terminal .line { }
+  .terminal .refresh-hint { color: #484f58; font-style: italic; }
+
+  /* Queue */
+  .queue-msg {
+    background: #161b22; border: 1px solid #21262d; border-radius: 6px;
+    padding: 10px 14px; margin-bottom: 6px;
+  }
+  .queue-msg .msg-user { color: #58a6ff; font-size: 12px; font-weight: 500; }
+  .queue-msg .msg-text { color: #c9d1d9; font-size: 13px; margin-top: 4px; }
+  .queue-msg .msg-time { color: #484f58; font-size: 10px; margin-top: 4px; }
+  .queue-msg .msg-id { color: #6e7681; font-size: 10px; }
+  .queue-stats {
+    display: flex; gap: 12px; margin-bottom: 12px; font-size: 12px; color: #8b949e;
+  }
+
+  /* Tasks */
+  .task-card {
+    background: #161b22; border: 1px solid #21262d; border-radius: 6px;
+    padding: 12px 14px; margin-bottom: 8px;
+  }
+  .task-card .task-top { display: flex; justify-content: space-between; align-items: center; }
+  .task-card .task-id { color: #6e7681; font-size: 11px; }
+  .task-badge { font-size: 10px; padding: 2px 8px; border-radius: 12px; text-transform: uppercase; }
+  .task-badge.pending { background: #2d1b00; color: #d29922; }
+  .task-badge.complete { background: #0d4429; color: #3fb950; }
+  .task-badge.waiting { background: #1c2128; color: #58a6ff; }
+  .task-card .task-prompt { color: #c9d1d9; font-size: 13px; margin-top: 6px; }
+  .task-card .task-meta { color: #6e7681; font-size: 11px; margin-top: 6px; }
+
+  /* Logs */
+  .logs-container {
+    background: #0d1117; border: 1px solid #21262d; border-radius: 6px;
+    padding: 12px; font-size: 11px; line-height: 1.5; color: #8b949e;
+    max-height: 600px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+  }
+
+  .empty-state { color: #484f58; text-align: center; padding: 40px; font-size: 13px; }
+  .auto-refresh { font-size: 11px; color: #484f58; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>Session: <span class="session-name" id="sessionName">{{SESSION_NAME}}</span></h1>
+    <div class="nav">
+      <a href="/metrics">Dashboard</a>
+      <a href="/sessions">Sessions</a>
+      <a href="/config">Config</a>
+    </div>
+  </div>
+
+  <div class="info-bar" id="infoBar"></div>
+
+  <div class="actions">
+    <button class="btn" onclick="doRestart()">Restart</button>
+    <button class="btn btn-danger" onclick="doStop()">Stop</button>
+    <button class="btn" onclick="loadAll()">Refresh All</button>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" onclick="showTab('tmux')">Terminal</button>
+    <button class="tab" onclick="showTab('queue')">Queue</button>
+    <button class="tab" onclick="showTab('tasks')">Tasks</button>
+    <button class="tab" onclick="showTab('logs')">Logs</button>
+  </div>
+
+  <div class="panel active" id="panel-tmux">
+    <div class="terminal" id="tmuxOutput"><span class="refresh-hint">Loading terminal output...</span></div>
+    <div class="auto-refresh">Auto-refresh every 5s</div>
+  </div>
+
+  <div class="panel" id="panel-queue">
+    <div class="queue-stats" id="queueStats"></div>
+    <div id="queueMessages"></div>
+  </div>
+
+  <div class="panel" id="panel-tasks">
+    <div id="tasksList"></div>
+  </div>
+
+  <div class="panel" id="panel-logs">
+    <div class="logs-container" id="logsOutput"><span class="refresh-hint">Loading logs...</span></div>
+    <div class="auto-refresh">Auto-refresh every 10s</div>
+  </div>
+
+<script>
+const SESSION = '{{SESSION_NAME}}';
+let sessionConfig = null;
+let activeTab = 'tmux';
+
+function showTab(name) {
+  activeTab = name;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelector(`.tab[onclick="showTab('${name}')"]`).classList.add('active');
+  document.getElementById(`panel-${name}`).classList.add('active');
+}
+
+// --- Info Bar ---
+async function loadInfo() {
+  try {
+    const [configRes, metricsRes] = await Promise.all([
+      fetch('/api/sessions-config'),
+      fetch('/api/relay-metrics'),
+    ]);
+    const config = await configRes.json();
+    const metrics = await metricsRes.json();
+    sessionConfig = config.find(s => s.session === SESSION);
+    const metric = metrics.find(m => m.session === SESSION) || {};
+
+    const isRunning = metric.status === 'running';
+    document.getElementById('infoBar').innerHTML = `
+      <div class="info-item"><div class="lbl">Status</div><div class="val ${isRunning ? 'running' : 'down'}">${metric.status || 'unknown'}</div></div>
+      ${metric.uptime ? `<div class="info-item"><div class="lbl">Uptime</div><div class="val">${metric.uptime}</div></div>` : ''}
+      ${metric.memory_mb ? `<div class="info-item"><div class="lbl">Memory</div><div class="val">${metric.memory_mb} MB</div></div>` : ''}
+      ${metric.last_active_ago ? `<div class="info-item"><div class="lbl">Last Active</div><div class="val">${metric.last_active_ago}</div></div>` : ''}
+      <div class="info-item"><div class="lbl">Thread ID</div><div class="val">${sessionConfig?.thread_id || '?'}</div></div>
+      <div class="info-item"><div class="lbl">Path</div><div class="val">${sessionConfig?.path || '?'}</div></div>
+      ${sessionConfig?.group ? `<div class="info-item"><div class="lbl">Group</div><div class="val">${sessionConfig.group}</div></div>` : ''}
+      ${metric.pending_messages ? `<div class="info-item"><div class="lbl">Pending</div><div class="val" style="color:#d29922">${metric.pending_messages}</div></div>` : ''}
+    `;
+  } catch (e) { console.error('Info load failed', e); }
+}
+
+// --- Terminal ---
+async function loadTmux() {
+  try {
+    const r = await fetch(`/api/session-tmux?session=${SESSION}&lines=80`);
+    const data = await r.json();
+    const el = document.getElementById('tmuxOutput');
+    if (data.output && data.output.length) {
+      el.textContent = data.output.join('\n');
+      el.scrollTop = el.scrollHeight;
+    } else {
+      el.innerHTML = '<span class="refresh-hint">No terminal output available</span>';
+    }
+  } catch (e) {
+    document.getElementById('tmuxOutput').innerHTML = '<span class="refresh-hint">Failed to load terminal</span>';
+  }
+}
+
+// --- Queue ---
+async function loadQueue() {
+  if (!sessionConfig) return;
+  try {
+    const r = await fetch(`/api/session-queue?thread_id=${sessionConfig.thread_id}&max=50`);
+    const data = await r.json();
+
+    document.getElementById('queueStats').innerHTML = `
+      <span>Total messages: ${data.total_lines || 0}</span>
+      <span>Showing last: ${(data.messages || []).length}</span>
+      ${data.state?.lastId ? `<span>Last acked ID: ${data.state.lastId}</span>` : ''}
+    `;
+
+    const msgs = (data.messages || []).reverse();
+    if (msgs.length === 0) {
+      document.getElementById('queueMessages').innerHTML = '<div class="empty-state">Queue is empty</div>';
+      return;
+    }
+    document.getElementById('queueMessages').innerHTML = msgs.map(m => `
+      <div class="queue-msg">
+        <div style="display:flex;justify-content:space-between">
+          <span class="msg-user">${m.user || 'system'}</span>
+          <span class="msg-id">#${m.message_id || '?'}</span>
+        </div>
+        <div class="msg-text">${escHtml(m.text || m.raw || JSON.stringify(m))}</div>
+        ${m.ts ? `<div class="msg-time">${new Date(m.ts * 1000).toLocaleString()}</div>` : ''}
+      </div>
+    `).join('');
+  } catch (e) {
+    document.getElementById('queueMessages').innerHTML = '<div class="empty-state">Failed to load queue</div>';
+  }
+}
+
+// --- Tasks ---
+async function loadTasks() {
+  try {
+    const r = await fetch(`/api/session-tasks?session=${SESSION}`);
+    const tasks = await r.json();
+    const entries = Object.entries(tasks);
+
+    if (entries.length === 0) {
+      document.getElementById('tasksList').innerHTML = '<div class="empty-state">No tasks</div>';
+      return;
+    }
+
+    document.getElementById('tasksList').innerHTML = entries.map(([id, t]) => `
+      <div class="task-card">
+        <div class="task-top">
+          <span class="task-id">${id}</span>
+          <span class="task-badge ${t.status || 'pending'}">${t.status || 'pending'}</span>
+        </div>
+        <div class="task-prompt">${escHtml(t.prompt || t.description || '—')}</div>
+        <div class="task-meta">
+          ${t.from ? `From: ${t.from}` : ''}
+          ${t.to ? ` → To: ${t.to}` : ''}
+          ${t.depends_on ? ` | Deps: ${t.depends_on.join(', ')}` : ''}
+          ${t.result ? `<br>Result: ${escHtml(String(t.result).substring(0, 200))}` : ''}
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    document.getElementById('tasksList').innerHTML = '<div class="empty-state">Failed to load tasks</div>';
+  }
+}
+
+// --- Logs ---
+async function loadLogs() {
+  try {
+    const r = await fetch(`/api/session-logs?session=${SESSION}&lines=100`);
+    const data = await r.json();
+    const el = document.getElementById('logsOutput');
+    if (data.lines && data.lines.length) {
+      el.textContent = data.lines.join('\n');
+      el.scrollTop = el.scrollHeight;
+    } else {
+      el.innerHTML = '<span class="refresh-hint">No logs available</span>';
+    }
+  } catch (e) {
+    document.getElementById('logsOutput').innerHTML = '<span class="refresh-hint">Failed to load logs</span>';
+  }
+}
+
+// --- Actions ---
+async function doRestart() {
+  if (!confirm(`Restart "${SESSION}"?`)) return;
+  try {
+    const r = await fetch('/api/session-restart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: SESSION }) });
+    const res = await r.json();
+    alert(res.ok ? `Restarted: ${res.current}` : `Failed: ${res.error}`);
+    setTimeout(loadAll, 3000);
+  } catch (e) { alert('Restart failed: ' + e.message); }
+}
+
+async function doStop() {
+  if (!confirm(`Stop "${SESSION}"?`)) return;
+  try {
+    const r = await fetch('/api/session-stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: SESSION }) });
+    const res = await r.json();
+    alert(res.ok ? 'Stopped' : `Failed: ${res.error}`);
+    setTimeout(loadAll, 2000);
+  } catch (e) { alert('Stop failed: ' + e.message); }
+}
+
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function loadAll() {
+  loadInfo();
+  loadTmux();
+  loadQueue();
+  loadTasks();
+  loadLogs();
+}
+
+loadAll();
+// Tmux refreshes faster
+setInterval(loadTmux, 5000);
+setInterval(() => { loadQueue(); loadTasks(); loadLogs(); loadInfo(); }, 10000);
+</script>
+</body>
+</html>

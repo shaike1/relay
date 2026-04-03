@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Relay Task Board</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh; background: #0d1117; color: #c9d1d9;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 14px;
+    padding: 20px;
+  }
+  .header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #21262d;
+  }
+  .header h1 { font-size: 18px; font-weight: 400; color: #f0f6fc; }
+  .nav { display: flex; gap: 16px; font-size: 12px; }
+  .nav a { color: #58a6ff; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+
+  /* Stats */
+  .stats-bar {
+    display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap;
+  }
+  .stat {
+    background: #161b22; border: 1px solid #21262d; border-radius: 6px;
+    padding: 12px 16px; min-width: 100px; text-align: center;
+  }
+  .stat .num { font-size: 24px; color: #f0f6fc; }
+  .stat .lbl { font-size: 10px; color: #8b949e; text-transform: uppercase; margin-top: 2px; }
+
+  /* Filters */
+  .filters {
+    display: flex; gap: 8px; margin-bottom: 16px; align-items: center; flex-wrap: wrap;
+  }
+  .filter-btn {
+    background: #161b22; border: 1px solid #21262d; border-radius: 4px;
+    padding: 6px 12px; color: #8b949e; cursor: pointer; font-size: 11px;
+    font-family: inherit; transition: all 0.2s;
+  }
+  .filter-btn:hover { border-color: #30363d; color: #c9d1d9; }
+  .filter-btn.active { border-color: #58a6ff; color: #58a6ff; }
+  .search {
+    background: #0d1117; border: 1px solid #21262d; border-radius: 6px;
+    padding: 6px 12px; color: #c9d1d9; font-family: inherit; font-size: 12px;
+    margin-left: auto; min-width: 180px;
+  }
+  .search:focus { outline: none; border-color: #58a6ff; }
+
+  /* Kanban columns */
+  .kanban {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 16px; margin-bottom: 20px;
+  }
+  .column {
+    background: #161b22; border: 1px solid #21262d; border-radius: 8px;
+    padding: 12px; min-height: 200px;
+  }
+  .column-header {
+    font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 1px;
+    padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid #21262d;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .column-count {
+    background: #21262d; padding: 2px 8px; border-radius: 10px;
+    font-size: 11px; color: #8b949e;
+  }
+  .col-pending .column-header { color: #d29922; }
+  .col-waiting .column-header { color: #58a6ff; }
+  .col-complete .column-header { color: #3fb950; }
+
+  /* Task cards */
+  .task {
+    background: #0d1117; border: 1px solid #21262d; border-radius: 6px;
+    padding: 10px 12px; margin-bottom: 8px; transition: border-color 0.2s;
+  }
+  .task:hover { border-color: #30363d; }
+  .task .task-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px; }
+  .task .task-id { font-size: 10px; color: #6e7681; word-break: break-all; max-width: 60%; }
+  .task .task-session {
+    font-size: 10px; padding: 1px 6px; border-radius: 4px;
+    background: #21262d; color: #58a6ff;
+  }
+  .task .task-prompt { font-size: 12px; color: #c9d1d9; margin-bottom: 6px; line-height: 1.4; }
+  .task .task-meta { font-size: 10px; color: #6e7681; display: flex; gap: 8px; flex-wrap: wrap; }
+  .task .task-meta .from { color: #3fb950; }
+  .task .task-meta .to { color: #d29922; }
+  .task .task-deps {
+    margin-top: 4px; font-size: 10px; color: #58a6ff;
+  }
+  .task .task-result {
+    margin-top: 6px; padding-top: 6px; border-top: 1px solid #21262d;
+    font-size: 11px; color: #8b949e; max-height: 80px; overflow-y: auto;
+  }
+
+  /* Timeline view */
+  .timeline { display: none; }
+  .timeline.active { display: block; }
+  .tl-entry {
+    display: flex; gap: 12px; margin-bottom: 12px; align-items: flex-start;
+  }
+  .tl-dot {
+    width: 10px; height: 10px; border-radius: 50%; margin-top: 4px; flex-shrink: 0;
+    border: 2px solid #21262d;
+  }
+  .tl-dot.pending { background: #d29922; border-color: #d29922; }
+  .tl-dot.waiting { background: #58a6ff; border-color: #58a6ff; }
+  .tl-dot.complete { background: #3fb950; border-color: #3fb950; }
+  .tl-content { flex: 1; }
+  .tl-content .tl-id { font-size: 10px; color: #6e7681; }
+  .tl-content .tl-text { font-size: 12px; color: #c9d1d9; }
+  .tl-content .tl-meta { font-size: 10px; color: #8b949e; margin-top: 2px; }
+  .tl-line { width: 1px; background: #21262d; margin-left: 4px; min-height: 20px; }
+
+  .view-toggle { display: flex; gap: 2px; background: #21262d; border-radius: 6px; padding: 2px; }
+  .view-btn {
+    background: transparent; border: none; color: #8b949e; cursor: pointer;
+    font-size: 11px; font-family: inherit; padding: 4px 10px; border-radius: 4px;
+  }
+  .view-btn:hover { color: #c9d1d9; }
+  .view-btn.active { background: #161b22; color: #58a6ff; }
+
+  .empty { color: #484f58; text-align: center; padding: 40px; }
+  .footer { font-size: 11px; color: #484f58; text-align: center; margin-top: 20px; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>Task Board</h1>
+    <div class="nav">
+      <div class="view-toggle">
+        <button class="view-btn active" onclick="setView('kanban')">Kanban</button>
+        <button class="view-btn" onclick="setView('timeline')">Timeline</button>
+      </div>
+      <a href="/metrics">Dashboard</a>
+      <a href="/sessions">Sessions</a>
+      <a href="/orchestrator">Orchestrator</a>
+    </div>
+  </div>
+
+  <div class="stats-bar" id="stats"></div>
+
+  <div class="filters">
+    <button class="filter-btn active" onclick="setFilter('all')">All</button>
+    <button class="filter-btn" onclick="setFilter('pending')">Pending</button>
+    <button class="filter-btn" onclick="setFilter('waiting')">Waiting</button>
+    <button class="filter-btn" onclick="setFilter('complete')">Complete</button>
+    <input class="search" id="search" placeholder="Search tasks..." oninput="renderAll()">
+  </div>
+
+  <div class="kanban" id="kanban"></div>
+  <div class="timeline" id="timeline"></div>
+  <div class="footer" id="footer"></div>
+
+<script>
+let allTasks = []; // flattened: [{id, session, ...task}]
+let currentFilter = 'all';
+let currentView = 'kanban';
+
+function setView(v) {
+  currentView = v;
+  document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.view-btn[onclick="setView('${v}')"]`).classList.add('active');
+  document.getElementById('kanban').style.display = v === 'kanban' ? 'grid' : 'none';
+  document.getElementById('timeline').className = 'timeline' + (v === 'timeline' ? ' active' : '');
+  renderAll();
+}
+
+function setFilter(f) {
+  currentFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.filter-btn[onclick="setFilter('${f}')"]`).classList.add('active');
+  renderAll();
+}
+
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = String(s || '');
+  return d.innerHTML;
+}
+
+function flattenTasks(data) {
+  const tasks = [];
+  for (const [session, sessionTasks] of Object.entries(data)) {
+    for (const [id, t] of Object.entries(sessionTasks || {})) {
+      tasks.push({ id, session, ...t });
+    }
+  }
+  return tasks;
+}
+
+function filterTasks(tasks) {
+  const q = (document.getElementById('search')?.value || '').toLowerCase();
+  return tasks.filter(t => {
+    if (currentFilter !== 'all' && t.status !== currentFilter) return false;
+    if (q && !JSON.stringify(t).toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+function renderStats(tasks) {
+  const pending = tasks.filter(t => t.status === 'pending').length;
+  const waiting = tasks.filter(t => t.status === 'waiting').length;
+  const complete = tasks.filter(t => t.status === 'complete').length;
+  const sessions = [...new Set(tasks.map(t => t.session))].length;
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><div class="num">${tasks.length}</div><div class="lbl">Total</div></div>
+    <div class="stat"><div class="num" style="color:#d29922">${pending}</div><div class="lbl">Pending</div></div>
+    <div class="stat"><div class="num" style="color:#58a6ff">${waiting}</div><div class="lbl">Waiting</div></div>
+    <div class="stat"><div class="num" style="color:#3fb950">${complete}</div><div class="lbl">Complete</div></div>
+    <div class="stat"><div class="num">${sessions}</div><div class="lbl">Sessions</div></div>
+  `;
+}
+
+function renderTaskCard(t) {
+  return `
+    <div class="task">
+      <div class="task-header">
+        <span class="task-id">${escHtml(t.id)}</span>
+        <span class="task-session">${escHtml(t.session)}</span>
+      </div>
+      <div class="task-prompt">${escHtml((t.prompt || '').substring(0, 200))}</div>
+      <div class="task-meta">
+        ${t.from ? `<span class="from">from: ${escHtml(t.from)}</span>` : ''}
+        ${t.to ? `<span class="to">to: ${escHtml(t.to)}</span>` : ''}
+        ${t.timeout ? `<span>timeout: ${t.timeout}s</span>` : ''}
+      </div>
+      ${t.depends_on ? `<div class="task-deps">deps: ${t.depends_on.map(d => escHtml(d)).join(', ')}</div>` : ''}
+      ${t.result ? `<div class="task-result">${escHtml(String(t.result).substring(0, 300))}</div>` : ''}
+    </div>`;
+}
+
+function renderKanban(tasks) {
+  const pending = tasks.filter(t => t.status === 'pending');
+  const waiting = tasks.filter(t => t.status === 'waiting');
+  const complete = tasks.filter(t => t.status === 'complete');
+
+  document.getElementById('kanban').innerHTML = `
+    <div class="column col-pending">
+      <div class="column-header">Pending <span class="column-count">${pending.length}</span></div>
+      ${pending.length ? pending.map(renderTaskCard).join('') : '<div class="empty">No pending tasks</div>'}
+    </div>
+    <div class="column col-waiting">
+      <div class="column-header">Waiting <span class="column-count">${waiting.length}</span></div>
+      ${waiting.length ? waiting.map(renderTaskCard).join('') : '<div class="empty">No waiting tasks</div>'}
+    </div>
+    <div class="column col-complete">
+      <div class="column-header">Complete <span class="column-count">${complete.length}</span></div>
+      ${complete.length ? complete.map(renderTaskCard).join('') : '<div class="empty">No completed tasks</div>'}
+    </div>
+  `;
+}
+
+function renderTimeline(tasks) {
+  if (!tasks.length) {
+    document.getElementById('timeline').innerHTML = '<div class="empty">No tasks</div>';
+    return;
+  }
+  document.getElementById('timeline').innerHTML = tasks.map(t => `
+    <div class="tl-entry">
+      <div class="tl-dot ${t.status || 'pending'}"></div>
+      <div class="tl-content">
+        <div class="tl-id">${escHtml(t.id)} · <span style="color:#58a6ff">${escHtml(t.session)}</span></div>
+        <div class="tl-text">${escHtml((t.prompt || '').substring(0, 150))}</div>
+        <div class="tl-meta">
+          ${t.from ? `from: ${escHtml(t.from)}` : ''} ${t.to ? `→ ${escHtml(t.to)}` : ''} · ${t.status || 'pending'}
+          ${t.depends_on ? ` · deps: ${t.depends_on.join(', ')}` : ''}
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderAll() {
+  const filtered = filterTasks(allTasks);
+  renderStats(allTasks);
+  if (currentView === 'kanban') renderKanban(filtered);
+  else renderTimeline(filtered);
+  document.getElementById('footer').textContent = `${filtered.length} tasks shown · Updated: ${new Date().toLocaleTimeString()}`;
+}
+
+async function loadTasks() {
+  try {
+    const r = await fetch('/api/tasks-all');
+    const data = await r.json();
+    allTasks = flattenTasks(data);
+    renderAll();
+  } catch (e) {
+    document.getElementById('kanban').innerHTML = `<div class="empty">Failed to load tasks: ${e.message}</div>`;
+  }
+}
+
+loadTasks();
+setInterval(loadTasks, 15000);
+</script>
+</body>
+</html>

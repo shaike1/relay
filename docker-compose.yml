@@ -40,22 +40,35 @@ services:
     container_name: relay-api
     restart: always
     ports:
-      - "9100:9100"
+      - "7070:7070"
     environment:
-      PORT: "9100"
+      PORT: "7070"
+      NOMACODE_URL: "http://relay-nomacode:3000"
       SESSIONS_FILE: "/relay/sessions.json"
+      AUTH_USER: "relay"
+      AUTH_PASS: "${RELAY_API_PASS:-PKNfwGoX4-8-LHsxhVphvQ}"
     volumes:
+      - /root/relay/relay-api/server.js:/relay-api/server.js:ro
       - /root/relay/sessions.json:/relay/sessions.json
       - /root/relay/metrics.html:/relay/metrics.html:ro
       - /root/relay/config.html:/relay/config.html:ro
+      - /root/relay/sessions-ui.html:/relay/sessions-ui.html:ro
+      - /root/relay/templates.json:/relay/templates.json
       - /root/relay/scripts:/relay/scripts:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - relay-queue:/tmp
+    networks:
+      - default
+      - relay_default
     logging:
       driver: "json-file"
       options:
         max-size: "5m"
         max-file: "2"
+
+networks:
+  relay_default:
+    external: true
 
 volumes:
   relay-queue:

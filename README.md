@@ -19,9 +19,14 @@ A Docker-based orchestration system that runs AI agent sessions (Claude, Codex, 
 │  ├── message-watchdog.sh (nudges idle sessions)              │
 │  └── per-session tmux socket: /tmp/tmux-{name}.sock          │
 │                                                              │
-│  nomacode (web terminal hub)                                 │
+│  relay-api (API + reverse proxy, port 7070)                   │
+│  ├── /metrics, /config, /sessions — web dashboards           │
+│  ├── /api/* — metrics, logs, scaling, session management     │
+│  └── proxy fallback → nomacode for web terminal              │
+│                                                              │
+│  nomacode (web terminal hub, internal port 3000)             │
 │  ├── hub.sh — interactive session picker                     │
-│  └── xterm.js frontend (port 7070, Caddy TLS)               │
+│  └── xterm.js frontend (proxied via relay-api)               │
 │                                                              │
 │  Shared: relay-queue volume (/tmp/tg-queue-*.jsonl)          │
 └──────────────────────────────┬──────────────────────────────┘
@@ -74,8 +79,11 @@ One instance per session. Gives Claude tools to interact with Telegram via the M
 | `typing` | Show typing indicator |
 | `list_peers` | Discover other sessions |
 | `message_peer` | Send message to another session |
-| `send_task` | Delegate async task to another session |
-| `complete_task` | Return task result to requester |
+| `send_task` | Delegate async task (with `depends_on` for milestone gating) |
+| `complete_task` | Return task result (auto-dispatches waiting tasks) |
+| `auto_dispatch` | Route task to best session by skill matching |
+| `knowledge_read` | Read from shared knowledge library |
+| `knowledge_write` | Write to shared knowledge library |
 
 ### 3. Session Containers
 
@@ -158,6 +166,8 @@ Different AI tools can collaborate on the same work:
 | `host` | `null` = local, `"root@host"` = remote |
 | `type` | `claude`, `codex`, or `copilot` |
 | `allowed_users` | Optional: restrict to specific Telegram user IDs |
+| `skills` | Skill tags for routing (e.g. `["python", "docker"]`) |
+| `group` | Session group (e.g. `infra`, `openclaw`) |
 
 ### .env
 ```
@@ -195,6 +205,7 @@ GROUP_CHAT_ID=...
 | `docker-compose.sessions.yml` | Local session containers (auto-generated) |
 | `docker-compose.remote-{HOST}.yml` | Remote session containers (auto-generated) |
 | `docker-compose.nomacode.yml` | Web terminal hub |
+| `docker-compose.yml` (relay-api) | Standalone API server + reverse proxy |
 
 **Shared volume:** `relay-queue` — holds queue files, tmux sockets, state files.
 
@@ -222,6 +233,65 @@ python3 scripts/generate-compose.py
 | `/mcp_add {name} {cmd}` | Add MCP server to session |
 | `/restart_all` | Restart all sessions |
 | `/delegate {task}` | Route task to best agent |
+
+## Web Dashboards & API
+
+**Relay API** (`relay-api/server.js`) serves all web UIs and API endpoints on port 7070, with a reverse proxy fallback to nomacode for the web terminal.
+
+### Web UIs
+
+| URL | Description |
+|-----|-------------|
+| `relay.right-api.com/metrics` | Live Metrics Dashboard — health score, session cards, activity bars, groups view, log viewer |
+| `relay.right-api.com/sessions` | Sessions Manager — create/delete/start/stop sessions, auto-scaling controls |
+| `relay.right-api.com/config` | Config Editor — edit sessions.json fields in a table UI |
+| `relay.right-api.com/` | Web Terminal (nomacode) — xterm.js interactive hub |
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/relay-metrics` | GET | Session metrics JSON (status, uptime, memory, activity) |
+| `/api/session-logs` | GET | Container logs (`?session=name&lines=30`) |
+| `/api/sessions-config` | GET/POST | Read/write sessions.json |
+| `/api/session-restart` | POST | Restart a session container |
+| `/api/session-create` | POST | Create new session (container + config) |
+| `/api/session-stop` | POST | Stop a session container |
+| `/api/session-delete` | POST | Delete session (container + config entry) |
+| `/api/scaling-status` | GET | Scaling overview (active/idle/down counts) |
+| `/api/scale-up` | POST | Start all stopped sessions |
+| `/api/scale-down` | POST | Stop idle sessions (4h+ inactive, protects infra) |
+| `/health` | GET | Health check |
+
+## Skill-Based Routing & Milestone Gating
+
+### Skill Routing
+Each session declares skills in `sessions.json`. `auto_dispatch` scores sessions by skill match:
+- 8 points per explicit skill match (via `prefer_skills` parameter)
+- 5 points per auto-detected skill from the prompt text
+
+### Milestone Gating
+Tasks can declare dependencies via `depends_on`:
+```
+send_task("codex", "deploy", depends_on: ["task-123", "task-456"])
+```
+Tasks with unmet dependencies get status `waiting`. When a dependency completes via `complete_task`, all waiting tasks whose dependencies are now met are automatically dispatched.
+
+## Auto-Scaling
+
+The Sessions Manager UI (`/sessions`) provides scaling controls:
+
+- **Scale Up** — starts all stopped/exited session containers
+- **Scale Down** — stops sessions idle for 4+ hours (protects `relay`, `main`, `copilot`)
+- **Auto-restart watchdog** (`scripts/auto-restart-loop.sh`) — runs every 60s, restarts crashed containers
+
+## Queue Persistence
+
+Queue files survive container restarts via the `relay-queue` Docker named volume. An additional backup layer provides extra safety:
+
+- **`scripts/queue-backup.sh`** — backup/restore queue files to `/root/relay/queues-backup/`
+- **`scripts/queue-backup-loop.sh`** — daemon: restore on startup, backup every 5 minutes
+- Registered as s6 service (`s6-overlay/s6-rc.d/queue-backup`)
 
 ## Data Flow Example
 
@@ -272,6 +342,17 @@ State tracking (`/tmp/tg-queue-{THREAD_ID}.state`):
 | `hosts.json` | Remote host registry |
 | `capabilities.json` | Agent capability declarations |
 | `peers-topic.json` | Cross-session communication audit log |
+| `relay-api/server.js` | Standalone API server + nomacode proxy |
+| `relay-api/Dockerfile` | API server container image |
+| `metrics.html` | Live Metrics Dashboard UI |
+| `config.html` | Session Config Editor UI |
+| `sessions-ui.html` | Sessions Manager UI (scaling, CRUD) |
+| `scripts/metrics.sh` | Python metrics collector (~2s, batch docker stats) |
+| `scripts/session-logs.sh` | Fetch container logs |
+| `scripts/session-restart.sh` | Restart a session container |
+| `scripts/auto-restart-loop.sh` | Watchdog: auto-restart crashed containers |
+| `scripts/queue-backup.sh` | Queue file backup/restore |
+| `scripts/queue-backup-loop.sh` | Backup daemon (every 5 min) |
 
 ## Quick Start
 
@@ -300,5 +381,9 @@ docker compose -f docker-compose.sessions.yml up -d
 |--------|---------------|------|
 | Telegram | Forum topics in relay group | Telegram user ID |
 | Web Terminal | https://relay.right-api.com | Username + password |
+| Metrics | https://relay.right-api.com/metrics | Public |
+| Sessions | https://relay.right-api.com/sessions | Public |
+| Config | https://relay.right-api.com/config | Public |
+| API | https://relay.right-api.com/api/* | Public |
 | SSH | `ssh root@100.64.0.7` | SSH key |
 | Direct tmux | `docker exec -it relay-session-{name} tmux -S /tmp/tmux-{name}.sock attach` | Docker access |

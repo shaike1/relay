@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Relay Sessions</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh; background: #0d1117; color: #c9d1d9;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 14px;
+    padding: 20px;
+  }
+  .header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 24px; padding-bottom: 12px; border-bottom: 1px solid #21262d;
+  }
+  .header h1 { font-size: 18px; font-weight: 400; color: #f0f6fc; }
+  .nav { display: flex; gap: 16px; font-size: 12px; }
+  .nav a { color: #58a6ff; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+
+  /* Scaling panel */
+  .scaling-panel {
+    background: #161b22; border: 1px solid #21262d; border-radius: 8px;
+    padding: 16px 20px; margin-bottom: 20px;
+    display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+  }
+  .scaling-stat { text-align: center; min-width: 80px; }
+  .scaling-stat .num { font-size: 28px; font-weight: 600; color: #f0f6fc; }
+  .scaling-stat .lbl { font-size: 10px; color: #8b949e; text-transform: uppercase; }
+  .scaling-actions { display: flex; gap: 8px; margin-left: auto; }
+  .scaling-rec { font-size: 11px; color: #d29922; flex-basis: 100%; }
+
+  /* Toolbar */
+  .toolbar {
+    display: flex; gap: 10px; margin-bottom: 16px; align-items: center; flex-wrap: wrap;
+  }
+  .btn {
+    background: #21262d; border: 1px solid #30363d; border-radius: 6px;
+    padding: 8px 16px; color: #c9d1d9; cursor: pointer; font-family: inherit;
+    font-size: 12px; transition: all 0.2s;
+  }
+  .btn:hover { border-color: #58a6ff; color: #58a6ff; }
+  .btn-primary { background: #238636; border-color: #2ea043; color: #fff; }
+  .btn-primary:hover { background: #2ea043; }
+  .btn-danger { border-color: #da3633; color: #f85149; }
+  .btn-danger:hover { background: #da3633; color: #fff; }
+  .btn-warn { border-color: #d29922; color: #d29922; }
+  .btn-warn:hover { background: #d29922; color: #0d1117; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .search {
+    background: #0d1117; border: 1px solid #21262d; border-radius: 6px;
+    padding: 8px 12px; color: #c9d1d9; font-family: inherit; font-size: 12px;
+    margin-left: auto; min-width: 200px;
+  }
+  .search:focus { outline: none; border-color: #58a6ff; }
+
+  /* Session cards */
+  .sessions-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 12px;
+  }
+  .s-card {
+    background: #161b22; border: 1px solid #21262d; border-radius: 8px;
+    padding: 16px; transition: border-color 0.2s;
+  }
+  .s-card:hover { border-color: #30363d; }
+  .s-card .s-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .s-card .s-name { font-size: 15px; color: #f0f6fc; font-weight: 500; }
+  .s-card .s-badge {
+    font-size: 10px; padding: 2px 8px; border-radius: 12px;
+    text-transform: uppercase; font-weight: 500;
+  }
+  .s-badge-running { background: #0d4429; color: #3fb950; border: 1px solid #238636; }
+  .s-badge-stopped { background: #3d1419; color: #f85149; border: 1px solid #da3633; }
+  .s-badge-remote { background: #1c2128; color: #58a6ff; border: 1px solid #388bfd; }
+  .s-card .s-info {
+    font-size: 12px; color: #8b949e;
+    display: grid; grid-template-columns: auto 1fr; gap: 3px 10px;
+    margin-bottom: 10px;
+  }
+  .s-info .key { color: #6e7681; }
+  .s-info .val { color: #c9d1d9; }
+  .s-card .s-skills { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
+  .s-skill {
+    background: #21262d; padding: 2px 6px; border-radius: 4px;
+    font-size: 10px; color: #58a6ff;
+  }
+  .s-card .s-actions { display: flex; gap: 6px; }
+  .s-card .s-actions .btn { padding: 4px 10px; font-size: 11px; }
+
+  /* Modal */
+  .modal-overlay {
+    display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.7); z-index: 100;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.visible { display: flex; }
+  .modal {
+    background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+    padding: 24px; width: 420px; max-width: 90vw;
+  }
+  .modal h2 { font-size: 16px; font-weight: 400; color: #f0f6fc; margin-bottom: 16px; }
+  .modal .field { margin-bottom: 12px; }
+  .modal .field label { display: block; font-size: 11px; color: #8b949e; margin-bottom: 4px; text-transform: uppercase; }
+  .modal .field input, .modal .field select {
+    width: 100%; background: #0d1117; border: 1px solid #21262d; border-radius: 4px;
+    padding: 8px; color: #c9d1d9; font-family: inherit; font-size: 13px;
+  }
+  .modal .field input:focus, .modal .field select:focus { outline: none; border-color: #58a6ff; }
+  .modal .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+
+  .toast {
+    position: fixed; bottom: 20px; right: 20px; background: #161b22;
+    border: 1px solid #30363d; border-radius: 8px; padding: 12px 20px;
+    font-size: 12px; color: #c9d1d9; z-index: 200; display: none;
+    transition: opacity 0.3s;
+  }
+  .toast.visible { display: block; }
+  .toast.success { border-color: #238636; color: #3fb950; }
+  .toast.error { border-color: #da3633; color: #f85149; }
+
+  .footer { font-size: 11px; color: #484f58; text-align: center; margin-top: 20px; }
+
+  /* Template cards */
+  .tpl-grid { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+  .tpl-card {
+    background: #161b22; border: 1px solid #21262d; border-radius: 8px;
+    padding: 12px 16px; cursor: pointer; transition: all 0.2s; min-width: 160px;
+  }
+  .tpl-card:hover { border-color: #58a6ff; }
+  .tpl-card.selected { border-color: #58a6ff; background: #1c2128; }
+  .tpl-card .tpl-name { font-size: 13px; color: #f0f6fc; font-weight: 500; }
+  .tpl-card .tpl-desc { font-size: 11px; color: #8b949e; margin-top: 4px; }
+  .tpl-card .tpl-type { font-size: 10px; color: #58a6ff; margin-top: 4px; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>Sessions Manager</h1>
+    <div class="nav">
+      <a href="/metrics">Dashboard</a>
+      <a href="/tasks">Tasks</a>
+      <a href="/orchestrator">Orchestrator</a>
+      <a href="/config">Config</a>
+    </div>
+  </div>
+
+  <div class="scaling-panel" id="scaling"></div>
+
+  <div class="toolbar">
+    <button class="btn btn-primary" onclick="showCreateModal()">+ New Session</button>
+    <button class="btn" onclick="showTemplateModal()">From Template</button>
+    <button class="btn" onclick="loadAll()">Refresh</button>
+    <input class="search" id="search" placeholder="Search sessions..." oninput="filterSessions()">
+  </div>
+
+  <div class="sessions-grid" id="grid"></div>
+  <div class="footer" id="footer"></div>
+
+  <!-- Create Modal -->
+  <div class="modal-overlay" id="createModal">
+    <div class="modal">
+      <h2>Create New Session</h2>
+      <div class="field"><label>Session Name</label><input id="m-name" placeholder="my-session"></div>
+      <div class="field"><label>Thread ID</label><input id="m-thread" type="number" placeholder="0"></div>
+      <div class="field"><label>Path</label><input id="m-path" value="/root"></div>
+      <div class="field"><label>Host (empty = local)</label><input id="m-host" placeholder="null"></div>
+      <div class="field">
+        <label>Type</label>
+        <select id="m-type">
+          <option value="">claude</option>
+          <option value="codex">codex</option>
+          <option value="copilot">copilot</option>
+        </select>
+      </div>
+      <div class="field"><label>Group</label><input id="m-group" placeholder="e.g. infra, projects"></div>
+      <div class="field"><label>Skills (comma separated)</label><input id="m-skills" placeholder="python, docker, relay"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="hideCreateModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="createSession()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Template Modal -->
+  <div class="modal-overlay" id="templateModal">
+    <div class="modal" style="width:520px">
+      <h2>Create from Template</h2>
+      <div class="field"><label>Choose Template</label></div>
+      <div class="tpl-grid" id="tpl-grid"></div>
+      <div class="field"><label>Session Name</label><input id="t-name" placeholder="my-session"></div>
+      <div class="field"><label>Thread ID</label><input id="t-thread" type="number" placeholder="0"></div>
+      <div class="field"><label>Path (override)</label><input id="t-path" placeholder="from template"></div>
+      <div class="field"><label>Host (override)</label><input id="t-host" placeholder="from template"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="hideTemplateModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="createFromTemplate()">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+let allSessions = [];
+let metricsData = [];
+
+function toast(msg, type = 'success') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `toast visible ${type}`;
+  setTimeout(() => el.classList.remove('visible'), 3000);
+}
+
+function showCreateModal() { document.getElementById('createModal').classList.add('visible'); }
+function hideCreateModal() { document.getElementById('createModal').classList.remove('visible'); }
+
+function getMetric(name) {
+  return metricsData.find(m => m.session === name) || {};
+}
+
+function renderScaling(scalingData) {
+  const el = document.getElementById('scaling');
+  if (!scalingData) { el.innerHTML = '<span style="color:#6e7681">Loading scaling data...</span>'; return; }
+  el.innerHTML = `
+    <div class="scaling-stat"><div class="num">${scalingData.total}</div><div class="lbl">Total</div></div>
+    <div class="scaling-stat"><div class="num" style="color:#3fb950">${scalingData.running}</div><div class="lbl">Running</div></div>
+    <div class="scaling-stat"><div class="num" style="color:#58a6ff">${scalingData.active}</div><div class="lbl">Active</div></div>
+    <div class="scaling-stat"><div class="num" style="color:#d29922">${scalingData.idle.length}</div><div class="lbl">Idle</div></div>
+    <div class="scaling-stat"><div class="num" style="color:#f85149">${scalingData.down.length}</div><div class="lbl">Down</div></div>
+    <div class="scaling-actions">
+      <button class="btn btn-primary" onclick="scaleUp()" ${scalingData.down.length === 0 ? 'disabled' : ''}>Scale Up (${scalingData.down.length})</button>
+      <button class="btn btn-warn" onclick="scaleDown()" ${scalingData.idle.length === 0 ? 'disabled' : ''}>Scale Down (${scalingData.idle.length})</button>
+    </div>
+    ${scalingData.recommendation !== 'Healthy' ? `<div class="scaling-rec">${scalingData.recommendation}</div>` : ''}
+  `;
+}
+
+function renderCards(sessions) {
+  const grid = document.getElementById('grid');
+  if (sessions.length === 0) {
+    grid.innerHTML = '<div style="color:#6e7681;padding:40px;text-align:center">No sessions found</div>';
+    return;
+  }
+  grid.innerHTML = sessions.map(s => {
+    const m = getMetric(s.session);
+    const isRemote = !!s.host;
+    const isRunning = m.status === 'running';
+    const badgeCls = isRemote ? 's-badge-remote' : (isRunning ? 's-badge-running' : 's-badge-stopped');
+    const badgeText = isRemote ? 'remote' : (isRunning ? 'running' : (m.status || 'unknown'));
+
+    return `
+    <div class="s-card">
+      <div class="s-top">
+        <a href="/sessions/${s.session}" class="s-name" style="color:#f0f6fc;text-decoration:none" onclick="event.stopPropagation()">${s.session}</a>
+        <span class="s-badge ${badgeCls}">${badgeText}</span>
+      </div>
+      <div class="s-info">
+        <span class="key">Thread</span><span class="val">${s.thread_id}</span>
+        <span class="key">Path</span><span class="val">${s.path || '-'}</span>
+        ${s.host ? `<span class="key">Host</span><span class="val">${s.host}</span>` : ''}
+        ${s.group ? `<span class="key">Group</span><span class="val">${s.group}</span>` : ''}
+        ${s.type ? `<span class="key">Type</span><span class="val">${s.type}</span>` : ''}
+        ${m.uptime ? `<span class="key">Uptime</span><span class="val">${m.uptime}</span>` : ''}
+        ${m.memory_mb ? `<span class="key">Memory</span><span class="val">${m.memory_mb} MB</span>` : ''}
+        ${m.last_active_ago ? `<span class="key">Active</span><span class="val">${m.last_active_ago}</span>` : ''}
+      </div>
+      ${(s.skills && s.skills.length) ? `<div class="s-skills">${s.skills.map(sk => `<span class="s-skill">${sk}</span>`).join('')}</div>` : ''}
+      <div class="s-actions">
+        ${!isRemote && isRunning ? `<button class="btn" onclick="restartSession('${s.session}')">Restart</button>` : ''}
+        ${!isRemote && !isRunning ? `<button class="btn btn-primary" onclick="restartSession('${s.session}')">Start</button>` : ''}
+        ${!isRemote && isRunning ? `<button class="btn btn-warn" onclick="stopSession('${s.session}')">Stop</button>` : ''}
+        <button class="btn btn-danger" onclick="deleteSession('${s.session}')">Delete</button>
+      </div>
+    </div>`;
+  }).join('');
+  document.getElementById('footer').textContent = `${sessions.length} sessions`;
+}
+
+function filterSessions() {
+  const q = document.getElementById('search').value.toLowerCase();
+  const filtered = allSessions.filter(s =>
+    s.session.toLowerCase().includes(q) ||
+    (s.group || '').toLowerCase().includes(q) ||
+    (s.skills || []).some(sk => sk.toLowerCase().includes(q))
+  );
+  renderCards(filtered);
+}
+
+async function loadAll() {
+  try {
+    const [configRes, metricsRes, scalingRes] = await Promise.all([
+      fetch('/api/sessions-config'),
+      fetch('/api/relay-metrics'),
+      fetch('/api/scaling-status'),
+    ]);
+    allSessions = await configRes.json();
+    metricsData = await metricsRes.json();
+    const scaling = await scalingRes.json();
+    renderScaling(scaling);
+    filterSessions();
+  } catch (e) {
+    toast('Failed to load: ' + e.message, 'error');
+  }
+}
+
+async function createSession() {
+  const data = {
+    session: document.getElementById('m-name').value.trim(),
+    thread_id: parseInt(document.getElementById('m-thread').value) || 0,
+    path: document.getElementById('m-path').value || '/root',
+    host: document.getElementById('m-host').value || null,
+    type: document.getElementById('m-type').value || undefined,
+    group: document.getElementById('m-group').value || '',
+    skills: document.getElementById('m-skills').value.split(',').map(x => x.trim()).filter(Boolean),
+  };
+  if (!data.session) { toast('Session name required', 'error'); return; }
+  try {
+    const r = await fetch('/api/session-create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    const res = await r.json();
+    if (!r.ok) throw new Error(res.error);
+    toast(`Session "${data.session}" created`);
+    hideCreateModal();
+    loadAll();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function restartSession(name) {
+  try {
+    const r = await fetch('/api/session-restart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: name }) });
+    const res = await r.json();
+    if (res.ok) { toast(`${name}: ${res.current}`); setTimeout(loadAll, 3000); }
+    else throw new Error(res.error);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function stopSession(name) {
+  if (!confirm(`Stop "${name}"?`)) return;
+  try {
+    const r = await fetch('/api/session-stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: name }) });
+    const res = await r.json();
+    if (res.ok) { toast(`${name} stopped`); setTimeout(loadAll, 2000); }
+    else throw new Error(res.error);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function deleteSession(name) {
+  if (!confirm(`DELETE session "${name}"? This removes the container and config entry.`)) return;
+  try {
+    const r = await fetch('/api/session-delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: name }) });
+    const res = await r.json();
+    if (res.ok) { toast(`${name} deleted`); loadAll(); }
+    else throw new Error(res.error);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function scaleUp() {
+  if (!confirm('Start all stopped sessions?')) return;
+  try {
+    const r = await fetch('/api/scale-up', { method: 'POST' });
+    const res = await r.json();
+    toast(`Started ${res.count} sessions: ${res.started.join(', ') || 'none'}`);
+    setTimeout(loadAll, 3000);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function scaleDown() {
+  if (!confirm('Stop all idle sessions (4h+ inactive)?')) return;
+  try {
+    const r = await fetch('/api/scale-down', { method: 'POST' });
+    const res = await r.json();
+    toast(`Stopped ${res.count} sessions: ${res.stopped.join(', ') || 'none'}`);
+    setTimeout(loadAll, 3000);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// --- Templates ---
+let templates = [];
+let selectedTemplate = null;
+
+function showTemplateModal() {
+  document.getElementById('templateModal').classList.add('visible');
+  loadTemplates();
+}
+function hideTemplateModal() {
+  document.getElementById('templateModal').classList.remove('visible');
+  selectedTemplate = null;
+}
+
+async function loadTemplates() {
+  try {
+    const r = await fetch('/api/templates');
+    templates = await r.json();
+    renderTemplates();
+  } catch (e) { toast('Failed to load templates', 'error'); }
+}
+
+function renderTemplates() {
+  const grid = document.getElementById('tpl-grid');
+  grid.innerHTML = templates.map(t => `
+    <div class="tpl-card ${selectedTemplate === t.id ? 'selected' : ''}" onclick="selectTemplate('${t.id}')">
+      <div class="tpl-name">${t.name}</div>
+      <div class="tpl-desc">${t.description}</div>
+      <div class="tpl-type">${t.type || 'claude'} · ${t.group || 'default'}</div>
+    </div>
+  `).join('');
+}
+
+function selectTemplate(id) {
+  selectedTemplate = id;
+  const tpl = templates.find(t => t.id === id);
+  if (tpl) {
+    document.getElementById('t-path').placeholder = tpl.path || '/root';
+    document.getElementById('t-host').placeholder = tpl.host || 'local';
+  }
+  renderTemplates();
+}
+
+async function createFromTemplate() {
+  if (!selectedTemplate) { toast('Select a template first', 'error'); return; }
+  const data = {
+    template_id: selectedTemplate,
+    session: document.getElementById('t-name').value.trim(),
+    thread_id: parseInt(document.getElementById('t-thread').value) || 0,
+    path: document.getElementById('t-path').value || undefined,
+    host: document.getElementById('t-host').value || undefined,
+  };
+  if (!data.session) { toast('Session name required', 'error'); return; }
+  if (!data.thread_id) { toast('Thread ID required', 'error'); return; }
+  try {
+    const r = await fetch('/api/session-from-template', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const res = await r.json();
+    if (!r.ok) throw new Error(res.error);
+    toast(`Session "${data.session}" created from template`);
+    hideTemplateModal();
+    loadAll();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+loadAll();
+setInterval(loadAll, 30000);
+</script>
+</body>
+</html>

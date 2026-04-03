@@ -15,13 +15,14 @@ ATTACH_RETRIES="${RELAY_HUB_ATTACH_RETRIES:-5}"
 ATTACH_RETRY_DELAY="${RELAY_HUB_ATTACH_RETRY_DELAY:-1}"
 COMMAND_TIMEOUT="${RELAY_HUB_COMMAND_TIMEOUT:-10}"
 SSH_OPTS=(-o ConnectTimeout=3 -o ServerAliveInterval=5 -o ServerAliveCountMax=1 -o StrictHostKeyChecking=no -o LogLevel=ERROR)
+SSH_BATCH_OPTS=("${SSH_OPTS[@]}" -o BatchMode=yes)
 
 run_local_control() {
     timeout "$COMMAND_TIMEOUT" "$@"
 }
 
 run_remote_control() {
-    timeout "$COMMAND_TIMEOUT" ssh "${SSH_OPTS[@]}" "$REMOTE_HOST" "$1"
+    timeout "$COMMAND_TIMEOUT" ssh "${SSH_BATCH_OPTS[@]}" "$REMOTE_HOST" "$1"
 }
 
 list_local() {

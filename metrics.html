@@ -212,6 +212,9 @@
         <button class="view-btn active" id="view-grid" onclick="setView('grid')">Grid</button>
         <button class="view-btn" id="view-grouped" onclick="setView('grouped')">Grouped</button>
       </div>
+      <a href="/sessions" style="color:#58a6ff;font-size:12px;text-decoration:none">Sessions</a>
+      <a href="/tasks" style="color:#58a6ff;font-size:12px;text-decoration:none">Tasks</a>
+      <a href="/orchestrator" style="color:#58a6ff;font-size:12px;text-decoration:none">Orchestrator</a>
       <a href="/config" style="color:#58a6ff;font-size:12px;text-decoration:none">Config</a>
       <span class="refresh" onclick="load()">Refresh</span>
     </div>
@@ -371,7 +374,7 @@ function renderCard(d) {
   return `
   <div class="card" id="${cardId}" onclick="toggleCard('${cardId}', event)">
     <div class="top">
-      <span class="name">${d.session}</span>
+      <a href="/sessions/${d.session}" class="name" style="color:#f0f6fc;text-decoration:none" onclick="event.stopPropagation()">${d.session}</a>
       <span class="badge ${cls}">${label}</span>
     </div>
     <div class="type">

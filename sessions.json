@@ -5,7 +5,12 @@
     "path": "/root/.openclaw/workspace",
     "host": null,
     "group": "openclaw",
-    "skills": ["typescript", "react", "openclaw", "frontend"]
+    "skills": [
+      "typescript",
+      "react",
+      "openclaw",
+      "frontend"
+    ]
   },
   {
     "thread_id": 213,
@@ -13,7 +18,13 @@
     "path": "/root",
     "host": null,
     "group": "infra",
-    "skills": ["devops", "docker", "git", "general", "admin"]
+    "skills": [
+      "devops",
+      "docker",
+      "git",
+      "general",
+      "admin"
+    ]
   },
   {
     "thread_id": 185,
@@ -21,7 +32,12 @@
     "path": "/root/itops-agents",
     "host": null,
     "group": "infra",
-    "skills": ["monitoring", "agents", "python", "itops"]
+    "skills": [
+      "monitoring",
+      "agents",
+      "python",
+      "itops"
+    ]
   },
   {
     "thread_id": 12,
@@ -29,7 +45,11 @@
     "path": "/root/.openclaw/workspace/edushare",
     "host": "root@100.64.0.12",
     "group": "openclaw",
-    "skills": ["education", "frontend", "react"]
+    "skills": [
+      "education",
+      "frontend",
+      "react"
+    ]
   },
   {
     "thread_id": 14,
@@ -37,7 +57,10 @@
     "path": "/root/teamy",
     "host": "root@100.64.0.12",
     "group": "tools",
-    "skills": ["teams", "collaboration"]
+    "skills": [
+      "teams",
+      "collaboration"
+    ]
   },
   {
     "thread_id": 201,
@@ -45,7 +68,12 @@
     "path": "/root/openclaw-3cx",
     "host": null,
     "group": "voice",
-    "skills": ["voip", "3cx", "telephony", "node"]
+    "skills": [
+      "voip",
+      "3cx",
+      "telephony",
+      "node"
+    ]
   },
   {
     "thread_id": 138,
@@ -53,7 +81,11 @@
     "path": "/root/right-api-com",
     "host": "root@100.64.0.12",
     "group": "web",
-    "skills": ["web", "frontend", "api"]
+    "skills": [
+      "web",
+      "frontend",
+      "api"
+    ]
   },
   {
     "thread_id": 183,
@@ -61,7 +93,14 @@
     "path": "/root/relay",
     "host": null,
     "group": "infra",
-    "skills": ["relay", "mcp", "telegram", "python", "typescript", "docker"]
+    "skills": [
+      "relay",
+      "mcp",
+      "telegram",
+      "python",
+      "typescript",
+      "docker"
+    ]
   },
   {
     "thread_id": 187,
@@ -69,7 +108,11 @@
     "path": "/root/cliproxyapi",
     "host": null,
     "group": "tools",
-    "skills": ["proxy", "api", "node"]
+    "skills": [
+      "proxy",
+      "api",
+      "node"
+    ]
   },
   {
     "thread_id": 189,
@@ -77,7 +120,11 @@
     "path": "/root/.openclaw/extensions/claude-runner",
     "host": null,
     "group": "openclaw",
-    "skills": ["extensions", "runner", "typescript"]
+    "skills": [
+      "extensions",
+      "runner",
+      "typescript"
+    ]
   },
   {
     "thread_id": 200,
@@ -85,7 +132,11 @@
     "path": "/root/.openclaw/workspace/skills/oref-native",
     "host": null,
     "group": "openclaw",
-    "skills": ["oref", "alerts", "native"]
+    "skills": [
+      "oref",
+      "alerts",
+      "native"
+    ]
   },
   {
     "thread_id": 210,
@@ -93,7 +144,12 @@
     "path": "/root/headscale",
     "host": "root@100.64.0.12",
     "group": "infra",
-    "skills": ["networking", "vpn", "headscale", "tailscale"]
+    "skills": [
+      "networking",
+      "vpn",
+      "headscale",
+      "tailscale"
+    ]
   },
   {
     "thread_id": 236,
@@ -101,7 +157,11 @@
     "path": "/root/duplicacy",
     "host": "root@100.64.0.12",
     "group": "infra",
-    "skills": ["backup", "storage", "duplicacy"]
+    "skills": [
+      "backup",
+      "storage",
+      "duplicacy"
+    ]
   },
   {
     "thread_id": 456,
@@ -109,7 +169,11 @@
     "path": "/root/clawdbot",
     "host": null,
     "group": "tools",
-    "skills": ["bot", "telegram", "python"]
+    "skills": [
+      "bot",
+      "telegram",
+      "python"
+    ]
   },
   {
     "thread_id": 495,
@@ -117,7 +181,11 @@
     "path": "/root/.openclaw",
     "host": null,
     "group": "openclaw",
-    "skills": ["openclaw", "core", "typescript"]
+    "skills": [
+      "openclaw",
+      "core",
+      "typescript"
+    ]
   },
   {
     "thread_id": 2595,
@@ -128,7 +196,11 @@
       6831389652
     ],
     "group": "apps",
-    "skills": ["billing", "web", "react"]
+    "skills": [
+      "billing",
+      "web",
+      "react"
+    ]
   },
   {
     "thread_id": 4067,
@@ -136,14 +208,23 @@
     "path": "/root/tala-planner",
     "host": null,
     "group": "apps",
-    "skills": ["planning", "calendar", "web"]
+    "skills": [
+      "planning",
+      "calendar",
+      "web"
+    ]
   },
   {
     "thread_id": 6252,
     "session": "mikrotik",
     "path": "/root/mikrotik",
     "group": "infra",
-    "skills": ["networking", "mikrotik", "router", "firewall"]
+    "skills": [
+      "networking",
+      "mikrotik",
+      "router",
+      "firewall"
+    ]
   },
   {
     "thread_id": 8542,
@@ -152,7 +233,11 @@
     "host": null,
     "type": "codex",
     "group": "infra",
-    "skills": ["general", "codex", "multi-project"]
+    "skills": [
+      "general",
+      "codex",
+      "multi-project"
+    ]
   },
   {
     "thread_id": 8928,
@@ -160,6 +245,10 @@
     "path": "/root/.relay-copilot/workspace",
     "host": null,
     "group": "infra",
-    "skills": ["general", "copilot", "multi-project"]
+    "skills": [
+      "general",
+      "copilot",
+      "multi-project"
+    ]
   }
 ]

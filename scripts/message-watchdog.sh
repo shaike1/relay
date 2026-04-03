@@ -50,10 +50,12 @@ while true; do
   fi
 
   pending=$(python3 -c "
-import json
+import json, time
 last_id = $last_id
+last_nudge_ts = $last_nudge
 count = 0
 seen = set()
+now = time.time()
 with open('$QUEUE') as f:
     for line in f:
         line = line.strip()
@@ -62,7 +64,13 @@ with open('$QUEUE') as f:
         try:
             msg = json.loads(line)
             mid = msg.get('message_id', 0)
-            if mid > last_id and mid not in seen:
+            ts = msg.get('ts', 0)
+            # Regular messages: positive ID > lastId
+            if mid > 0 and mid > last_id and mid not in seen:
+                seen.add(mid)
+                count += 1
+            # Forced/peer messages: check if arrived after last nudge
+            elif mid < 0 and ts > last_nudge_ts and mid not in seen:
                 seen.add(mid)
                 count += 1
         except Exception:

@@ -34,7 +34,7 @@ while true; do
         names[$i]="$s"
         hosts[$i]="remote"
         ((i++))
-    done < <(ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "$REMOTE_HOST" \
+    done < <(ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes "$REMOTE_HOST" \
         "docker ps --format '{{.Names}}' 2>/dev/null | grep '^relay-session-' | sed 's/relay-session-//'" 2>/dev/null | sort)
 
     echo ""

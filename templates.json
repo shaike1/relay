@@ -1,0 +1,57 @@
+[
+  {
+    "id": "claude-project",
+    "name": "Claude Project",
+    "description": "Standard Claude session for a project directory",
+    "type": "claude",
+    "path": "/root",
+    "group": "projects",
+    "skills": ["python", "typescript", "docker", "git"]
+  },
+  {
+    "id": "codex-worker",
+    "name": "Codex Worker",
+    "description": "OpenAI Codex session for code execution tasks",
+    "type": "codex",
+    "path": "/root",
+    "group": "projects",
+    "skills": ["python", "javascript", "testing"]
+  },
+  {
+    "id": "copilot-reviewer",
+    "name": "Copilot Reviewer",
+    "description": "GitHub Copilot session for code review and suggestions",
+    "type": "copilot",
+    "path": "/root",
+    "group": "projects",
+    "skills": ["review", "refactor"]
+  },
+  {
+    "id": "infra-ops",
+    "name": "Infrastructure Ops",
+    "description": "Claude session for infrastructure and DevOps tasks",
+    "type": "claude",
+    "path": "/root",
+    "group": "infra",
+    "skills": ["docker", "linux", "networking", "monitoring", "bash"]
+  },
+  {
+    "id": "openclaw-dev",
+    "name": "OpenClaw Dev",
+    "description": "Claude session for OpenClaw project development",
+    "type": "claude",
+    "path": "/root/openclaw",
+    "group": "openclaw",
+    "skills": ["python", "ai", "voice", "telephony"]
+  },
+  {
+    "id": "remote-session",
+    "name": "Remote Session",
+    "description": "Claude session on a remote host via SSH",
+    "type": "claude",
+    "path": "/root",
+    "host": "root@100.64.0.12",
+    "group": "remote",
+    "skills": []
+  }
+]

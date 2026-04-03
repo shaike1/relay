@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Relay Orchestrator</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh; background: #0d1117; color: #c9d1d9;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 14px;
+    padding: 20px;
+  }
+  .header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #21262d;
+  }
+  .header h1 { font-size: 18px; font-weight: 400; color: #f0f6fc; }
+  .nav { display: flex; gap: 16px; font-size: 12px; }
+  .nav a { color: #58a6ff; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: #161b22; border: 1px solid #21262d; border-radius: 8px;
+    padding: 16px;
+  }
+  .panel h2 {
+    font-size: 13px; font-weight: 500; text-transform: uppercase;
+    letter-spacing: 1px; color: #8b949e; margin-bottom: 12px;
+    padding-bottom: 8px; border-bottom: 1px solid #21262d;
+  }
+
+  .stats-bar {
+    display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap;
+  }
+  .stat {
+    background: #161b22; border: 1px solid #21262d; border-radius: 6px;
+    padding: 12px 16px; min-width: 90px; text-align: center; flex: 1;
+  }
+  .stat .num { font-size: 24px; color: #f0f6fc; }
+  .stat .lbl { font-size: 10px; color: #8b949e; text-transform: uppercase; margin-top: 2px; }
+
+  /* Sessions */
+  .session-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 0; border-bottom: 1px solid #21262d;
+  }
+  .session-row:last-child { border-bottom: none; }
+  .session-name { color: #58a6ff; font-size: 13px; }
+  .session-status {
+    font-size: 11px; padding: 2px 8px; border-radius: 10px;
+    background: #21262d;
+  }
+  .session-status.idle { color: #d29922; }
+  .session-status.ready { color: #3fb950; }
+  .session-status.busy { color: #f85149; }
+  .session-status.offline { color: #484f58; }
+  .session-age { font-size: 10px; color: #6e7681; }
+
+  /* Tasks */
+  .task-card {
+    background: #0d1117; border: 1px solid #21262d; border-radius: 6px;
+    padding: 10px 12px; margin-bottom: 8px;
+  }
+  .task-card:hover { border-color: #30363d; }
+  .task-title { font-size: 13px; color: #f0f6fc; margin-bottom: 4px; }
+  .task-meta { font-size: 10px; color: #6e7681; display: flex; gap: 8px; flex-wrap: wrap; }
+  .task-meta .assigned { color: #58a6ff; }
+  .task-meta .status-pending { color: #d29922; }
+  .task-meta .status-assigned { color: #58a6ff; }
+  .task-meta .status-complete { color: #3fb950; }
+  .task-meta .status-timeout { color: #f85149; }
+
+  /* Log */
+  .log-entry {
+    font-size: 11px; color: #8b949e; padding: 4px 0;
+    border-bottom: 1px solid #161b22;
+  }
+  .log-entry .log-time { color: #6e7681; }
+  .log-entry .log-action { color: #58a6ff; }
+
+  /* New task form */
+  .form-row { margin-bottom: 10px; }
+  .form-row label { display: block; font-size: 11px; color: #8b949e; margin-bottom: 4px; text-transform: uppercase; }
+  .form-row input, .form-row textarea, .form-row select {
+    width: 100%; background: #0d1117; border: 1px solid #21262d; border-radius: 4px;
+    padding: 8px; color: #c9d1d9; font-family: inherit; font-size: 12px;
+  }
+  .form-row textarea { min-height: 60px; resize: vertical; }
+  .form-row input:focus, .form-row textarea:focus, .form-row select:focus {
+    outline: none; border-color: #58a6ff;
+  }
+  .btn {
+    background: #238636; border: 1px solid #2ea043; border-radius: 6px;
+    padding: 8px 16px; color: #fff; font-family: inherit; font-size: 12px;
+    cursor: pointer;
+  }
+  .btn:hover { background: #2ea043; }
+  .btn-sm {
+    padding: 4px 10px; font-size: 11px; background: #21262d;
+    border-color: #30363d; color: #c9d1d9;
+  }
+  .btn-sm:hover { background: #30363d; }
+
+  .empty { color: #484f58; text-align: center; padding: 20px; font-size: 12px; }
+  .footer { font-size: 11px; color: #484f58; text-align: center; margin-top: 20px; }
+  .pulse { animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>Orchestrator</h1>
+    <div class="nav">
+      <span class="pulse" id="loop-status" style="color:#3fb950;font-size:11px">ACTIVE</span>
+      <a href="/metrics">Dashboard</a>
+      <a href="/sessions">Sessions</a>
+      <a href="/tasks">Tasks</a>
+    </div>
+  </div>
+
+  <div class="stats-bar" id="stats"></div>
+
+  <div class="grid">
+    <!-- Live Sessions -->
+    <div class="panel">
+      <h2>Live Sessions <span id="alive-count" style="color:#3fb950"></span></h2>
+      <div id="sessions-list"></div>
+    </div>
+
+    <!-- New Task -->
+    <div class="panel">
+      <h2>Submit Task</h2>
+      <div class="form-row">
+        <label>Title</label>
+        <input id="task-title" placeholder="Task title...">
+      </div>
+      <div class="form-row">
+        <label>Description</label>
+        <textarea id="task-desc" placeholder="What needs to be done..."></textarea>
+      </div>
+      <div class="form-row">
+        <label>Target Session (optional)</label>
+        <select id="task-target"><option value="">Auto-assign</option></select>
+      </div>
+      <div class="form-row">
+        <label>Required Skills (comma-separated)</label>
+        <input id="task-skills" placeholder="e.g. typescript, react">
+      </div>
+      <div class="form-row">
+        <label>Priority</label>
+        <select id="task-priority">
+          <option value="normal">Normal</option>
+          <option value="high">High</option>
+          <option value="low">Low</option>
+        </select>
+      </div>
+      <button class="btn" onclick="submitTask()">Submit Task</button>
+    </div>
+
+    <!-- Task Queue -->
+    <div class="panel" style="grid-column: 1 / -1;">
+      <h2>Task Queue</h2>
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <button class="btn-sm" onclick="filterTasks('all')" id="f-all">All</button>
+        <button class="btn-sm" onclick="filterTasks('pending')" id="f-pending">Pending</button>
+        <button class="btn-sm" onclick="filterTasks('assigned')" id="f-assigned">Assigned</button>
+        <button class="btn-sm" onclick="filterTasks('complete')" id="f-complete">Complete</button>
+      </div>
+      <div id="task-list"></div>
+    </div>
+
+    <!-- Activity Log -->
+    <div class="panel" style="grid-column: 1 / -1;">
+      <h2>Activity Log</h2>
+      <div id="log-list"></div>
+    </div>
+  </div>
+
+  <div class="footer" id="footer"></div>
+
+<script>
+let orchData = null;
+let taskFilter = 'all';
+
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = String(s || '');
+  return d.innerHTML;
+}
+
+function ago(ts) {
+  if (!ts) return '?';
+  const s = Math.round((Date.now() - ts) / 1000);
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.round(s/60) + 'm ago';
+  return Math.round(s/3600) + 'h ago';
+}
+
+function renderStats(data) {
+  const t = data.tasks;
+  const s = data.sessions;
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><div class="num">${s.alive}</div><div class="lbl">Sessions Alive</div></div>
+    <div class="stat"><div class="num" style="color:#d29922">${t.pending}</div><div class="lbl">Pending</div></div>
+    <div class="stat"><div class="num" style="color:#58a6ff">${t.assigned}</div><div class="lbl">Assigned</div></div>
+    <div class="stat"><div class="num" style="color:#3fb950">${t.complete}</div><div class="lbl">Complete</div></div>
+    <div class="stat"><div class="num" style="color:#f85149">${t.timeout}</div><div class="lbl">Timeout</div></div>
+    <div class="stat"><div class="num">${t.total}</div><div class="lbl">Total Tasks</div></div>
+  `;
+}
+
+function renderSessions(data) {
+  const sessions = data.sessions.details || [];
+  document.getElementById('alive-count').textContent = `(${sessions.length})`;
+
+  if (!sessions.length) {
+    document.getElementById('sessions-list').innerHTML = '<div class="empty">No sessions reporting heartbeat yet</div>';
+    return;
+  }
+
+  // Also update target dropdown
+  const sel = document.getElementById('task-target');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Auto-assign</option>';
+  sessions.forEach(s => {
+    sel.innerHTML += `<option value="${escHtml(s.session)}">${escHtml(s.session)}</option>`;
+  });
+  sel.value = current;
+
+  document.getElementById('sessions-list').innerHTML = sessions.map(s => `
+    <div class="session-row">
+      <div>
+        <span class="session-name">${escHtml(s.session)}</span>
+        <span class="session-age">${s.age}s ago</span>
+      </div>
+      <span class="session-status ${s.status || 'offline'}">${escHtml(s.status || 'offline')}</span>
+    </div>
+  `).join('');
+}
+
+function filterTasks(f) {
+  taskFilter = f;
+  document.querySelectorAll('[id^="f-"]').forEach(b => b.style.borderColor = '#30363d');
+  document.getElementById('f-' + f).style.borderColor = '#58a6ff';
+  renderTasks(orchData);
+}
+
+function renderTasks(data) {
+  const tasks = (data.allTasks || []).filter(t => taskFilter === 'all' || t.status === taskFilter);
+
+  if (!tasks.length) {
+    document.getElementById('task-list').innerHTML = '<div class="empty">No tasks</div>';
+    return;
+  }
+
+  // Sort: pending first, then assigned, then complete
+  const order = { pending: 0, assigned: 1, timeout: 2, complete: 3 };
+  tasks.sort((a, b) => (order[a.status] || 9) - (order[b.status] || 9));
+
+  // Check if URL has ?task=xxx to highlight
+  const urlTask = new URLSearchParams(location.search).get('task');
+
+  document.getElementById('task-list').innerHTML = tasks.map(t => {
+    const highlight = (urlTask && t.id === urlTask) ? 'border-color:#58a6ff;background:#161b22;' : '';
+    return `
+    <div class="task-card" id="task-${escHtml(t.id)}" style="${highlight}">
+      <div class="task-title">${escHtml(t.title)} <span style="font-size:10px;color:#6e7681;cursor:pointer" onclick="navigator.clipboard.writeText('${escHtml(t.id)}')">${escHtml(t.id)}</span></div>
+      ${t.description ? `<div style="font-size:11px;color:#8b949e;margin-bottom:4px">${escHtml(t.description.substring(0, 200))}</div>` : ''}
+      <div class="task-meta">
+        <span class="status-${t.status}">${t.status}</span>
+        ${t.from ? `<span style="color:#d29922">from: ${escHtml(t.from)}</span>` : ''}
+        ${t.assigned_to ? `<span class="assigned">→ ${escHtml(t.assigned_to)}</span>` : ''}
+        ${t.source ? `<span style="color:#6e7681">[${t.source}]</span>` : ''}
+        ${t.priority === 'high' ? '<span style="color:#f85149">HIGH</span>' : ''}
+        <span>${ago(t.created_at)}</span>
+        ${t.skills?.length ? `<span>skills: ${t.skills.join(', ')}</span>` : ''}
+        ${t.result ? `<span style="color:#3fb950">result: ${escHtml(String(t.result).substring(0, 100))}</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  // Scroll to highlighted task
+  if (urlTask) {
+    const el = document.getElementById('task-' + urlTask);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+}
+
+function renderLog(data) {
+  const log = (data.recentLog || []).reverse();
+  if (!log.length) {
+    document.getElementById('log-list').innerHTML = '<div class="empty">No activity yet</div>';
+    return;
+  }
+  document.getElementById('log-list').innerHTML = log.map(l => `
+    <div class="log-entry">
+      <span class="log-time">${new Date(l.ts).toLocaleTimeString()}</span>
+      <span class="log-action">${escHtml(l.action)}</span>
+      task:<code>${escHtml(l.task_id)}</code>
+      ${l.session ? `→ <span style="color:#58a6ff">${escHtml(l.session)}</span>` : ''}
+      ${l.score ? `(score: ${l.score})` : ''}
+    </div>
+  `).join('');
+}
+
+async function submitTask() {
+  const title = document.getElementById('task-title').value.trim();
+  const desc = document.getElementById('task-desc').value.trim();
+  const target = document.getElementById('task-target').value;
+  const skills = document.getElementById('task-skills').value.split(',').map(s => s.trim()).filter(Boolean);
+  const priority = document.getElementById('task-priority').value;
+
+  if (!title) return alert('Title required');
+
+  try {
+    const r = await fetch('/api/orchestrator/task', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, description: desc, target: target || null, skills, priority })
+    });
+    const data = await r.json();
+    if (data.ok) {
+      document.getElementById('task-title').value = '';
+      document.getElementById('task-desc').value = '';
+      document.getElementById('task-skills').value = '';
+      loadData();
+    } else {
+      alert(data.error || 'Failed');
+    }
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
+async function loadData() {
+  try {
+    const r = await fetch('/api/orchestrator/status');
+    orchData = await r.json();
+    renderStats(orchData);
+    renderSessions(orchData);
+    renderTasks(orchData);
+    renderLog(orchData);
+
+    const lastRun = orchData.lastRun ? ago(orchData.lastRun) : 'never';
+    document.getElementById('loop-status').textContent = 'ACTIVE · ' + lastRun;
+    document.getElementById('footer').textContent = `Updated: ${new Date().toLocaleTimeString()} · Loop last ran: ${lastRun}`;
+  } catch (e) {
+    document.getElementById('loop-status').textContent = 'ERROR';
+    document.getElementById('loop-status').style.color = '#f85149';
+  }
+}
+
+loadData();
+setInterval(loadData, 10000);
+</script>
+</body>
+</html>

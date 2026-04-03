@@ -12,8 +12,9 @@ services:
       SHELL: "/root/relay/scripts/hub.sh"
       NOMACODE_USER: "relay"
       NOMACODE_PASS: "PKNfwGoX4-8-LHsxhVphvQ"
-    ports:
-      - "7070:3000"
+    # No host port — relay-api proxies to us on container network
+    expose:
+      - "3000"
     volumes:
       # Nomacode source
       - /root/nomacode:/nomacode
