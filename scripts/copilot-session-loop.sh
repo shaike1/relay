@@ -38,20 +38,6 @@ except Exception:
 if [ -n "$THREAD_ID" ]; then
   export TELEGRAM_THREAD_ID="$THREAD_ID"
   export SESSION_NAME="$SESSION"
-
-  # Inject a startup message so Copilot announces itself
-  QUEUE_FILE="/tmp/tg-queue-${THREAD_ID}.jsonl"
-  STARTUP_MSG='You just started. Call typing then send_message to announce you are online, then fetch_messages and respond to all pending messages.'
-  printf '%s\n' "$(python3 -c "
-import json, time
-print(json.dumps({
-    'text': '''$STARTUP_MSG''',
-    'user': 'system',
-    'message_id': -int(time.time() * 1000),
-    'ts': time.time(),
-    'force': True
-}))
-")" >> "$QUEUE_FILE"
 fi
 
 # Build MCP config JSON for the telegram server
