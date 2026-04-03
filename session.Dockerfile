@@ -28,6 +28,31 @@ RUN apt-get update && apt-get install -y \
     && tar -C / -Jxpf /tmp/s6-arch.tar.xz \
     && rm /tmp/s6-noarch.tar.xz /tmp/s6-arch.tar.xz
 
+# GitHub CLI + Copilot CLI (for copilot session type)
+RUN mkdir -p -m 755 /etc/apt/keyrings \
+    && wget -nv -O /tmp/gh-keyring.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+    && cp /tmp/gh-keyring.gpg /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+       > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y gh \
+    && rm -rf /var/lib/apt/lists/* /tmp/gh-keyring.gpg
+
+# Pre-install Copilot CLI binary so gh copilot doesn't prompt interactively
+RUN ARCH=$(uname -m) \
+    && case "$ARCH" in \
+         x86_64)  COPILOT_ARCH=x64 ;; \
+         aarch64) COPILOT_ARCH=arm64 ;; \
+         *)       COPILOT_ARCH=x64 ;; \
+       esac \
+    && mkdir -p /root/.local/share/gh \
+    && wget -nv -O /tmp/copilot.tar.gz \
+       "https://github.com/github/copilot-cli/releases/latest/download/copilot-linux-${COPILOT_ARCH}.tar.gz" \
+    && tar xzf /tmp/copilot.tar.gz -C /root/.local/share/gh/ \
+    && chmod +x /root/.local/share/gh/copilot \
+    && cp /root/.local/share/gh/copilot /usr/local/bin/copilot \
+    && rm -f /tmp/copilot.tar.gz
+
 # Bun
 RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:$PATH"
