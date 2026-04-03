@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Relay Pipeline</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh; background: #0d1117; color: #c9d1d9;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 14px;
+    padding: 20px;
+  }
+  .header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #21262d;
+  }
+  .header h1 { font-size: 18px; font-weight: 400; color: #f0f6fc; }
+  .nav { display: flex; gap: 16px; font-size: 12px; }
+  .nav a { color: #58a6ff; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+
+  .panel {
+    background: #161b22; border: 1px solid #21262d; border-radius: 8px;
+    padding: 16px; margin-bottom: 16px;
+  }
+  .panel h2 {
+    font-size: 13px; font-weight: 600; color: #8b949e; text-transform: uppercase;
+    letter-spacing: 0.5px; margin-bottom: 12px;
+  }
+
+  .stats { display: flex; gap: 20px; margin-bottom: 20px; flex-wrap: wrap; }
+  .stat {
+    background: #161b22; border: 1px solid #21262d; border-radius: 8px;
+    padding: 12px 20px; text-align: center; min-width: 100px;
+  }
+  .stat .num { font-size: 24px; font-weight: 700; }
+  .stat .label { font-size: 11px; color: #8b949e; margin-top: 4px; }
+  .stat.running .num { color: #58a6ff; }
+  .stat.complete .num { color: #3fb950; }
+  .stat.failed .num { color: #f85149; }
+
+  /* Pipeline visualization */
+  .pipeline-card {
+    background: #161b22; border: 1px solid #21262d; border-radius: 8px;
+    padding: 16px; margin-bottom: 12px;
+  }
+  .pipeline-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 12px;
+  }
+  .pipeline-name { font-size: 15px; color: #f0f6fc; font-weight: 600; }
+  .pipeline-status {
+    padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;
+  }
+  .pipeline-status.running { background: #1f3a5f; color: #58a6ff; }
+  .pipeline-status.complete { background: #1a3a2a; color: #3fb950; }
+  .pipeline-status.failed { background: #3d1f20; color: #f85149; }
+  .pipeline-status.cancelled { background: #2d2a1f; color: #d29922; }
+
+  .steps-flow {
+    display: flex; align-items: center; gap: 4px; overflow-x: auto;
+    padding: 8px 0; margin-bottom: 12px;
+  }
+  .step-node {
+    min-width: 120px; padding: 8px 12px; border-radius: 6px;
+    font-size: 11px; text-align: center; flex-shrink: 0;
+    border: 1px solid #21262d; position: relative;
+  }
+  .step-node .step-num { font-size: 10px; color: #8b949e; margin-bottom: 2px; }
+  .step-node .step-task { color: #c9d1d9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+  .step-node.pending { background: #161b22; border-color: #30363d; }
+  .step-node.assigned { background: #1f3a5f; border-color: #58a6ff; }
+  .step-node.complete { background: #1a3a2a; border-color: #3fb950; }
+  .step-node.failed { background: #3d1f20; border-color: #f85149; }
+  .step-node.skipped { background: #161b22; border-color: #30363d; opacity: 0.5; }
+  .step-node.awaiting_approval { background: #2d2a1f; border-color: #d29922; }
+  .step-arrow { color: #30363d; font-size: 16px; flex-shrink: 0; }
+
+  .pipeline-actions { display: flex; gap: 8px; margin-top: 8px; }
+  .pipeline-actions button {
+    padding: 4px 12px; border-radius: 4px; border: 1px solid #30363d;
+    background: #21262d; color: #c9d1d9; cursor: pointer; font-size: 12px;
+    font-family: inherit;
+  }
+  .pipeline-actions button:hover { background: #30363d; }
+  .pipeline-actions button.approve { border-color: #3fb950; color: #3fb950; }
+  .pipeline-actions button.danger { border-color: #f85149; color: #f85149; }
+  .pipeline-actions button.retry { border-color: #d29922; color: #d29922; }
+
+  /* Create form */
+  .form-section { margin-bottom: 16px; }
+  .form-section label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 4px; }
+  .form-section input, .form-section textarea, .form-section select {
+    width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #30363d;
+    background: #0d1117; color: #c9d1d9; font-family: inherit; font-size: 13px;
+  }
+  .form-section textarea { min-height: 80px; resize: vertical; }
+
+  .step-builder {
+    border: 1px solid #21262d; border-radius: 6px; padding: 12px;
+    margin-bottom: 8px; background: #0d1117;
+  }
+  .step-builder .step-row {
+    display: flex; gap: 8px; align-items: center; margin-bottom: 6px;
+  }
+  .step-builder input { flex: 1; }
+  .step-builder select { width: 120px; }
+  .step-builder .remove-step {
+    background: none; border: none; color: #f85149; cursor: pointer; font-size: 16px;
+  }
+
+  button.primary {
+    padding: 8px 16px; border-radius: 6px; border: none;
+    background: #238636; color: #fff; cursor: pointer; font-size: 13px;
+    font-family: inherit; font-weight: 600;
+  }
+  button.primary:hover { background: #2ea043; }
+  button.secondary {
+    padding: 8px 16px; border-radius: 6px; border: 1px solid #30363d;
+    background: #21262d; color: #c9d1d9; cursor: pointer; font-size: 13px;
+    font-family: inherit;
+  }
+
+  .log-entry {
+    font-size: 11px; color: #8b949e; padding: 2px 0;
+    border-bottom: 1px solid #21262d;
+  }
+  .log-entry .ts { color: #6e7681; margin-right: 8px; }
+  .log-entry .action { color: #58a6ff; margin-right: 8px; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 768px) { .grid2 { grid-template-columns: 1fr; } }
+
+  .result-preview {
+    background: #0d1117; border: 1px solid #21262d; border-radius: 4px;
+    padding: 8px; margin-top: 6px; font-size: 11px; color: #8b949e;
+    max-height: 80px; overflow-y: auto; white-space: pre-wrap;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Pipeline</h1>
+  <div class="nav">
+    <a href="/metrics">Metrics</a>
+    <a href="/sessions">Sessions</a>
+    <a href="/tasks">Tasks</a>
+    <a href="/orchestrator">Orchestrator</a>
+    <a href="/pipeline">Pipeline</a>
+    <a href="/">Terminal</a>
+  </div>
+</div>
+
+<div class="stats" id="stats"></div>
+
+<div class="grid2">
+  <div>
+    <div class="panel">
+      <h2>Create Pipeline</h2>
+      <div class="form-section">
+        <label>Pipeline Name</label>
+        <input id="pipeName" placeholder="e.g. deploy-staging" />
+      </div>
+      <div class="form-section">
+        <label>Steps</label>
+        <div id="stepsBuilder"></div>
+        <button class="secondary" onclick="addStep()" style="margin-top:8px">+ Add Step</button>
+      </div>
+      <div style="margin-top:12px; display:flex; gap:8px;">
+        <button class="primary" onclick="createPipeline()">Create Pipeline</button>
+        <label style="display:flex; align-items:center; gap:4px; font-size:12px; color:#8b949e;">
+          <input type="checkbox" id="saveTemplate" /> Save as template
+        </label>
+      </div>
+    </div>
+
+    <div class="panel" id="templatesPanel" style="display:none">
+      <h2>Templates</h2>
+      <div id="templatesList"></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel">
+      <h2>Active Pipelines</h2>
+      <div id="pipelinesList"></div>
+    </div>
+  </div>
+</div>
+
+<div class="panel" style="margin-top:16px">
+  <h2>Pipeline Detail</h2>
+  <div id="pipelineDetail"><span style="color:#6e7681">Select a pipeline to view details</span></div>
+</div>
+
+<script>
+let sessions = [];
+let selectedPipeline = null;
+
+async function api(path, opts) {
+  const r = await fetch(path, { credentials: 'same-origin', ...opts });
+  return r.json();
+}
+
+function addStep(task = '', target = 'auto', approve = false) {
+  const builder = document.getElementById('stepsBuilder');
+  const div = document.createElement('div');
+  div.className = 'step-builder';
+  div.innerHTML = `
+    <div class="step-row">
+      <input placeholder="Task description" value="${task}" class="step-task" />
+      <select class="step-target">
+        <option value="auto" ${target==='auto'?'selected':''}>Auto</option>
+        ${sessions.map(s => `<option value="${s}" ${target===s?'selected':''}>${s}</option>`).join('')}
+      </select>
+      <label style="font-size:11px;color:#d29922;display:flex;align-items:center;gap:2px;">
+        <input type="checkbox" class="step-approve" ${approve?'checked':''}/> Gate
+      </label>
+      <button class="remove-step" onclick="this.closest('.step-builder').remove()">&times;</button>
+    </div>
+  `;
+  builder.appendChild(div);
+}
+
+async function createPipeline() {
+  const name = document.getElementById('pipeName').value.trim();
+  if (!name) return alert('Name required');
+
+  const stepEls = document.querySelectorAll('.step-builder');
+  if (stepEls.length === 0) return alert('Add at least one step');
+
+  const steps = Array.from(stepEls).map(el => ({
+    task: el.querySelector('.step-task').value,
+    to: el.querySelector('.step-target').value,
+    approve: el.querySelector('.step-approve').checked,
+  }));
+
+  const save_template = document.getElementById('saveTemplate').checked;
+  const res = await api('/api/pipeline/create', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, steps, save_template }),
+  });
+
+  if (res.ok) {
+    selectedPipeline = res.pipeline_id;
+    document.getElementById('pipeName').value = '';
+    document.getElementById('stepsBuilder').innerHTML = '';
+    refresh();
+  }
+}
+
+async function approvePipeline(id) {
+  await api('/api/pipeline/approve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pipeline_id: id }),
+  });
+  refresh();
+}
+
+async function cancelPipeline(id) {
+  if (!confirm('Cancel this pipeline?')) return;
+  await api('/api/pipeline/cancel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pipeline_id: id }),
+  });
+  refresh();
+}
+
+async function retryPipeline(id) {
+  await api('/api/pipeline/retry', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pipeline_id: id }),
+  });
+  refresh();
+}
+
+async function fromTemplate(name) {
+  const res = await api('/api/pipeline/from-template', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ template: name }),
+  });
+  if (res.ok) {
+    selectedPipeline = res.pipeline_id;
+    refresh();
+  }
+}
+
+function renderSteps(steps) {
+  return steps.map((s, i) => {
+    const icon = s.status === 'complete' ? '&#10003;' :
+                 s.status === 'failed' ? '&#10007;' :
+                 s.status === 'assigned' ? '&#9654;' :
+                 s.status === 'awaiting_approval' ? '&#9888;' :
+                 s.status === 'skipped' ? '&#8212;' : '&#9679;';
+    const node = `<div class="step-node ${s.status}" title="${s.task}">
+      <div class="step-num">Step ${i+1} ${icon}</div>
+      <div class="step-task">${s.task.substring(0,30)}</div>
+    </div>`;
+    return i > 0 ? `<span class="step-arrow">&#8594;</span>${node}` : node;
+  }).join('');
+}
+
+function timeAgo(ts) {
+  if (!ts) return '';
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.floor(s/60) + 'm ago';
+  return Math.floor(s/3600) + 'h ago';
+}
+
+async function refresh() {
+  // Load sessions
+  try {
+    const sc = await api('/api/sessions-config');
+    sessions = (Array.isArray(sc) ? sc : []).map(s => s.session);
+  } catch {}
+
+  const data = await api('/api/pipeline/status');
+  const pipelines = data.pipelines || [];
+  const templates = data.templates || {};
+
+  // Stats
+  const running = pipelines.filter(p => p.status === 'running').length;
+  const complete = pipelines.filter(p => p.status === 'complete').length;
+  const failed = pipelines.filter(p => p.status === 'failed').length;
+  document.getElementById('stats').innerHTML = `
+    <div class="stat running"><div class="num">${running}</div><div class="label">Running</div></div>
+    <div class="stat complete"><div class="num">${complete}</div><div class="label">Complete</div></div>
+    <div class="stat failed"><div class="num">${failed}</div><div class="label">Failed</div></div>
+    <div class="stat"><div class="num">${pipelines.length}</div><div class="label">Total</div></div>
+  `;
+
+  // Pipelines list
+  const sorted = [...pipelines].sort((a,b) => (b.created_at||0)-(a.created_at||0));
+  document.getElementById('pipelinesList').innerHTML = sorted.length === 0
+    ? '<span style="color:#6e7681">No pipelines yet</span>'
+    : sorted.map(p => `
+    <div class="pipeline-card" onclick="selectPipeline('${p.id}')" style="cursor:pointer; ${selectedPipeline===p.id?'border-color:#58a6ff':''}">
+      <div class="pipeline-header">
+        <span class="pipeline-name">${p.name}</span>
+        <span class="pipeline-status ${p.status}">${p.status}</span>
+      </div>
+      <div class="steps-flow">${renderSteps(p.steps)}</div>
+      <div style="font-size:11px;color:#6e7681">${p.progress} steps &middot; ${timeAgo(p.created_at)}</div>
+      <div class="pipeline-actions">
+        ${p.steps.some(s=>s.status==='awaiting_approval') ? `<button class="approve" onclick="event.stopPropagation();approvePipeline('${p.id}')">Approve</button>` : ''}
+        ${p.status==='running' ? `<button class="danger" onclick="event.stopPropagation();cancelPipeline('${p.id}')">Cancel</button>` : ''}
+        ${p.status==='failed' ? `<button class="retry" onclick="event.stopPropagation();retryPipeline('${p.id}')">Retry</button>` : ''}
+      </div>
+    </div>
+  `).join('');
+
+  // Templates
+  const tplNames = Object.keys(templates);
+  if (tplNames.length > 0) {
+    document.getElementById('templatesPanel').style.display = '';
+    document.getElementById('templatesList').innerHTML = tplNames.map(t =>
+      `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #21262d">
+        <span>${t} (${templates[t].length} steps)</span>
+        <button class="secondary" onclick="fromTemplate('${t}')" style="padding:2px 8px;font-size:11px">Run</button>
+      </div>`
+    ).join('');
+  }
+
+  // Detail
+  if (selectedPipeline) {
+    const p = pipelines.find(x => x.id === selectedPipeline);
+    if (p) renderDetail(p);
+  }
+}
+
+function selectPipeline(id) {
+  selectedPipeline = id;
+  refresh();
+}
+
+function renderDetail(p) {
+  const detail = document.getElementById('pipelineDetail');
+  const stepsHtml = p.steps.map((s, i) => `
+    <div style="padding:8px;margin-bottom:6px;background:#0d1117;border-radius:4px;border-left:3px solid ${
+      s.status==='complete'?'#3fb950':s.status==='failed'?'#f85149':s.status==='assigned'?'#58a6ff':s.status==='awaiting_approval'?'#d29922':'#30363d'
+    }">
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+        <span style="color:#f0f6fc">Step ${i+1}: ${s.task}</span>
+        <span style="font-size:11px;color:#8b949e">${s.status}${s.target&&s.target!=='auto'?' → '+s.target:''}</span>
+      </div>
+      ${s.task_id ? `<div style="font-size:11px;color:#6e7681">Task: ${s.task_id}</div>` : ''}
+      ${s.prev_result ? `<div class="result-preview"><b>Input:</b> ${s.prev_result}</div>` : ''}
+      ${s.result ? `<div class="result-preview"><b>Result:</b> ${s.result}</div>` : ''}
+      ${s.started_at ? `<div style="font-size:10px;color:#6e7681;margin-top:4px">Started: ${new Date(s.started_at).toLocaleTimeString()}${s.completed_at?' | Done: '+new Date(s.completed_at).toLocaleTimeString():''}</div>` : ''}
+    </div>
+  `).join('');
+
+  const logHtml = (p.log || []).slice(-15).reverse().map(l =>
+    `<div class="log-entry"><span class="ts">${new Date(l.ts).toLocaleTimeString()}</span><span class="action">${l.action}</span>${l.detail||''}</div>`
+  ).join('');
+
+  detail.innerHTML = `
+    <div style="margin-bottom:12px">
+      <span class="pipeline-name">${p.name}</span>
+      <span class="pipeline-status ${p.status}" style="margin-left:8px">${p.status}</span>
+      <span style="font-size:11px;color:#6e7681;margin-left:12px">${p.id}</span>
+    </div>
+    ${stepsHtml}
+    <div style="margin-top:12px"><h2 style="font-size:12px;color:#8b949e;margin-bottom:6px">LOG</h2>${logHtml}</div>
+  `;
+}
+
+// Init
+addStep(); addStep();
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>

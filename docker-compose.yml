@@ -57,6 +57,7 @@ services:
       - /root/relay/session-detail.html:/relay/session-detail.html:ro
       - /root/relay/tasks-dashboard.html:/relay/tasks-dashboard.html:ro
       - /root/relay/orchestrator.html:/relay/orchestrator.html:ro
+      - /root/relay/pipeline.html:/relay/pipeline.html:ro
       - /root/relay/scripts:/relay/scripts:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - relay-queue:/tmp

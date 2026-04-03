@@ -722,6 +722,483 @@ app.get('/orchestrator', (req, res) => {
   } catch (e) { res.status(500).send('Orchestrator dashboard not found'); }
 });
 
+// --- NLP Auto-Routing ---
+// Keyword/intent detection for automatic task routing to best session
+
+const ROUTING_RULES = [
+  // Infrastructure & DevOps
+  { keywords: ['docker', 'container', 'deploy', 'kubernetes', 'k8s', 'nginx', 'server', 'infra', 'devops', 'ci/cd', 'pipeline', 'build', 'image'],
+    skills: ['devops', 'docker', 'infra'], weight: 5 },
+  // Python
+  { keywords: ['python', 'pip', 'flask', 'django', 'fastapi', 'pandas', 'numpy', 'pytest', 'venv'],
+    skills: ['python'], weight: 5 },
+  // JavaScript/TypeScript
+  { keywords: ['javascript', 'typescript', 'node', 'npm', 'react', 'vue', 'next', 'bun', 'express', 'jest'],
+    skills: ['javascript', 'typescript', 'frontend'], weight: 5 },
+  // Git
+  { keywords: ['git', 'commit', 'branch', 'merge', 'rebase', 'pr', 'pull request', 'github'],
+    skills: ['git'], weight: 4 },
+  // Database
+  { keywords: ['database', 'sql', 'postgres', 'mysql', 'mongo', 'redis', 'migration', 'schema', 'query'],
+    skills: ['database', 'sql'], weight: 5 },
+  // Testing
+  { keywords: ['test', 'testing', 'unit test', 'integration test', 'e2e', 'coverage', 'qa'],
+    skills: ['testing', 'qa'], weight: 4 },
+  // Security
+  { keywords: ['security', 'auth', 'authentication', 'ssl', 'tls', 'certificate', 'vulnerability', 'firewall'],
+    skills: ['security'], weight: 5 },
+  // Documentation
+  { keywords: ['docs', 'documentation', 'readme', 'api docs', 'swagger', 'openapi'],
+    skills: ['docs', 'writing'], weight: 3 },
+  // General admin
+  { keywords: ['admin', 'config', 'settings', 'monitoring', 'logs', 'debug', 'troubleshoot'],
+    skills: ['admin', 'general'], weight: 3 },
+];
+
+function nlpDetectSkills(text) {
+  const lower = text.toLowerCase();
+  const detected = {};
+
+  for (const rule of ROUTING_RULES) {
+    for (const kw of rule.keywords) {
+      if (lower.includes(kw)) {
+        for (const skill of rule.skills) {
+          detected[skill] = (detected[skill] || 0) + rule.weight;
+        }
+        break; // Only match first keyword per rule
+      }
+    }
+  }
+
+  // Sort by score
+  return Object.entries(detected)
+    .sort((a, b) => b[1] - a[1])
+    .map(([skill, score]) => ({ skill, score }));
+}
+
+function nlpRouteTask(text) {
+  const detectedSkills = nlpDetectSkills(text);
+  if (detectedSkills.length === 0) return { skills: [], reason: 'No specific skills detected' };
+
+  const topSkills = detectedSkills.slice(0, 3).map(d => d.skill);
+
+  // Score sessions
+  const heartbeats = getHeartbeats();
+  const skillsMap = getSessionSkills();
+  const candidates = [];
+
+  for (const [session, hb] of Object.entries(heartbeats)) {
+    const age = Date.now() - (hb.ts || 0);
+    if (age > 5 * 60 * 1000) continue; // stale heartbeat
+
+    const sessionSkills = skillsMap[session] || [];
+    let score = 0;
+
+    // Skill match
+    for (const ds of detectedSkills) {
+      if (sessionSkills.includes(ds.skill)) score += ds.score;
+    }
+
+    // Availability bonus
+    if (hb.status === 'idle') score += 3;
+    if (hb.status === 'ready') score += 2;
+    if (hb.status === 'busy') score -= 5;
+
+    if (score > 0) {
+      candidates.push({ session, score, status: hb.status, matchedSkills: sessionSkills.filter(s => topSkills.includes(s)) });
+    }
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+
+  return {
+    skills: topSkills,
+    detectedSkills,
+    candidates,
+    best: candidates[0] || null,
+    reason: candidates.length > 0
+      ? `Best match: ${candidates[0].session} (score: ${candidates[0].score}, skills: ${candidates[0].matchedSkills.join(', ')})`
+      : 'No available sessions match detected skills',
+  };
+}
+
+// NLP Route analysis endpoint (dry-run — shows routing without dispatching)
+app.post('/api/nlp/analyze', (req, res) => {
+  const { text } = req.body;
+  if (!text) return res.status(400).json({ error: 'text required' });
+  res.json(nlpRouteTask(text));
+});
+
+// NLP Auto-route endpoint — analyzes and dispatches
+app.post('/api/nlp/route', (req, res) => {
+  const { text, title } = req.body;
+  if (!text) return res.status(400).json({ error: 'text required' });
+
+  const routing = nlpRouteTask(text);
+  if (!routing.best) {
+    return res.json({ ok: false, routing, error: 'No matching session found' });
+  }
+
+  // Create orchestrator task with routing
+  const state = loadOrchState();
+  const task = {
+    id: `nlp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    title: title || text.substring(0, 60),
+    description: text,
+    skills: routing.skills,
+    target: routing.best.session,
+    priority: 'normal',
+    status: 'pending',
+    created_at: Date.now(),
+    routed_by: 'nlp',
+    routing_score: routing.best.score,
+    routing_reason: routing.reason,
+  };
+  state.tasks.push(task);
+  saveOrchState(state);
+  orchestratorTick();
+
+  const updated = loadOrchState();
+  const t = updated.tasks.find(t => t.id === task.id);
+  res.json({ ok: true, routing, task: t });
+});
+
+// NLP routing rules (for dashboard display)
+app.get('/api/nlp/rules', (req, res) => {
+  res.json({ rules: ROUTING_RULES });
+});
+
+// --- Pipeline System ---
+const PIPELINE_STATE_FILE = '/tmp/pipeline-state.json';
+
+function loadPipelineState() {
+  try {
+    return JSON.parse(fs.readFileSync(PIPELINE_STATE_FILE, 'utf8'));
+  } catch {
+    return { pipelines: {}, templates: {} };
+  }
+}
+
+function savePipelineState(state) {
+  fs.writeFileSync(PIPELINE_STATE_FILE, JSON.stringify(state, null, 2));
+}
+
+// Create pipeline from definition
+app.post('/api/pipeline/create', (req, res) => {
+  const { name, steps, save_template } = req.body;
+  if (!name || !steps || !Array.isArray(steps) || steps.length === 0) {
+    return res.status(400).json({ error: 'name and steps[] required' });
+  }
+
+  const state = loadPipelineState();
+  const pipelineId = `pipe-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+  const pipeline = {
+    id: pipelineId,
+    name,
+    status: 'running',
+    created_at: Date.now(),
+    current_step: 0,
+    steps: steps.map((s, i) => ({
+      index: i,
+      task: s.task || `Step ${i + 1}`,
+      target: s.to || s.target || 'auto',
+      skills: s.skills || [],
+      approve: s.approve || false,
+      status: 'pending',
+      task_id: null,
+      result: null,
+      prev_result: null,
+      started_at: null,
+      completed_at: null,
+    })),
+    log: [{ ts: Date.now(), action: 'created', detail: `Pipeline '${name}' with ${steps.length} steps` }],
+  };
+
+  state.pipelines[pipelineId] = pipeline;
+
+  // Save as template if requested
+  if (save_template) {
+    state.templates[name] = steps;
+  }
+
+  savePipelineState(state);
+
+  // Trigger first step
+  pipelineAdvance(pipelineId);
+
+  res.json({ ok: true, pipeline_id: pipelineId, pipeline: loadPipelineState().pipelines[pipelineId] });
+});
+
+// Advance a pipeline — dispatch next pending step
+function pipelineAdvance(pipelineId) {
+  const state = loadPipelineState();
+  const pipeline = state.pipelines[pipelineId];
+  if (!pipeline || pipeline.status !== 'running') return;
+
+  // Find next pending step
+  const step = pipeline.steps.find(s => s.status === 'pending');
+  if (!step) {
+    // All steps done — check if all complete
+    const allDone = pipeline.steps.every(s => s.status === 'complete' || s.status === 'skipped');
+    if (allDone) {
+      pipeline.status = 'complete';
+      pipeline.completed_at = Date.now();
+      pipeline.log.push({ ts: Date.now(), action: 'complete', detail: 'All steps completed' });
+    }
+    savePipelineState(state);
+    return;
+  }
+
+  // If step requires approval, set to 'awaiting_approval'
+  if (step.approve && step.status === 'pending') {
+    step.status = 'awaiting_approval';
+    pipeline.log.push({ ts: Date.now(), action: 'awaiting_approval', step: step.index, detail: step.task });
+    savePipelineState(state);
+    return;
+  }
+
+  // Get previous step result for forwarding
+  const prevIdx = step.index - 1;
+  if (prevIdx >= 0 && pipeline.steps[prevIdx].result) {
+    step.prev_result = pipeline.steps[prevIdx].result;
+  }
+
+  // Build task prompt with context
+  let prompt = step.task;
+  if (step.prev_result) {
+    prompt = `[Pipeline: ${pipeline.name} | Step ${step.index + 1}/${pipeline.steps.length}]\n\n${step.task}\n\n[Previous step result]:\n${step.prev_result}`;
+  } else {
+    prompt = `[Pipeline: ${pipeline.name} | Step ${step.index + 1}/${pipeline.steps.length}]\n\n${step.task}`;
+  }
+
+  // Submit as orchestrator task
+  const orchState = loadOrchState();
+  const taskId = `pipe-task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const orchTask = {
+    id: taskId,
+    title: `[${pipeline.name}] ${step.task.substring(0, 60)}`,
+    description: prompt,
+    skills: step.skills,
+    target: step.target === 'auto' ? null : step.target,
+    priority: 'high',
+    status: 'pending',
+    created_at: Date.now(),
+    pipeline_id: pipelineId,
+    pipeline_step: step.index,
+  };
+  orchState.tasks.push(orchTask);
+  saveOrchState(orchState);
+
+  // Update step
+  step.status = 'assigned';
+  step.task_id = taskId;
+  step.started_at = Date.now();
+  pipeline.current_step = step.index;
+  pipeline.log.push({ ts: Date.now(), action: 'dispatch', step: step.index, task_id: taskId, detail: step.task });
+  savePipelineState(state);
+
+  // Trigger orchestrator to assign it
+  orchestratorTick();
+}
+
+// Pipeline tick — check for completed steps and advance
+function pipelineTick() {
+  const state = loadPipelineState();
+  const orchState = loadOrchState();
+  let changed = false;
+
+  for (const [pipelineId, pipeline] of Object.entries(state.pipelines)) {
+    if (pipeline.status !== 'running') continue;
+
+    for (const step of pipeline.steps) {
+      if (step.status !== 'assigned' || !step.task_id) continue;
+
+      // Check if the orchestrator task completed
+      const orchTask = orchState.tasks.find(t => t.id === step.task_id);
+      if (!orchTask) continue;
+
+      if (orchTask.status === 'complete') {
+        step.status = 'complete';
+        step.result = orchTask.result || '';
+        step.completed_at = Date.now();
+        pipeline.log.push({ ts: Date.now(), action: 'step_complete', step: step.index, detail: step.task });
+        changed = true;
+      } else if (orchTask.status === 'timeout') {
+        step.status = 'failed';
+        step.result = 'Timeout';
+        pipeline.status = 'failed';
+        pipeline.log.push({ ts: Date.now(), action: 'step_failed', step: step.index, detail: 'Timeout' });
+        changed = true;
+      }
+    }
+
+    // Check MCP agent-tasks for pipeline task completions
+    try {
+      const agentTasks = JSON.parse(fs.readFileSync('/tmp/agent-tasks.json', 'utf8'));
+      for (const step of pipeline.steps) {
+        if (step.status !== 'assigned' || !step.task_id) continue;
+        const agentTask = agentTasks[step.task_id];
+        if (agentTask && agentTask.status === 'complete') {
+          step.status = 'complete';
+          step.result = agentTask.result || agentTask.output || '';
+          step.completed_at = Date.now();
+          pipeline.log.push({ ts: Date.now(), action: 'step_complete', step: step.index, detail: step.task });
+          changed = true;
+        }
+      }
+    } catch {}
+
+    // Advance to next step if current completed
+    if (changed && pipeline.status === 'running') {
+      savePipelineState(state);
+      pipelineAdvance(pipelineId);
+      return; // Re-read state after advance
+    }
+  }
+
+  if (changed) savePipelineState(state);
+}
+
+// Run pipeline tick alongside orchestrator tick
+setInterval(pipelineTick, 15000);
+
+// Approve a pipeline step
+app.post('/api/pipeline/approve', (req, res) => {
+  const { pipeline_id, step } = req.body;
+  if (!pipeline_id) return res.status(400).json({ error: 'pipeline_id required' });
+
+  const state = loadPipelineState();
+  const pipeline = state.pipelines[pipeline_id];
+  if (!pipeline) return res.status(404).json({ error: 'Pipeline not found' });
+
+  const stepIdx = step !== undefined ? step : pipeline.steps.findIndex(s => s.status === 'awaiting_approval');
+  if (stepIdx < 0 || stepIdx >= pipeline.steps.length) return res.status(400).json({ error: 'No step awaiting approval' });
+
+  const s = pipeline.steps[stepIdx];
+  if (s.status !== 'awaiting_approval') return res.status(400).json({ error: `Step ${stepIdx} is ${s.status}, not awaiting approval` });
+
+  s.status = 'pending';
+  pipeline.log.push({ ts: Date.now(), action: 'approved', step: stepIdx, detail: s.task });
+  savePipelineState(state);
+
+  // Advance
+  pipelineAdvance(pipeline_id);
+  res.json({ ok: true, pipeline: loadPipelineState().pipelines[pipeline_id] });
+});
+
+// Cancel/abort a pipeline
+app.post('/api/pipeline/cancel', (req, res) => {
+  const { pipeline_id } = req.body;
+  if (!pipeline_id) return res.status(400).json({ error: 'pipeline_id required' });
+
+  const state = loadPipelineState();
+  const pipeline = state.pipelines[pipeline_id];
+  if (!pipeline) return res.status(404).json({ error: 'Pipeline not found' });
+
+  pipeline.status = 'cancelled';
+  pipeline.log.push({ ts: Date.now(), action: 'cancelled', detail: 'Pipeline cancelled by user' });
+  // Cancel any assigned steps
+  for (const s of pipeline.steps) {
+    if (s.status === 'assigned' || s.status === 'pending' || s.status === 'awaiting_approval') {
+      s.status = 'skipped';
+    }
+  }
+  savePipelineState(state);
+  res.json({ ok: true, pipeline });
+});
+
+// Retry a failed pipeline from the failed step
+app.post('/api/pipeline/retry', (req, res) => {
+  const { pipeline_id } = req.body;
+  if (!pipeline_id) return res.status(400).json({ error: 'pipeline_id required' });
+
+  const state = loadPipelineState();
+  const pipeline = state.pipelines[pipeline_id];
+  if (!pipeline) return res.status(404).json({ error: 'Pipeline not found' });
+  if (pipeline.status !== 'failed') return res.status(400).json({ error: 'Pipeline is not failed' });
+
+  // Reset failed step to pending
+  const failedStep = pipeline.steps.find(s => s.status === 'failed');
+  if (failedStep) {
+    failedStep.status = 'pending';
+    failedStep.task_id = null;
+    failedStep.result = null;
+    failedStep.started_at = null;
+  }
+  pipeline.status = 'running';
+  pipeline.log.push({ ts: Date.now(), action: 'retry', detail: `Retrying from step ${failedStep?.index}` });
+  savePipelineState(state);
+
+  pipelineAdvance(pipeline_id);
+  res.json({ ok: true, pipeline: loadPipelineState().pipelines[pipeline_id] });
+});
+
+// List pipelines + templates
+app.get('/api/pipeline/status', (req, res) => {
+  const state = loadPipelineState();
+  const pipelines = Object.values(state.pipelines).map(p => ({
+    ...p,
+    progress: `${p.steps.filter(s => s.status === 'complete').length}/${p.steps.length}`,
+  }));
+  res.json({ pipelines, templates: state.templates });
+});
+
+// Get single pipeline
+app.get('/api/pipeline/:id', (req, res) => {
+  const state = loadPipelineState();
+  const pipeline = state.pipelines[req.params.id];
+  if (!pipeline) return res.status(404).json({ error: 'Pipeline not found' });
+  res.json(pipeline);
+});
+
+// Create pipeline from saved template
+app.post('/api/pipeline/from-template', (req, res) => {
+  const { template, name } = req.body;
+  if (!template) return res.status(400).json({ error: 'template name required' });
+
+  const state = loadPipelineState();
+  const steps = state.templates[template];
+  if (!steps) return res.status(404).json({ error: `Template '${template}' not found` });
+
+  // Forward to create endpoint logic
+  req.body = { name: name || template, steps };
+  // Re-emit
+  const pipelineId = `pipe-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const pipeline = {
+    id: pipelineId,
+    name: name || template,
+    status: 'running',
+    created_at: Date.now(),
+    current_step: 0,
+    steps: steps.map((s, i) => ({
+      index: i,
+      task: s.task || `Step ${i + 1}`,
+      target: s.to || s.target || 'auto',
+      skills: s.skills || [],
+      approve: s.approve || false,
+      status: 'pending',
+      task_id: null,
+      result: null,
+      prev_result: null,
+      started_at: null,
+      completed_at: null,
+    })),
+    log: [{ ts: Date.now(), action: 'created', detail: `Pipeline from template '${template}'` }],
+  };
+  state.pipelines[pipelineId] = pipeline;
+  savePipelineState(state);
+  pipelineAdvance(pipelineId);
+  res.json({ ok: true, pipeline_id: pipelineId, pipeline: loadPipelineState().pipelines[pipelineId] });
+});
+
+// Pipeline dashboard
+app.get('/pipeline', (req, res) => {
+  try {
+    res.type('html').send(fs.readFileSync('/relay/pipeline.html', 'utf8'));
+  } catch (e) { res.status(500).send('Pipeline dashboard not found'); }
+});
+
 // --- Health check ---
 app.get('/health', (req, res) => {
   res.json({ ok: true, uptime: process.uptime() });
