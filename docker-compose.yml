@@ -35,6 +35,28 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  relay-api:
+    build: ./relay-api
+    container_name: relay-api
+    restart: always
+    ports:
+      - "9100:9100"
+    environment:
+      PORT: "9100"
+      SESSIONS_FILE: "/relay/sessions.json"
+    volumes:
+      - /root/relay/sessions.json:/relay/sessions.json
+      - /root/relay/metrics.html:/relay/metrics.html:ro
+      - /root/relay/config.html:/relay/config.html:ro
+      - /root/relay/scripts:/relay/scripts:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - relay-queue:/tmp
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
 volumes:
   relay-queue:
     external: true
