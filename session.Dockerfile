@@ -82,8 +82,11 @@ RUN chmod +x /etc/s6-overlay/s6-rc.d/claude-session/run \
     && chmod +x /etc/s6-overlay/s6-rc.d/message-watchdog/run \
     && chmod +x /etc/s6-overlay/s6-rc.d/claude-update/up \
     && chmod +x /relay/scripts/claude-session-loop.sh \
+    && chmod +x /relay/scripts/copilot-session-loop.sh \
     && chmod +x /relay/scripts/mcp-server-wrapper.sh \
-    && chmod +x /relay/scripts/message-watchdog.sh
+    && chmod +x /relay/scripts/message-watchdog.sh \
+    && chmod +x /relay/scripts/tg-send.sh \
+    && ln -sf /relay/scripts/tg-send.sh /usr/local/bin/tg-send
 
 # s6-overlay is the init
 ENTRYPOINT ["/init"]
