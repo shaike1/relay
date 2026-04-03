@@ -116,6 +116,132 @@ app.post('/api/login', (req, res) => {
   res.status(401).json({ ok: false, error: 'Invalid credentials' });
 });
 
+// --- Telegram Webhook (no auth — secured by secret token in URL) ---
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || require('crypto').randomBytes(16).toString('hex');
+const TG_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+const TG_CHAT_ID = process.env.GROUP_CHAT_ID || '';
+const QUEUE_DIR = '/tmp';
+const BOT_WEBHOOK_URL = process.env.BOT_WEBHOOK_URL || 'http://relay:18793/tg';
+
+// Webhook endpoint — Telegram POSTs updates here, we forward to bot.py + write to queue
+app.post(`/webhook/${WEBHOOK_SECRET}`, (req, res) => {
+  res.json({ ok: true }); // respond to Telegram immediately
+
+  const update = req.body;
+  if (!update) return;
+
+  // Forward the full update to bot.py's webhook endpoint
+  const http = require('http');
+  const payload = JSON.stringify(update);
+  const botUrl = new URL(BOT_WEBHOOK_URL);
+  const fwdReq = http.request(botUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
+  }, (fwdRes) => {
+    let data = '';
+    fwdRes.on('data', c => data += c);
+    fwdRes.on('end', () => {
+      if (fwdRes.statusCode >= 400) console.error(`[webhook] bot.py returned ${fwdRes.statusCode}: ${data}`);
+    });
+  });
+  fwdReq.on('error', (err) => {
+    console.error(`[webhook] bot.py forward error: ${err.message} — falling back to direct queue write`);
+    // Fallback: write directly to queue if bot.py is down
+    directQueueWrite(update);
+  });
+  fwdReq.write(payload);
+  fwdReq.end();
+
+  // Also write to queue as backup (sessions can read even if bot.py is down)
+  directQueueWrite(update);
+});
+
+function directQueueWrite(update) {
+  const msg = update && update.message;
+  if (!msg || !msg.text) return;
+  if (String(msg.chat.id) !== String(TG_CHAT_ID)) return;
+  if (msg.from && msg.from.is_bot) return;
+  const threadId = msg.message_thread_id;
+  if (!threadId) return;
+
+  const queueFile = path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`);
+  const entry = {
+    message_id: msg.message_id,
+    user: (msg.from.first_name || msg.from.username || 'unknown'),
+    user_id: msg.from.id,
+    text: msg.text,
+    ts: Math.floor(Date.now() / 1000),
+    via: 'webhook'
+  };
+  try {
+    fs.appendFileSync(queueFile, JSON.stringify(entry) + '\n');
+    console.log(`[webhook] queue: ${msg.from.first_name}: ${msg.text.substring(0, 60)}`);
+  } catch (err) {
+    console.error(`[webhook] Queue write error:`, err.message);
+  }
+}
+
+// Webhook management endpoints (authed)
+app.get('/api/webhook/status', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  const https = require('https');
+  if (!TG_BOT_TOKEN) return res.json({ error: 'No TELEGRAM_BOT_TOKEN configured' });
+  https.get(`https://api.telegram.org/bot${TG_BOT_TOKEN}/getWebhookInfo`, (resp) => {
+    let data = '';
+    resp.on('data', c => data += c);
+    resp.on('end', () => {
+      try { res.json(JSON.parse(data)); } catch { res.json({ raw: data }); }
+    });
+  }).on('error', e => res.json({ error: e.message }));
+});
+
+app.post('/api/webhook/set', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'url required' });
+  if (!TG_BOT_TOKEN) return res.json({ error: 'No TELEGRAM_BOT_TOKEN configured' });
+  const webhookUrl = `${url}/webhook/${WEBHOOK_SECRET}`;
+  const https = require('https');
+  const payload = JSON.stringify({
+    url: webhookUrl,
+    allowed_updates: ['message'],
+    drop_pending_updates: false
+  });
+  const apiReq = https.request(`https://api.telegram.org/bot${TG_BOT_TOKEN}/setWebhook`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
+  }, (resp) => {
+    let data = '';
+    resp.on('data', c => data += c);
+    resp.on('end', () => {
+      try { res.json({ ...JSON.parse(data), webhook_path: `/webhook/${WEBHOOK_SECRET}` }); }
+      catch { res.json({ raw: data }); }
+    });
+  });
+  apiReq.on('error', e => res.json({ error: e.message }));
+  apiReq.write(payload);
+  apiReq.end();
+});
+
+app.post('/api/webhook/remove', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  if (!TG_BOT_TOKEN) return res.json({ error: 'No TELEGRAM_BOT_TOKEN configured' });
+  const https = require('https');
+  https.get(`https://api.telegram.org/bot${TG_BOT_TOKEN}/deleteWebhook`, (resp) => {
+    let data = '';
+    resp.on('data', c => data += c);
+    resp.on('end', () => {
+      try { res.json(JSON.parse(data)); } catch { res.json({ raw: data }); }
+    });
+  }).on('error', e => res.json({ error: e.message }));
+});
+
+// Log webhook secret on startup for setup
+if (TG_BOT_TOKEN) {
+  console.log(`[webhook] Secret path: /webhook/${WEBHOOK_SECRET}`);
+  console.log(`[webhook] Set via: POST /api/webhook/set { "url": "https://your-domain.com" }`);
+}
+
 // Apply auth to all routes below
 app.use(authMiddleware);
 

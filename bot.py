@@ -2349,15 +2349,27 @@ def main():
     )
     if WEBHOOK_URL:
         webhook_full = f"{WEBHOOK_URL}/tg"
-        logger.info(f"Starting in webhook mode: {webhook_full} → localhost:{WEBHOOK_PORT}")
-        kwargs = dict(
-            webhook_url          = webhook_full,
-            listen               = "127.0.0.1",
-            port                 = WEBHOOK_PORT,
-            url_path             = "/tg",
-            drop_pending_updates = True,
-        )
-        if WEBHOOK_CERT:
+        listen_only = os.environ.get("WEBHOOK_LISTEN_ONLY", "")
+        if listen_only:
+            # Listen-only mode: relay-api handles Telegram webhook registration,
+            # bot.py just listens for forwarded updates on 0.0.0.0
+            logger.info(f"Starting in webhook LISTEN-ONLY mode on 0.0.0.0:{WEBHOOK_PORT}/tg")
+            kwargs = dict(
+                listen               = "0.0.0.0",
+                port                 = WEBHOOK_PORT,
+                url_path             = "/tg",
+                drop_pending_updates = True,
+            )
+        else:
+            logger.info(f"Starting in webhook mode: {webhook_full} → localhost:{WEBHOOK_PORT}")
+            kwargs = dict(
+                webhook_url          = webhook_full,
+                listen               = "127.0.0.1",
+                port                 = WEBHOOK_PORT,
+                url_path             = "/tg",
+                drop_pending_updates = True,
+            )
+        if WEBHOOK_CERT and not listen_only:
             kwargs["cert"] = WEBHOOK_CERT   # uploaded to Telegram for self-signed cert verification
         app.run_webhook(**kwargs)
     else:

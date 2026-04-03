@@ -47,6 +47,9 @@ services:
       SESSIONS_FILE: "/relay/sessions.json"
       AUTH_USER: "relay"
       AUTH_PASS: "${RELAY_API_PASS:-PKNfwGoX4-8-LHsxhVphvQ}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
+      GROUP_CHAT_ID: "${GROUP_CHAT_ID}"
+      WEBHOOK_SECRET: "${WEBHOOK_SECRET:-codex-relay-wh-2026}"
     volumes:
       - /root/relay/relay-api/server.js:/relay-api/server.js:ro
       - /root/relay/sessions.json:/relay/sessions.json
