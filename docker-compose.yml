@@ -50,10 +50,13 @@ services:
     volumes:
       - /root/relay/relay-api/server.js:/relay-api/server.js:ro
       - /root/relay/sessions.json:/relay/sessions.json
+      - /root/relay/templates.json:/relay/templates.json
       - /root/relay/metrics.html:/relay/metrics.html:ro
       - /root/relay/config.html:/relay/config.html:ro
       - /root/relay/sessions-ui.html:/relay/sessions-ui.html:ro
-      - /root/relay/templates.json:/relay/templates.json
+      - /root/relay/session-detail.html:/relay/session-detail.html:ro
+      - /root/relay/tasks-dashboard.html:/relay/tasks-dashboard.html:ro
+      - /root/relay/orchestrator.html:/relay/orchestrator.html:ro
       - /root/relay/scripts:/relay/scripts:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - relay-queue:/tmp
