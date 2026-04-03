@@ -16,8 +16,47 @@
     margin-bottom: 24px; padding-bottom: 12px; border-bottom: 1px solid #21262d;
   }
   .header h1 { font-size: 18px; font-weight: 400; color: #f0f6fc; }
+  .header-controls { display: flex; gap: 16px; align-items: center; }
   .header .refresh { color: #58a6ff; cursor: pointer; font-size: 12px; }
   .header .refresh:hover { text-decoration: underline; }
+
+  /* Sort controls */
+  .sort-bar {
+    display: flex; gap: 8px; align-items: center; margin-bottom: 16px;
+    font-size: 12px; color: #8b949e;
+  }
+  .sort-bar span { color: #6e7681; }
+  .sort-btn {
+    background: #161b22; border: 1px solid #21262d; border-radius: 4px;
+    padding: 4px 10px; color: #8b949e; cursor: pointer; font-size: 11px;
+    font-family: inherit; transition: all 0.2s;
+  }
+  .sort-btn:hover { border-color: #30363d; color: #c9d1d9; }
+  .sort-btn.active { border-color: #58a6ff; color: #58a6ff; }
+
+  /* Health score */
+  .health-bar {
+    background: #161b22; border: 1px solid #21262d; border-radius: 8px;
+    padding: 16px 20px; margin-bottom: 20px;
+    display: flex; align-items: center; gap: 20px;
+  }
+  .health-score {
+    font-size: 36px; font-weight: 600; min-width: 60px; text-align: center;
+  }
+  .health-details { flex: 1; }
+  .health-label { font-size: 11px; color: #8b949e; text-transform: uppercase; margin-bottom: 4px; }
+  .health-meter {
+    height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; margin-bottom: 8px;
+  }
+  .health-meter-fill { height: 100%; border-radius: 3px; transition: width 0.5s; }
+  .health-breakdown {
+    display: flex; gap: 16px; font-size: 11px; color: #8b949e;
+  }
+  .health-breakdown .dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px;
+    vertical-align: middle;
+  }
+
   .stats {
     display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap;
   }
@@ -33,9 +72,10 @@
   }
   .card {
     background: #161b22; border: 1px solid #21262d; border-radius: 8px;
-    padding: 16px; transition: border-color 0.2s;
+    padding: 16px; transition: border-color 0.2s; cursor: pointer;
   }
   .card:hover { border-color: #30363d; }
+  .card.expanded { border-color: #58a6ff; }
   .card .top { display: flex; justify-content: space-between; align-items: center; }
   .card .name { font-size: 15px; color: #f0f6fc; font-weight: 500; }
   .card .badge {
@@ -52,6 +92,32 @@
   .card .type .tag {
     background: #21262d; padding: 1px 6px; border-radius: 4px; color: #58a6ff;
   }
+
+  /* Activity bar */
+  .activity-bar {
+    margin-top: 10px; display: flex; align-items: center; gap: 8px;
+  }
+  .activity-label { font-size: 10px; color: #6e7681; min-width: 50px; }
+  .activity-track {
+    flex: 1; height: 4px; background: #21262d; border-radius: 2px; overflow: hidden;
+  }
+  .activity-fill {
+    height: 100%; border-radius: 2px; transition: width 0.4s;
+  }
+  .activity-text { font-size: 10px; color: #6e7681; min-width: 40px; text-align: right; }
+
+  /* Uptime */
+  .uptime-row {
+    margin-top: 6px; display: flex; align-items: center; gap: 8px; font-size: 11px;
+  }
+  .uptime-label { color: #6e7681; min-width: 50px; }
+  .uptime-dots {
+    display: flex; gap: 2px;
+  }
+  .uptime-dot {
+    width: 6px; height: 14px; border-radius: 2px; background: #21262d;
+  }
+
   .card .details {
     margin-top: 12px; font-size: 12px; color: #8b949e;
     display: grid; grid-template-columns: auto 1fr; gap: 4px 12px;
@@ -61,6 +127,24 @@
   .card .pending {
     margin-top: 8px; font-size: 12px; color: #d29922;
   }
+
+  /* Expandable section */
+  .card .expanded-details {
+    display: none; margin-top: 12px; padding-top: 12px;
+    border-top: 1px solid #21262d;
+  }
+  .card.expanded .expanded-details { display: block; }
+  .expanded-details .detail-grid {
+    font-size: 12px; color: #8b949e;
+    display: grid; grid-template-columns: auto 1fr; gap: 4px 12px;
+  }
+  .expanded-details .detail-grid .key { color: #6e7681; }
+  .expanded-details .detail-grid .val { color: #c9d1d9; word-break: break-all; }
+  .expand-hint {
+    font-size: 10px; color: #484f58; margin-top: 8px; text-align: right;
+  }
+  .card.expanded .expand-hint { display: none; }
+
   .updated { font-size: 11px; color: #484f58; text-align: center; margin-top: 20px; }
   .error { color: #f85149; text-align: center; padding: 40px; }
 </style>
@@ -68,14 +152,21 @@
 <body>
   <div class="header">
     <h1>Relay Live Metrics</h1>
-    <span class="refresh" onclick="load()">Refresh</span>
+    <div class="header-controls">
+      <a href="/config" style="color:#58a6ff;font-size:12px;text-decoration:none">Config</a>
+      <span class="refresh" onclick="load()">Refresh</span>
+    </div>
   </div>
+  <div id="health"></div>
   <div class="stats" id="stats"></div>
+  <div class="sort-bar" id="sortbar"></div>
   <div class="grid" id="grid"></div>
   <div class="updated" id="updated"></div>
 
 <script>
 const API = '/api/relay-metrics';
+let currentSort = 'status';
+let currentData = [];
 
 function badgeClass(status) {
   if (status === 'running') return 'badge-running';
@@ -94,24 +185,136 @@ function badgeLabel(status, lastAgo, pending) {
   return 'running';
 }
 
-function render(data) {
-  const running = data.filter(d => d.status === 'running').length;
-  const total = data.length;
-  const pending = data.reduce((sum, d) => sum + (d.pending_messages || 0), 0);
-  const types = {};
-  data.forEach(d => { types[d.type] = (types[d.type] || 0) + 1; });
+// Parse "Xh Ym ago" or "Xs ago" into minutes
+function parseAgoMinutes(ago) {
+  if (!ago || ago === 'unknown') return Infinity;
+  let total = 0;
+  const h = ago.match(/(\d+)h/);
+  const m = ago.match(/(\d+)m/);
+  const s = ago.match(/(\d+)s/);
+  if (h) total += parseInt(h[1]) * 60;
+  if (m) total += parseInt(m[1]);
+  if (s) total += parseInt(s[1]) / 60;
+  return total || Infinity;
+}
 
-  document.getElementById('stats').innerHTML = `
-    <div class="stat"><div class="label">Sessions</div><div class="value">${running}/${total}</div></div>
-    <div class="stat"><div class="label">Pending Msgs</div><div class="value">${pending}</div></div>
-    ${Object.entries(types).map(([t,c]) => `<div class="stat"><div class="label">${t}</div><div class="value">${c}</div></div>`).join('')}
+// Activity score 0-100 based on recency
+function activityScore(d) {
+  if (d.status !== 'running') return 0;
+  const mins = parseAgoMinutes(d.last_active_ago);
+  if (mins < 1) return 100;
+  if (mins < 5) return 90;
+  if (mins < 15) return 75;
+  if (mins < 60) return 50;
+  if (mins < 180) return 30;
+  if (mins < 720) return 15;
+  return 5;
+}
+
+function activityColor(score) {
+  if (score >= 75) return '#3fb950';
+  if (score >= 40) return '#d29922';
+  if (score > 0) return '#6e7681';
+  return '#3d1419';
+}
+
+// Health score: weighted average of session states
+function computeHealth(data) {
+  if (data.length === 0) return { score: 0, running: 0, idle: 0, down: 0 };
+  let running = 0, idle = 0, down = 0;
+  data.forEach(d => {
+    const label = badgeLabel(d.status, d.last_active_ago, d.pending_messages);
+    if (label === 'active' || label === 'running') running++;
+    else if (label === 'idle') idle++;
+    else down++;
+  });
+  // Score: running=100%, idle=40%, down=0%
+  const score = Math.round(((running * 100) + (idle * 40)) / data.length);
+  return { score, running, idle, down };
+}
+
+function healthColor(score) {
+  if (score >= 70) return '#3fb950';
+  if (score >= 40) return '#d29922';
+  return '#f85149';
+}
+
+function sortData(data, by) {
+  const statusOrder = { 'running': 0, 'idle': 1, 'not found': 2, 'exited': 3, 'error': 4 };
+  return [...data].sort((a, b) => {
+    if (by === 'name') return a.session.localeCompare(b.session);
+    if (by === 'status') {
+      const sa = statusOrder[a.status] ?? 5;
+      const sb = statusOrder[b.status] ?? 5;
+      if (sa !== sb) return sa - sb;
+      return parseAgoMinutes(a.last_active_ago) - parseAgoMinutes(b.last_active_ago);
+    }
+    if (by === 'active') {
+      return parseAgoMinutes(a.last_active_ago) - parseAgoMinutes(b.last_active_ago);
+    }
+    if (by === 'type') {
+      return (a.type || '').localeCompare(b.type || '') || a.session.localeCompare(b.session);
+    }
+    return 0;
+  });
+}
+
+function toggleCard(id) {
+  document.getElementById(id)?.classList.toggle('expanded');
+}
+
+function renderHealth(data) {
+  const h = computeHealth(data);
+  const col = healthColor(h.score);
+  document.getElementById('health').innerHTML = `
+    <div class="health-bar">
+      <div class="health-score" style="color:${col}">${h.score}</div>
+      <div class="health-details">
+        <div class="health-label">System Health</div>
+        <div class="health-meter">
+          <div class="health-meter-fill" style="width:${h.score}%;background:${col}"></div>
+        </div>
+        <div class="health-breakdown">
+          <span><span class="dot" style="background:#3fb950"></span>Active: ${h.running}</span>
+          <span><span class="dot" style="background:#d29922"></span>Idle: ${h.idle}</span>
+          <span><span class="dot" style="background:#f85149"></span>Down: ${h.down}</span>
+        </div>
+      </div>
+    </div>
   `;
+}
 
-  document.getElementById('grid').innerHTML = data.map(d => {
+function renderSortBar() {
+  const sorts = [
+    { key: 'status', label: 'Status' },
+    { key: 'name', label: 'Name' },
+    { key: 'active', label: 'Last Active' },
+    { key: 'type', label: 'Type' },
+  ];
+  document.getElementById('sortbar').innerHTML =
+    `<span>Sort by:</span>` +
+    sorts.map(s =>
+      `<button class="sort-btn${currentSort === s.key ? ' active' : ''}" onclick="setSort('${s.key}')">${s.label}</button>`
+    ).join('');
+}
+
+function setSort(key) {
+  currentSort = key;
+  renderSortBar();
+  renderGrid(currentData);
+}
+
+function renderGrid(data) {
+  const sorted = sortData(data, currentSort);
+  document.getElementById('grid').innerHTML = sorted.map((d, i) => {
     const label = badgeLabel(d.status, d.last_active_ago, d.pending_messages);
     const cls = badgeClass(d.status);
+    const score = activityScore(d);
+    const aColor = activityColor(score);
+    const cardId = `card-${d.session}`;
+
     return `
-    <div class="card">
+    <div class="card" id="${cardId}" onclick="toggleCard('${cardId}')">
       <div class="top">
         <span class="name">${d.session}</span>
         <span class="badge ${cls}">${label}</span>
@@ -120,14 +323,54 @@ function render(data) {
         <span class="tag">${d.type}</span>
         <span>${d.host}</span>
       </div>
-      <div class="details">
-        <span class="key">Path</span><span class="val">${d.path}</span>
-        <span class="key">Last active</span><span class="val">${d.last_active_ago || 'unknown'}</span>
-        <span class="key">Container</span><span class="val">${d.container}</span>
+      <div class="activity-bar">
+        <span class="activity-label">Activity</span>
+        <div class="activity-track">
+          <div class="activity-fill" style="width:${score}%;background:${aColor}"></div>
+        </div>
+        <span class="activity-text">${score}%</span>
       </div>
-      ${d.pending_messages > 0 ? `<div class="pending">${d.pending_messages} pending message(s)</div>` : ''}
+      <div class="details">
+        <span class="key">Last active</span><span class="val">${d.last_active_ago || 'unknown'}</span>
+        ${d.uptime ? `<span class="key">Uptime</span><span class="val">${d.uptime}</span>` : ''}
+        ${d.memory_mb ? `<span class="key">Memory</span><span class="val">${d.memory_mb} MB</span>` : ''}
+        ${d.pending_messages > 0 ? `<span class="key">Pending</span><span class="val" style="color:#d29922">${d.pending_messages} message(s)</span>` : ''}
+      </div>
+      <div class="expand-hint">click to expand</div>
+      <div class="expanded-details">
+        <div class="detail-grid">
+          <span class="key">Container</span><span class="val">${d.container}</span>
+          <span class="key">Path</span><span class="val">${d.path}</span>
+          <span class="key">Thread ID</span><span class="val">${d.thread_id}</span>
+          <span class="key">Status</span><span class="val">${d.status}</span>
+          ${d.context ? `<span class="key">Context</span><span class="val">${d.context}</span>` : ''}
+          ${d.last_active ? `<span class="key">Last active (ts)</span><span class="val">${new Date(d.last_active * 1000).toLocaleString()}</span>` : ''}
+        </div>
+      </div>
     </div>`;
   }).join('');
+}
+
+function render(data) {
+  currentData = data;
+  const running = data.filter(d => d.status === 'running').length;
+  const total = data.length;
+  const pending = data.reduce((sum, d) => sum + (d.pending_messages || 0), 0);
+  const totalMem = data.reduce((sum, d) => sum + (d.memory_mb || 0), 0);
+  const types = {};
+  data.forEach(d => { types[d.type] = (types[d.type] || 0) + 1; });
+
+  renderHealth(data);
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><div class="label">Sessions</div><div class="value">${running}/${total}</div></div>
+    <div class="stat"><div class="label">Pending Msgs</div><div class="value">${pending}</div></div>
+    <div class="stat"><div class="label">Total Memory</div><div class="value">${totalMem >= 1024 ? (totalMem/1024).toFixed(1)+'G' : totalMem+'M'}</div></div>
+    ${Object.entries(types).map(([t,c]) => `<div class="stat"><div class="label">${t}</div><div class="value">${c}</div></div>`).join('')}
+  `;
+
+  renderSortBar();
+  renderGrid(data);
 
   document.getElementById('updated').textContent = `Updated: ${new Date().toLocaleTimeString()}`;
 }
@@ -143,7 +386,7 @@ async function load() {
 }
 
 load();
-setInterval(load, 10000); // Auto-refresh every 10s
+setInterval(load, 10000);
 </script>
 </body>
 </html>

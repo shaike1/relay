@@ -1,0 +1,2 @@
+#!/command/execlineb -P
+/bin/bash /relay/scripts/queue-backup-loop.sh

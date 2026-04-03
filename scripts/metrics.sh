@@ -36,21 +36,56 @@ for s in sessions:
         "last_active_ago": None,
         "container": f"relay-session-{name}",
         "context": None,
+        "pending_messages": 0,
+        "uptime": None,
+        "memory_mb": None,
     }
 
     # Check container status
     container = f"relay-session-{name}"
     try:
         result = subprocess.run(
-            ["docker", "inspect", "--format", "{{.State.Status}}", container],
+            ["docker", "inspect", "--format",
+             "{{.State.Status}}|{{.State.StartedAt}}|{{.HostConfig.Memory}}",
+             container],
             capture_output=True, text=True, timeout=5
         )
         if result.returncode == 0:
-            entry["status"] = result.stdout.strip()
+            parts = result.stdout.strip().split("|")
+            entry["status"] = parts[0]
+            # Calculate uptime
+            if len(parts) > 1 and parts[0] == "running":
+                try:
+                    from datetime import datetime
+                    started = datetime.fromisoformat(parts[1].replace("Z", "+00:00"))
+                    uptime_s = int((datetime.now(started.tzinfo) - started).total_seconds())
+                    if uptime_s < 3600:
+                        entry["uptime"] = f"{uptime_s // 60}m"
+                    elif uptime_s < 86400:
+                        entry["uptime"] = f"{uptime_s // 3600}h {(uptime_s % 3600) // 60}m"
+                    else:
+                        entry["uptime"] = f"{uptime_s // 86400}d {(uptime_s % 86400) // 3600}h"
+                except Exception:
+                    pass
         else:
             entry["status"] = "not found"
     except Exception:
         entry["status"] = "error"
+
+    # Check container memory usage (from cgroup)
+    try:
+        result = subprocess.run(
+            ["docker", "stats", "--no-stream", "--format", "{{.MemUsage}}", container],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            mem_str = result.stdout.strip().split("/")[0].strip()
+            if "GiB" in mem_str:
+                entry["memory_mb"] = round(float(mem_str.replace("GiB", "").strip()) * 1024)
+            elif "MiB" in mem_str:
+                entry["memory_mb"] = round(float(mem_str.replace("MiB", "").strip()))
+    except Exception:
+        pass
 
     # Check last activity
     last_sent_file = f"/tmp/tg-last-sent-{thread_id}"

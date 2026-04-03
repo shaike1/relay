@@ -297,14 +297,15 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'send_task',
-      description: 'Send a task to another Claude session and get back a task_id. The target session will receive the prompt and should call complete_task when done. Results are automatically routed back to you via your notification channel.',
+      description: 'Send a task to another Claude session and get back a task_id. The target session will receive the prompt and should call complete_task when done. Results are automatically routed back to you via your notification channel. Use depends_on for milestone gating — the task will only be sent after all dependency tasks complete.',
       inputSchema: {
         type: 'object',
         required: ['to', 'prompt'],
         properties: {
-          to:     { type: 'string', description: 'Target session name (from list_peers)' },
-          prompt: { type: 'string', description: 'Task description / prompt for the target agent' },
-          ttl:    { type: 'integer', description: 'Seconds before task expires (default: 600)', default: 600 },
+          to:         { type: 'string', description: 'Target session name (from list_peers)' },
+          prompt:     { type: 'string', description: 'Task description / prompt for the target agent' },
+          ttl:        { type: 'integer', description: 'Seconds before task expires (default: 600)', default: 600 },
+          depends_on: { type: 'array', items: { type: 'string' }, description: 'Array of task_ids that must complete before this task is dispatched' },
         },
       },
     },
@@ -378,6 +379,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           prompt:        { type: 'string', description: 'Task description' },
           prefer_type:   { type: 'string', description: 'Preferred session type: "claude", "codex", or "copilot"', enum: ['claude', 'codex', 'copilot'] },
           prefer_project: { type: 'string', description: 'Preferred project path substring (e.g. "relay", "openclaw")' },
+          prefer_skills:  { type: 'array', items: { type: 'string' }, description: 'Preferred skills (e.g. ["docker", "python"]). If omitted, skills are auto-detected from prompt.' },
           ttl:           { type: 'integer', description: 'Seconds before task expires (default: 600)', default: 600 },
         },
       },
@@ -505,7 +507,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   if (name === 'list_peers') {
     try {
       const sessionsPath = new URL('../sessions.json', import.meta.url).pathname
-      const sessions: Array<{ session: string; thread_id: number; host?: string; path?: string; type?: string }> =
+      const sessions: Array<{ session: string; thread_id: number; host?: string; path?: string; type?: string; skills?: string[]; group?: string }> =
         JSON.parse(readFileSync(sessionsPath, 'utf8'))
       const lines: string[] = []
       for (const s of sessions) {
@@ -532,7 +534,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         const host = s.host ?? 'local'
         const type = s.type ?? 'claude'
         const path = s.path ?? ''
-        lines.push(`${s.session} [${type}] (${host}) ${path} — last active: ${lastActive}`)
+        const group = s.group ?? ''
+        const skills = s.skills?.join(',') ?? ''
+        lines.push(`${s.session} [${type}] (${host}) ${path} — group:${group} skills:[${skills}] — last active: ${lastActive}`)
       }
       return { content: [{ type: 'text', text: lines.join('\n') || 'No other sessions.' }] }
     } catch (e) {
@@ -589,6 +593,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     const targetSession = String(args?.to ?? '')
     const prompt        = String(args?.prompt ?? '')
     const ttl           = Number(args?.ttl ?? 600)
+    const dependsOn     = (args?.depends_on as string[] | undefined) ?? []
     try {
       const sessionsPath = new URL('../sessions.json', import.meta.url).pathname
       const sessions: Array<{ session: string; thread_id: number; host?: string }> =
@@ -599,24 +604,38 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const selfName = process.env.SESSION_NAME ?? `session-${THREAD_ID}`
       const taskId   = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
-      // Persist task metadata so complete_task can route the result back
+      // Check dependencies — if any are not complete, queue the task as "waiting"
       const TASKS_FILE = '/tmp/agent-tasks.json'
-      let tasks: Record<string, unknown> = {}
+      let tasks: Record<string, any> = {}
       try {
         const f = Bun.file(TASKS_FILE)
         if (await f.exists()) tasks = JSON.parse(await f.text())
       } catch {}
+
+      const pendingDeps = dependsOn.filter(depId => {
+        const dep = tasks[depId]
+        return !dep || dep.status !== 'complete'
+      })
+
+      const isBlocked = pendingDeps.length > 0
+
       tasks[taskId] = {
         from:        selfName,
         from_thread: THREAD_ID,
-        from_host:   null,  // always local — task routing back always hits this host's queue
+        from_host:   null,
         to:          targetSession,
         to_thread:   target.thread_id,
         created:     Date.now() / 1000,
         ttl,
-        status:      'pending',
+        status:      isBlocked ? 'waiting' : 'pending',
+        depends_on:  dependsOn.length > 0 ? dependsOn : undefined,
+        prompt,
       }
       await Bun.write(TASKS_FILE, JSON.stringify(tasks, null, 2))
+
+      if (isBlocked) {
+        return { content: [{ type: 'text', text: `Task ${taskId} created but WAITING on dependencies: ${pendingDeps.join(', ')}. It will be dispatched when they complete.` }] }
+      }
 
       // Write task message into target's queue
       const queueFile = `/tmp/tg-queue-${target.thread_id}.jsonl`
@@ -679,11 +698,43 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       await Bun.write(queueFile, entry + '\n', { append: true })
 
       // Update task status
-      tasks[taskId].status = status === 'error' ? 'error' : 'done'
+      tasks[taskId].status = status === 'error' ? 'error' : 'complete'
       await Bun.write(TASKS_FILE, JSON.stringify(tasks, null, 2))
 
+      // Milestone gating: dispatch any waiting tasks whose dependencies are now met
+      const dispatched: string[] = []
+      for (const [tid, t] of Object.entries(tasks) as [string, any][]) {
+        if (t.status !== 'waiting' || !t.depends_on) continue
+        const stillWaiting = t.depends_on.filter((depId: string) => {
+          const dep = tasks[depId]
+          return !dep || dep.status !== 'complete'
+        })
+        if (stillWaiting.length === 0) {
+          // All dependencies met — dispatch the task now
+          tasks[tid].status = 'pending'
+          const sessionsPath = new URL('../sessions.json', import.meta.url).pathname
+          const allSessions = JSON.parse(readFileSync(sessionsPath, 'utf8'))
+          const targetSess = allSessions.find((s: any) => s.session === t.to)
+          if (targetSess) {
+            const dispatchEntry = JSON.stringify({
+              text: `[Task from ${t.from} | task_id:${tid}]\n${t.prompt}`,
+              user: `agent:${t.from}`,
+              message_id: -Date.now(),
+              ts: Date.now() / 1000,
+              force: true,
+              bus: { type: 'task', id: tid, from: t.from, from_thread: t.from_thread, to: t.to, prompt: t.prompt, ttl: t.ttl },
+            })
+            const dispatchQueueFile = `/tmp/tg-queue-${targetSess.thread_id}.jsonl`
+            await Bun.write(dispatchQueueFile, dispatchEntry + '\n', { append: true })
+            dispatched.push(tid)
+          }
+        }
+      }
+      if (dispatched.length > 0) await Bun.write(TASKS_FILE, JSON.stringify(tasks, null, 2))
+
       void logToPeersTopic(selfName, task.from, `[result:${taskId}] ${status}: ${output.slice(0, 200)}`)
-      return { content: [{ type: 'text', text: `Result sent back to '${task.from}'. Task ${taskId} marked ${tasks[taskId].status}.` }] }
+      const dispatchMsg = dispatched.length > 0 ? ` Unblocked tasks: ${dispatched.join(', ')}` : ''
+      return { content: [{ type: 'text', text: `Result sent back to '${task.from}'. Task ${taskId} marked complete.${dispatchMsg}` }] }
     } catch (e) {
       return { content: [{ type: 'text', text: `Error completing task: ${e}` }] }
     }
@@ -693,7 +744,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     const targetSession = String(args?.session ?? '')
     try {
       const sessionsPath = new URL('../sessions.json', import.meta.url).pathname
-      const sessions: Array<{ session: string; thread_id: number; host?: string; path?: string; type?: string }> =
+      const sessions: Array<{ session: string; thread_id: number; host?: string; path?: string; type?: string; skills?: string[]; group?: string }> =
         JSON.parse(readFileSync(sessionsPath, 'utf8'))
       const target = sessions.find(s => s.session === targetSession)
       if (!target) return { content: [{ type: 'text', text: `Session '${targetSession}' not found. Use list_peers to see available sessions.` }] }
@@ -879,10 +930,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     const prompt       = String(args?.prompt ?? '')
     const preferType   = args?.prefer_type as string | undefined
     const preferProject = args?.prefer_project as string | undefined
+    const preferSkills = (args?.prefer_skills as string[] | undefined) ?? []
     const ttl          = Number(args?.ttl ?? 600)
     try {
       const sessionsPath = new URL('../sessions.json', import.meta.url).pathname
-      const sessions: Array<{ session: string; thread_id: number; host?: string; path?: string; type?: string }> =
+      const sessions: Array<{ session: string; thread_id: number; host?: string; path?: string; type?: string; skills?: string[]; group?: string }> =
         JSON.parse(readFileSync(sessionsPath, 'utf8'))
 
       const selfName = process.env.SESSION_NAME ?? `session-${THREAD_ID}`
@@ -910,6 +962,19 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
             else if (agoMin < 120) score += 1  // active in last 2 hours
           }
         } catch {}
+
+        // Skill match — each matching skill adds points
+        if (preferSkills.length > 0 && s.skills) {
+          const matched = preferSkills.filter(sk => s.skills!.includes(sk.toLowerCase()))
+          score += matched.length * 8  // 8 points per skill match
+        }
+
+        // Auto-detect skills from prompt keywords if no prefer_skills given
+        if (preferSkills.length === 0 && s.skills) {
+          const promptLower = prompt.toLowerCase()
+          const matched = s.skills.filter(sk => promptLower.includes(sk))
+          score += matched.length * 5  // 5 points per auto-detected match
+        }
 
         // Local sessions preferred over remote (faster)
         if (!s.host) score += 2

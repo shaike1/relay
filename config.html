@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Relay Config</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh; background: #0d1117; color: #c9d1d9;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 14px;
+    padding: 20px;
+  }
+  .header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 24px; padding-bottom: 12px; border-bottom: 1px solid #21262d;
+  }
+  .header h1 { font-size: 18px; font-weight: 400; color: #f0f6fc; }
+  .header-links { display: flex; gap: 16px; font-size: 12px; }
+  .header-links a { color: #58a6ff; text-decoration: none; }
+  .header-links a:hover { text-decoration: underline; }
+  .toolbar {
+    display: flex; gap: 12px; margin-bottom: 20px; align-items: center;
+  }
+  .btn {
+    background: #21262d; border: 1px solid #30363d; border-radius: 6px;
+    padding: 8px 16px; color: #c9d1d9; cursor: pointer; font-family: inherit;
+    font-size: 12px; transition: all 0.2s;
+  }
+  .btn:hover { border-color: #58a6ff; color: #58a6ff; }
+  .btn-primary { background: #238636; border-color: #2ea043; color: #fff; }
+  .btn-primary:hover { background: #2ea043; }
+  .btn-danger { background: #3d1419; border-color: #da3633; color: #f85149; }
+  .btn-danger:hover { background: #da3633; color: #fff; }
+  .status { font-size: 12px; color: #3fb950; margin-left: auto; }
+  .status.error { color: #f85149; }
+  table {
+    width: 100%; border-collapse: collapse; background: #161b22;
+    border: 1px solid #21262d; border-radius: 8px; overflow: hidden;
+  }
+  th {
+    text-align: left; padding: 10px 12px; font-size: 11px;
+    color: #8b949e; text-transform: uppercase; border-bottom: 1px solid #21262d;
+    background: #0d1117;
+  }
+  td {
+    padding: 8px 12px; border-bottom: 1px solid #21262d;
+  }
+  td input, td select {
+    background: #0d1117; border: 1px solid #21262d; border-radius: 4px;
+    color: #c9d1d9; padding: 4px 8px; font-family: inherit; font-size: 12px;
+    width: 100%;
+  }
+  td input:focus, td select:focus {
+    outline: none; border-color: #58a6ff;
+  }
+  td .skills-input { font-size: 11px; }
+  tr:hover { background: #1c2128; }
+  .row-actions { display: flex; gap: 4px; }
+  .row-actions button {
+    background: none; border: none; color: #8b949e; cursor: pointer;
+    font-size: 14px; padding: 2px 6px; border-radius: 4px;
+  }
+  .row-actions button:hover { background: #21262d; color: #f85149; }
+  .footer { font-size: 11px; color: #484f58; text-align: center; margin-top: 20px; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>Relay Session Config</h1>
+    <div class="header-links">
+      <a href="/metrics">Dashboard</a>
+    </div>
+  </div>
+  <div class="toolbar">
+    <button class="btn" onclick="addRow()">+ Add Session</button>
+    <button class="btn btn-primary" onclick="save()">Save</button>
+    <button class="btn" onclick="load()">Reload</button>
+    <span class="status" id="status"></span>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Session</th>
+        <th>Thread ID</th>
+        <th>Host</th>
+        <th>Path</th>
+        <th>Type</th>
+        <th>Group</th>
+        <th>Skills</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+  <div class="footer" id="footer"></div>
+
+<script>
+let sessions = [];
+
+function renderTable() {
+  document.getElementById('tbody').innerHTML = sessions.map((s, i) => `
+    <tr>
+      <td><input value="${s.session || ''}" onchange="sessions[${i}].session=this.value"></td>
+      <td><input type="number" value="${s.thread_id || 0}" onchange="sessions[${i}].thread_id=parseInt(this.value)"></td>
+      <td><input value="${s.host || ''}" placeholder="null" onchange="sessions[${i}].host=this.value||null"></td>
+      <td><input value="${s.path || ''}" onchange="sessions[${i}].path=this.value"></td>
+      <td>
+        <select onchange="sessions[${i}].type=this.value||undefined">
+          <option value="" ${!s.type ? 'selected' : ''}>claude</option>
+          <option value="codex" ${s.type==='codex' ? 'selected' : ''}>codex</option>
+          <option value="copilot" ${s.type==='copilot' ? 'selected' : ''}>copilot</option>
+        </select>
+      </td>
+      <td><input value="${s.group || ''}" onchange="sessions[${i}].group=this.value||undefined"></td>
+      <td><input class="skills-input" value="${(s.skills||[]).join(', ')}" onchange="sessions[${i}].skills=this.value.split(',').map(x=>x.trim()).filter(Boolean)"></td>
+      <td class="row-actions"><button onclick="removeRow(${i})" title="Delete">x</button></td>
+    </tr>
+  `).join('');
+  document.getElementById('footer').textContent = `${sessions.length} sessions`;
+}
+
+function addRow() {
+  sessions.push({ session: '', thread_id: 0, host: null, path: '/root', group: '', skills: [] });
+  renderTable();
+}
+
+function removeRow(i) {
+  if (confirm(`Delete session "${sessions[i].session}"?`)) {
+    sessions.splice(i, 1);
+    renderTable();
+  }
+}
+
+function setStatus(msg, isError) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = 'status' + (isError ? ' error' : '');
+}
+
+async function load() {
+  try {
+    const r = await fetch('/api/sessions-config');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    sessions = await r.json();
+    renderTable();
+    setStatus(`Loaded ${sessions.length} sessions`);
+  } catch (e) {
+    setStatus(`Load error: ${e.message}`, true);
+  }
+}
+
+async function save() {
+  try {
+    const r = await fetch('/api/sessions-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sessions),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    setStatus('Saved!');
+  } catch (e) {
+    setStatus(`Save error: ${e.message}`, true);
+  }
+}
+
+load();
+</script>
+</body>
+</html>
