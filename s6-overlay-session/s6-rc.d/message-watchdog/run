@@ -1,4 +1,9 @@
 #!/command/with-contenv sh
+# Skip if using oauth-cli-coder driver (it handles its own queue polling)
+if [ "${SESSION_DRIVER}" = "oauth" ]; then
+  echo "[message-watchdog] Skipping — SESSION_DRIVER=oauth"
+  exec sleep infinity
+fi
 # Only run if this session has a Telegram thread configured
 [ -n "${TELEGRAM_THREAD_ID:-}" ] || { echo "[message-watchdog] no TELEGRAM_THREAD_ID, exiting"; exit 0; }
 # Ensure script is executable (bind mounts can strip permissions)

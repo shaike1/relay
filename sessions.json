@@ -232,6 +232,7 @@
     "path": "/root",
     "host": null,
     "type": "codex",
+    "bot_token": "8435988897:AAHpSUsBmBsUva24IKAHY0MWvqF0saJ5YA8",
     "group": "infra",
     "skills": [
       "general",

@@ -40,7 +40,8 @@ def _session_service_block(name: str, thread_id: int, workdir: str,
                            image: str, tmp_volume: str,
                            depends_on_relay: bool,
                            with_build: bool = False,
-                           session_type: str = "claude") -> list[str]:
+                           session_type: str = "claude",
+                           driver: str = "") -> list[str]:
     """Return lines for a single session service block."""
     svc = sanitize_service_name(name)
     dockerfile = "codex-session.Dockerfile" if session_type == "codex" else "session.Dockerfile"
@@ -62,6 +63,8 @@ def _session_service_block(name: str, thread_id: int, workdir: str,
     lines.append(f"      WORKDIR: \"{workdir}\"")
     if session_type == "codex":
         lines.append(f"      SESSION_TYPE: \"codex\"")
+    if driver:
+        lines.append(f"      SESSION_DRIVER: \"{driver}\"")
     if allowed_users:
         allowed = ",".join(str(u) for u in allowed_users)
         lines.append(f"      ALLOWED_USERS: \"{allowed}\"")
@@ -129,6 +132,7 @@ def generate_compose(sessions: list, output_path: str) -> None:
             depends_on_relay=True,
             with_build=True,
             session_type=stype,
+            driver=session.get("driver", ""),
         )
 
     lines.append("volumes:")

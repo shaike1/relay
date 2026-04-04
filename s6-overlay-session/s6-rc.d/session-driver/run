@@ -1,0 +1,12 @@
+#!/command/with-contenv sh
+# oauth-cli-coder based session driver
+# Only runs when SESSION_DRIVER=oauth is set
+
+if [ "${SESSION_DRIVER}" != "oauth" ]; then
+  echo "[session-driver] Skipping — SESSION_DRIVER=${SESSION_DRIVER:-unset} (need 'oauth')"
+  exec sleep infinity
+fi
+
+echo "[session-driver] Starting oauth-cli-coder driver for ${SESSION_NAME}"
+chmod +x /relay/scripts/session-driver.py 2>/dev/null || true
+exec python3 /relay/scripts/session-driver.py

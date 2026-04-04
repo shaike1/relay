@@ -1,6 +1,13 @@
 #!/command/with-contenv sh
 # Session loop service — supervised by s6
 # SESSION_NAME, WORKDIR, and SESSION_TYPE are injected via docker-compose environment
+
+# Skip if using oauth-cli-coder driver
+if [ "${SESSION_DRIVER}" = "oauth" ]; then
+  echo "[claude-session] Skipping — SESSION_DRIVER=oauth (using session-driver instead)"
+  exec sleep infinity
+fi
+
 # Ensure scripts are executable (bind mounts can strip permissions)
 chmod +x /relay/scripts/claude-session-loop.sh /relay/scripts/copilot-session-loop.sh /relay/scripts/mcp-server-wrapper.sh /relay/scripts/message-watchdog.sh 2>/dev/null || true
 export S6_SUPERVISED=1
