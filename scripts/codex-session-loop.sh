@@ -41,8 +41,7 @@ tmux_s() { tmux -S "$TMUX_SOCKET" "$@"; }
 write_session_mcp_config() {
     [ -n "${THREAD_ID:-}" ] || return 0
 
-    cat > "${SESSION_HOME}/.mcp.json" <<EOF
-{
+    local mcp_json='{
   "mcpServers": {
     "telegram": {
       "command": "/root/.bun/bin/bun",
@@ -53,13 +52,29 @@ write_session_mcp_config() {
         "server.ts"
       ],
       "env": {
-        "TELEGRAM_THREAD_ID": "${THREAD_ID}",
-        "SESSION_NAME": "${SESSION}"
+        "TELEGRAM_THREAD_ID": "'"${THREAD_ID}"'",
+        "SESSION_NAME": "'"${SESSION}"'"
       }
     }
   }
+}'
+    echo "$mcp_json" > "${SESSION_HOME}/.mcp.json"
+
+    # Also inject telegram into /root/.codex/mcp.json (Codex CLI's actual MCP config)
+    if [ -f /root/.codex/mcp.json ]; then
+        python3 -c "
+import json
+p = '/root/.codex/mcp.json'
+d = json.load(open(p))
+d['mcpServers']['telegram'] = {
+    'type': 'stdio',
+    'command': '/root/.bun/bin/bun',
+    'args': ['run', '--cwd', '/root/relay/mcp-telegram', 'server.ts'],
+    'env': {'TELEGRAM_THREAD_ID': '${THREAD_ID}', 'SESSION_NAME': '${SESSION}'}
 }
-EOF
+json.dump(d, open(p, 'w'), indent=2)
+" 2>/dev/null || true
+    fi
 }
 
 write_session_agents() {
@@ -120,6 +135,24 @@ run_codex_forever() {
     cd "${SESSION_HOME}"
 
     while true; do
+        # Overwrite telegram in /root/.mcp.json with the correct thread_id
+        # for this codex session. bot.py may set it to thread 213 (main) but
+        # we need 8542 (codex). Claude Code reads .mcp.json from workdir /root.
+        write_session_mcp_config
+        python3 -c "
+import json
+p = '/root/.mcp.json'
+try:
+    d = json.load(open(p))
+except: d = {'mcpServers': {}}
+d.setdefault('mcpServers', {})['telegram'] = {
+    'command': '/root/.bun/bin/bun',
+    'args': ['run', '--cwd', '/root/relay/mcp-telegram', 'server.ts'],
+    'env': {'TELEGRAM_THREAD_ID': '${THREAD_ID}', 'SESSION_NAME': '${SESSION}'}
+}
+json.dump(d, open(p, 'w'), indent=2)
+" 2>/dev/null || true
+
         if "${CODEX_BIN}" resume --last \
             -c "${TRUST_CONFIG}" \
             --dangerously-bypass-approvals-and-sandbox \
