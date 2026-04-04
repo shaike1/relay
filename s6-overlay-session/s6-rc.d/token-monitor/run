@@ -1,0 +1,13 @@
+#!/command/with-contenv sh
+# Token optimizer monitor — runs alongside any session type.
+# Watches queue activity and detects waste patterns.
+# For oauth-driver sessions, monitoring is built-in — this is for bash-loop sessions.
+
+if [ "${SESSION_DRIVER}" = "oauth" ]; then
+  echo "[token-monitor] Skipping — monitoring built into session-driver (oauth mode)"
+  exec sleep infinity
+fi
+
+echo "[token-monitor] Starting for ${SESSION_NAME} (thread=${TELEGRAM_THREAD_ID})"
+chmod +x /relay/scripts/token-monitor.py 2>/dev/null || true
+exec python3 /relay/scripts/token-monitor.py

@@ -86,6 +86,7 @@ RUN chmod +x /etc/s6-overlay/s6-rc.d/claude-session/run \
     && chmod +x /etc/s6-overlay/s6-rc.d/claude-update/up \
     && chmod +x /etc/s6-overlay/s6-rc.d/codex-bot/run \
     && chmod +x /etc/s6-overlay/s6-rc.d/session-driver/run \
+    && chmod +x /etc/s6-overlay/s6-rc.d/token-monitor/run \
     && chmod +x /relay/scripts/claude-session-loop.sh \
     && chmod +x /relay/scripts/copilot-session-loop.sh \
     && chmod +x /relay/scripts/mcp-server-wrapper.sh \
