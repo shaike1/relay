@@ -123,29 +123,29 @@ const TG_CHAT_ID = process.env.GROUP_CHAT_ID || '';
 const QUEUE_DIR = '/tmp';
 const BOT_WEBHOOK_URL = process.env.BOT_WEBHOOK_URL || 'http://relay:18793/tg';
 
-// Webhook-managed thread IDs — only these topics are handled via webhook.
-// Other topics are handled by the main relay bot's polling (separate bot token).
-const WEBHOOK_THREADS = new Set(
-  (process.env.WEBHOOK_THREADS || '8542').split(',').map(Number)
-);
-
-// Webhook endpoint — Telegram POSTs updates here, writes to queue for managed topics
+// Webhook endpoints — receive Telegram updates from both bots,
+// write to per-topic queues, and forward to bot.py for processing.
+// Main bot webhook
 app.post(`/webhook/${WEBHOOK_SECRET}`, (req, res) => {
-  res.json({ ok: true }); // respond to Telegram immediately
-  directQueueWrite(req.body);
+  res.json({ ok: true });
+  webhookQueueWrite(req.body);
+  forwardToBot(req.body);
+});
+// Codex bot webhook (same handler, different URL for separate bot token)
+const CODEX_WEBHOOK_SECRET = process.env.CODEX_WEBHOOK_SECRET || `codex-${WEBHOOK_SECRET}`;
+app.post(`/webhook/${CODEX_WEBHOOK_SECRET}`, (req, res) => {
+  res.json({ ok: true });
+  webhookQueueWrite(req.body);
+  // Don't forward codex updates to bot.py — they're handled by session-driver
 });
 
-function directQueueWrite(update) {
+function webhookQueueWrite(update) {
   const msg = update && update.message;
   if (!msg || !msg.text) return;
   if (String(msg.chat.id) !== String(TG_CHAT_ID)) return;
   if (msg.from && msg.from.is_bot) return;
   const threadId = msg.message_thread_id;
   if (!threadId) return;
-
-  // Only handle topics managed by this webhook — skip others to avoid duplicates
-  // with the main relay bot's polling
-  if (!WEBHOOK_THREADS.has(threadId)) return;
 
   const queueFile = path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`);
   const entry = {
@@ -161,6 +161,24 @@ function directQueueWrite(update) {
     console.log(`[webhook] ${threadId}: ${msg.from.first_name}: ${msg.text.substring(0, 60)}`);
   } catch (err) {
     console.error(`[webhook] Queue write error:`, err.message);
+  }
+}
+
+// Forward webhook updates to bot.py for processing (NLP routing, dispatch, mentions, etc.)
+function forwardToBot(update) {
+  try {
+    const http = require('http');
+    const data = JSON.stringify(update);
+    const req = http.request(BOT_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+      timeout: 5000,
+    }, () => {}); // fire-and-forget
+    req.on('error', (e) => console.error('[webhook] Forward to bot error:', e.message));
+    req.write(data);
+    req.end();
+  } catch (e) {
+    console.error('[webhook] Forward to bot error:', e.message);
   }
 }
 

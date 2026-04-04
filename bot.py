@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import signal
 import socket
 import subprocess
 import time
@@ -286,17 +287,26 @@ def latest_claude_session(path: str, host: str | None = None) -> str | None:
 
 def write_mcp_json(path: str, thread_id: int, host: str | None = None, session: str | None = None):
     """Write .mcp.json into the project folder so Claude starts with the Telegram MCP server."""
+    # Check for per-session bot_token override
+    bot_token = None
+    if session:
+        configs = get_configs()
+        match = next((c for c in configs if c.get("session") == session), None)
+        if match and match.get("bot_token"):
+            bot_token = match["bot_token"]
+
+    env = {"TELEGRAM_THREAD_ID": str(thread_id)}
+    if session:
+        env["SESSION_NAME"] = session
+    if bot_token:
+        env["TELEGRAM_BOT_TOKEN"] = bot_token
+
     mcp_config = {
         "mcpServers": {
             "telegram": {
                 "command": "/root/.bun/bin/bun",
                 "args": ["run", "--cwd", "/root/relay/mcp-telegram", "server.ts"],
-                "env": {
-                    "TELEGRAM_THREAD_ID": str(thread_id),
-                    # TOKEN and CHAT_ID are loaded from /root/relay/.env by server.ts
-                    # — do not embed them here so token rotation needs only one file.
-                    **({"SESSION_NAME": session} if session else {}),
-                }
+                "env": env,
             }
         }
     }
@@ -2339,20 +2349,64 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND, handle_message))
 
+    webhook_mode = os.environ.get("WEBHOOK_MODE", "")
+
     logger.info(
         "Bot starting... pid=%s host=%s mode=%s token_fp=%s pid_file=%s",
         os.getpid(),
         socket.gethostname(),
-        "webhook" if WEBHOOK_URL else "polling",
+        "webhook-receiver" if webhook_mode else ("webhook" if WEBHOOK_URL else "polling"),
         token_fingerprint(TOKEN),
         BOT_PID_FILE,
     )
-    if WEBHOOK_URL:
+
+    if webhook_mode:
+        # Webhook receiver mode: relay-api handles Telegram webhook registration
+        # and forwards updates to us via HTTP POST. We never call setWebhook.
+        # This avoids the python-telegram-bot library's mandatory setWebhook call.
+        import asyncio
+        from tornado.web import Application as TornadoApp, RequestHandler
+        from tornado.httpserver import HTTPServer
+        import tornado.ioloop
+
+        class WebhookHandler(RequestHandler):
+            def initialize(self, ptb_app):
+                self.ptb_app = ptb_app
+
+            async def post(self):
+                try:
+                    data = json.loads(self.request.body)
+                    update = Update.de_json(data, self.ptb_app.bot)
+                    if update:
+                        await self.ptb_app.process_update(update)
+                except Exception as e:
+                    logger.error(f"Webhook update processing error: {e}")
+                self.write({"ok": True})
+
+        async def run_webhook_receiver():
+            await app.initialize()
+            await app.start()
+            tornado_app = TornadoApp([(r"/tg", WebhookHandler, {"ptb_app": app})])
+            server = HTTPServer(tornado_app)
+            server.listen(WEBHOOK_PORT, address="0.0.0.0")
+            logger.info(f"Webhook receiver listening on 0.0.0.0:{WEBHOOK_PORT}/tg")
+            # Run forever until interrupted
+            stop_event = asyncio.Event()
+            loop = asyncio.get_event_loop()
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(sig, stop_event.set)
+            await stop_event.wait()
+            logger.info("Shutting down webhook receiver...")
+            server.stop()
+            await app.stop()
+            await app.shutdown()
+
+        asyncio.run(run_webhook_receiver())
+
+    elif WEBHOOK_URL:
         webhook_full = f"{WEBHOOK_URL}/tg"
         listen_only = os.environ.get("WEBHOOK_LISTEN_ONLY", "")
         if listen_only:
-            # Listen-only mode: relay-api handles Telegram webhook registration,
-            # bot.py just listens for forwarded updates on 0.0.0.0
             logger.info(f"Starting in webhook LISTEN-ONLY mode on 0.0.0.0:{WEBHOOK_PORT}/tg")
             kwargs = dict(
                 listen               = "0.0.0.0",
@@ -2370,7 +2424,7 @@ def main():
                 drop_pending_updates = True,
             )
         if WEBHOOK_CERT and not listen_only:
-            kwargs["cert"] = WEBHOOK_CERT   # uploaded to Telegram for self-signed cert verification
+            kwargs["cert"] = WEBHOOK_CERT
         app.run_webhook(**kwargs)
     else:
         app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
