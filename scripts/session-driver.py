@@ -31,6 +31,10 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+# Token optimizer — waste detection + smart compaction
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from token_optimizer import WasteDetector, SmartCompactor, format_findings_html
+
 logging.basicConfig(
     level=logging.INFO,
     format="[session-driver:%(name)s] %(message)s",
@@ -316,15 +320,27 @@ def get_provider():
     return _provider
 
 
-def ask_claude(prompt: str) -> str:
-    """Send a prompt to Claude/Codex and get the response."""
+def ask_claude(prompt: str, user: str = "") -> str:
+    """Send a prompt to Claude/Codex and get the response. Tracks metrics."""
     provider = get_provider()
+    start = time.time()
+    timed_out = False
     try:
         response = provider.ask(prompt, timeout=ASK_TIMEOUT)
-        return response.strip() if response else ""
+        response = response.strip() if response else ""
     except Exception as e:
         log.error(f"ask() failed: {e}")
-        return f"Error: {e}"
+        response = f"Error: {e}"
+        if "timeout" in str(e).lower() or "Timeout" in str(e):
+            timed_out = True
+
+    elapsed = time.time() - start
+
+    # Record metrics for waste detection
+    if _waste_detector:
+        _waste_detector.record(prompt, response, elapsed, user=user, timed_out=timed_out)
+
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -359,15 +375,89 @@ def format_user_prompt(msg: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Token optimizer globals
+# ---------------------------------------------------------------------------
+_waste_detector: Optional[WasteDetector] = None
+_smart_compactor: Optional[SmartCompactor] = None
+_conversation_history: list[dict] = []
+_last_waste_check: float = 0
+WASTE_CHECK_INTERVAL = 600  # check for waste patterns every 10 minutes
+COMPACTION_CHECK_INTERVAL = 1800  # consider compaction every 30 minutes
+_last_compaction_check: float = 0
+
+
+def _check_waste_patterns():
+    """Periodically analyze waste patterns and alert if needed."""
+    global _last_waste_check
+    now = time.time()
+    if now - _last_waste_check < WASTE_CHECK_INTERVAL:
+        return
+    _last_waste_check = now
+
+    if not _waste_detector:
+        return
+
+    findings = _waste_detector.analyze()
+    if not findings:
+        return
+
+    # Only alert on high/critical findings
+    critical = [f for f in findings if f.severity in ("critical", "high")]
+    if not critical:
+        return
+
+    stats = _waste_detector.get_stats()
+    report = format_findings_html(critical, stats)
+    if report:
+        log.warning(f"Waste detected: {len(critical)} critical/high findings")
+        send_message(report)
+
+
+def _check_compaction():
+    """Periodically capture smart checkpoint if conversation is getting long."""
+    global _last_compaction_check
+    now = time.time()
+    if now - _last_compaction_check < COMPACTION_CHECK_INTERVAL:
+        return
+    _last_compaction_check = now
+
+    if not _smart_compactor or len(_conversation_history) < 20:
+        return
+
+    filepath = _smart_compactor.capture(
+        _conversation_history,
+        trigger="auto",
+        reason=f"Periodic checkpoint at {len(_conversation_history)} messages",
+    )
+    if filepath:
+        log.info(f"Auto-checkpoint saved: {filepath}")
+
+
+# ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 def main():
+    global _waste_detector, _smart_compactor, _last_waste_check, _last_compaction_check
+
     log.info(f"Session driver starting: session={SESSION_NAME}, type={SESSION_TYPE}, "
              f"thread={THREAD_ID}, workdir={WORK_DIR}")
 
     if not THREAD_ID:
         log.error("No THREAD_ID — cannot operate without a Telegram topic")
         sys.exit(1)
+
+    # Initialize token optimizer
+    _waste_detector = WasteDetector(session_name=SESSION_NAME)
+    _smart_compactor = SmartCompactor(session_name=SESSION_NAME)
+    _last_waste_check = time.time()
+    _last_compaction_check = time.time()
+
+    # Restore checkpoint context if available
+    restored = _smart_compactor.restore()
+    if restored:
+        log.info(f"Restored checkpoint ({len(restored)} chars)")
+
+    log.info(f"Token optimizer initialized: waste detector + smart compactor")
 
     # Graceful shutdown — only on explicit SIGTERM, not SIGINT (from docker exec)
     running = True
@@ -385,12 +475,22 @@ def main():
     # Start the provider eagerly
     provider = get_provider()
 
-    # Send startup prompt — Claude will respond via MCP (Telegram)
-    log.info("Sending startup prompt...")
-    ask_claude(
+    # Build startup prompt — include checkpoint context if we have one
+    startup_prompt = (
         "You just started a new session. Call typing immediately, then send_message "
         "with a brief startup message. Then call fetch_messages and respond to any pending messages."
     )
+    if restored:
+        startup_prompt = (
+            "You just restarted. Here is your previous session checkpoint:\n\n"
+            f"{restored[:3000]}\n\n"
+            "Call typing, then send_message acknowledging what you remember. "
+            "Then call fetch_messages and respond to any pending messages."
+        )
+
+    # Send startup prompt — Claude will respond via MCP (Telegram)
+    log.info("Sending startup prompt...")
+    ask_claude(startup_prompt)
     log.info("Startup prompt completed")
 
     log.info("Entering message loop")
@@ -399,6 +499,9 @@ def main():
         try:
             messages = read_pending_messages()
             if not messages:
+                # Run periodic checks during idle time
+                _check_waste_patterns()
+                _check_compaction()
                 time.sleep(POLL_INTERVAL)
                 continue
 
@@ -413,9 +516,24 @@ def main():
                 user = msg.get("user", "unknown")
                 log.info(f"Message from {user}: {text[:80]}...")
 
+                # Track conversation history for smart compaction
+                _conversation_history.append({
+                    "role": "user",
+                    "content": text,
+                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                })
+
                 # Send prompt to Claude — Claude handles its own Telegram response via MCP
                 prompt = format_user_prompt(msg)
-                response = ask_claude(prompt)
+                response = ask_claude(prompt, user=user)
+
+                # Track assistant response
+                if response:
+                    _conversation_history.append({
+                        "role": "assistant",
+                        "content": response,
+                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    })
 
                 if not response:
                     log.warning(f"No response for message {mid} — Claude may have timed out")
@@ -423,11 +541,23 @@ def main():
                     send_message("(Session timeout — please try again)",
                                 reply_to=mid if mid and mid > 0 else None)
 
+                # Run waste check after each message
+                _check_waste_patterns()
+
             mark_processed(messages)
 
         except Exception as e:
             log.error(f"Loop error: {e}", exc_info=True)
             time.sleep(5)
+
+    # Shutdown: capture final checkpoint
+    if _smart_compactor and _conversation_history:
+        log.info("Capturing shutdown checkpoint...")
+        _smart_compactor.capture(
+            _conversation_history,
+            trigger="session-end",
+            reason="Session shutting down",
+        )
 
     # Cleanup
     log.info("Shutting down provider...")
