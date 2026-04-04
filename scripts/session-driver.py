@@ -165,6 +165,7 @@ def read_pending_messages() -> list:
             pass
 
     pending = []
+    seen_ids = set()
     try:
         with open(QUEUE_FILE) as f:
             for line in f:
@@ -175,6 +176,11 @@ def read_pending_messages() -> list:
                     msg = json.loads(line)
                     mid = msg.get("message_id", 0)
                     ts = msg.get("ts", 0)
+                    # Deduplicate: skip if we've already seen this message_id
+                    if mid > 0 and mid in seen_ids:
+                        continue
+                    if mid > 0:
+                        seen_ids.add(mid)
                     # Regular messages
                     if mid > 0 and mid > last_id:
                         pending.append(msg)
