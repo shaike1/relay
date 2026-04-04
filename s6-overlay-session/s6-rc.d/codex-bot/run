@@ -1,12 +1,8 @@
 #!/command/with-contenv sh
 # Standalone Codex Telegram bot — only runs in codex session containers
 # Requires CODEX_BOT_TOKEN to be set
+# DISABLED: webhook mode handles all Telegram updates via relay-api now.
+# codex-bot.js polling is redundant and can conflict with webhooks.
 
-# Skip if not a codex session or no bot token
-if [ "${SESSION_TYPE}" != "codex" ] || [ -z "${CODEX_BOT_TOKEN}" ]; then
-  echo "[codex-bot] Skipping — SESSION_TYPE=${SESSION_TYPE}, CODEX_BOT_TOKEN=${CODEX_BOT_TOKEN:+set}"
-  exec sleep infinity
-fi
-
-echo "[codex-bot] Starting standalone bot for session ${SESSION_NAME}"
-exec node /root/relay/scripts/codex-bot.js
+echo "[codex-bot] Disabled — webhook mode active. codex-bot.js polling no longer needed."
+exec sleep infinity
