@@ -1,196 +1,185 @@
 #!/usr/bin/env bash
-set -e
+# relay install script — one-command setup
+# Usage: curl -fsSL https://raw.githubusercontent.com/shaike1/relay/main/install.sh | bash
 
-# Topix Relay install script
-# https://github.com/shaike1/relay
+set -euo pipefail
 
-RELAY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MCP_DIR="$RELAY_DIR/mcp-telegram"
-ENV_FILE="$RELAY_DIR/.env"
-MCP_ENV_DIR="$HOME/.claude/channels/telegram"
-SERVICE_NAME="relay"
-SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME.service"
-
+RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-RED='\033[0;31m'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
-info()    { echo -e "${GREEN}▶${NC} $*"; }
-warn()    { echo -e "${YELLOW}!${NC} $*"; }
-die()     { echo -e "${RED}✗${NC} $*" >&2; exit 1; }
-ask()     { echo -en "${YELLOW}?${NC} $* "; }
+log()  { echo -e "${GREEN}[relay]${NC} $1"; }
+warn() { echo -e "${YELLOW}[warn]${NC} $1"; }
+err()  { echo -e "${RED}[error]${NC} $1" >&2; exit 1; }
+ask()  { echo -e "${BLUE}[?]${NC} $1"; }
+
+RELAY_DIR="${RELAY_DIR:-/root/relay}"
+REPO="https://github.com/shaike1/relay.git"
 
 echo ""
-echo "  Topix Relay — Telegram to Claude Code bridge"
-echo "  https://github.com/shaike1/relay"
+echo "  ╔═══════════════════════════════════════╗"
+echo "  ║        Claude Telegram Relay          ║"
+echo "  ║  Multi-agent AI sessions via Telegram  ║"
+echo "  ╚═══════════════════════════════════════╝"
 echo ""
 
-# ── 0. Docker fast-path ───────────────────────────────────────────────────────
+# ── 1. Check prerequisites ────────────────────────────────────────────────────
 
-if command -v docker &>/dev/null && command -v docker compose &>/dev/null 2>/dev/null; then
-  echo -n "  Docker is available. Install with Docker instead of systemd? [Y/n] "
-  read -r USE_DOCKER
-  USE_DOCKER="${USE_DOCKER:-Y}"
-  if [[ "$USE_DOCKER" =~ ^[Yy]$ ]]; then
-    info "Using Docker..."
+log "Checking prerequisites..."
 
-    # Write .env if missing
-    if [ ! -f "$ENV_FILE" ]; then
-      info "Configuring..."
-      ask "TELEGRAM_BOT_TOKEN:"; read -r BOT_TOKEN
-      ask "OWNER_ID:"; read -r OWNER_ID
-      ask "GROUP_CHAT_ID:"; read -r GROUP_CHAT_ID
-      printf "TELEGRAM_BOT_TOKEN=%s\nOWNER_ID=%s\nGROUP_CHAT_ID=%s\n" \
-        "$BOT_TOKEN" "$OWNER_ID" "$GROUP_CHAT_ID" > "$ENV_FILE"
-      chmod 600 "$ENV_FILE"
-      info ".env written"
-    fi
+command -v docker >/dev/null 2>&1 || err "Docker not found. Install from https://docs.docker.com/engine/install/"
+command -v git >/dev/null 2>&1    || err "git not found. Run: apt install git"
 
-    docker compose up -d
-    echo ""
-    echo "  ✓ Topix Relay is running in Docker"
-    echo "  Logs: docker compose logs -f"
-    echo ""
-    exit 0
-  fi
+DOCKER_COMPOSE_CMD=""
+if docker compose version >/dev/null 2>&1; then
+  DOCKER_COMPOSE_CMD="docker compose"
+elif docker-compose version >/dev/null 2>&1; then
+  DOCKER_COMPOSE_CMD="docker-compose"
+else
+  err "Docker Compose not found. Install Docker Compose v2."
 fi
 
-# ── 1. Python deps ────────────────────────────────────────────────────────────
+log "Docker: $(docker --version | cut -d' ' -f3 | tr -d ',')"
 
-info "Installing Python dependencies..."
-pip install --quiet python-telegram-bot[job-queue]==21.6
-echo "   python-telegram-bot installed"
+# ── 2. Clone / update repo ────────────────────────────────────────────────────
 
-# ── 2. Bun ───────────────────────────────────────────────────────────────────
-
-if ! command -v bun &>/dev/null; then
-  info "Installing Bun..."
-  curl -fsSL https://bun.sh/install | bash
-  export PATH="$HOME/.bun/bin:$PATH"
+if [ -d "$RELAY_DIR/.git" ]; then
+  log "Updating existing installation at $RELAY_DIR..."
+  git -C "$RELAY_DIR" pull --ff-only
+else
+  log "Cloning relay into $RELAY_DIR..."
+  git clone "$REPO" "$RELAY_DIR"
 fi
 
-# Ensure bun is in system PATH (required for Claude Code MCP spawning)
-BUN_BIN="$(command -v bun 2>/dev/null || echo "$HOME/.bun/bin/bun")"
-if [ "$BUN_BIN" != "/usr/local/bin/bun" ]; then
-  info "Symlinking bun to /usr/local/bin/bun..."
-  sudo ln -sf "$BUN_BIN" /usr/local/bin/bun
-fi
-echo "   bun: $(bun --version) at $(which bun)"
-
-# ── 3. MCP server deps ────────────────────────────────────────────────────────
-
-info "Installing MCP server dependencies..."
-cd "$MCP_DIR" && bun install --frozen-lockfile --silent
 cd "$RELAY_DIR"
-echo "   MCP server ready"
 
-# ── 4. Relay .env ─────────────────────────────────────────────────────────────
+# ── 3. Configure .env ─────────────────────────────────────────────────────────
 
-if [ -f "$ENV_FILE" ]; then
-  warn ".env already exists — skipping (delete it to reconfigure)"
+if [ -f ".env" ]; then
+  warn ".env already exists — skipping interactive setup. Edit manually if needed."
 else
-  info "Configuring Topix Relay..."
   echo ""
-  echo "   You'll need:"
-  echo "   • Bot token from @BotFather"
-  echo "   • Your Telegram user ID (send /start to @userinfobot)"
-  echo "   • Group chat ID (negative number from getUpdates)"
+  log "Setting up configuration..."
   echo ""
 
-  ask "TELEGRAM_BOT_TOKEN:"; read -r BOT_TOKEN
-  ask "OWNER_ID (your Telegram user ID):"; read -r OWNER_ID
-  ask "GROUP_CHAT_ID (supergroup ID):"; read -r GROUP_CHAT_ID
+  ask "Telegram Bot Token (from @BotFather):"
+  read -r BOT_TOKEN
+  [ -z "$BOT_TOKEN" ] && err "Bot token required"
 
-  cat > "$ENV_FILE" <<EOF
-TELEGRAM_BOT_TOKEN=$BOT_TOKEN
-OWNER_ID=$OWNER_ID
-GROUP_CHAT_ID=$GROUP_CHAT_ID
+  ask "Your Telegram User ID (from @userinfobot):"
+  read -r OWNER_ID
+  [ -z "$OWNER_ID" ] && err "Owner ID required"
+
+  ask "Telegram Group Chat ID (negative number, from @getidsbot):"
+  read -r GROUP_CHAT_ID
+  [ -z "$GROUP_CHAT_ID" ] && err "Group Chat ID required"
+
+  ask "Claude OAuth Token (from ~/.claude.json — value of 'oauthToken'):"
+  read -r CLAUDE_TOKEN
+
+  ask "Domain name for HTTPS (e.g. relay.yourdomain.com), or Enter to skip:"
+  read -r DOMAIN
+
+  WEBHOOK_SECRET=$(tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c 32)
+  API_PASS=$(tr -dc 'a-zA-Z0-9-_' < /dev/urandom | head -c 24)
+
+  cat > .env << EOF
+TELEGRAM_BOT_TOKEN=${BOT_TOKEN}
+OWNER_ID=${OWNER_ID}
+GROUP_CHAT_ID=${GROUP_CHAT_ID}
+CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_TOKEN}
+RELAY_DOMAIN=${DOMAIN:-localhost}
+WEBHOOK_SECRET=${WEBHOOK_SECRET}
+RELAY_API_PASS=${API_PASS}
 EOF
-  chmod 600 "$ENV_FILE"
-  echo ""
-  info ".env written"
-fi
 
-# ── 5. MCP credentials ────────────────────────────────────────────────────────
+  log ".env created"
 
-MCP_ENV_FILE="$MCP_ENV_DIR/.env"
-if [ -f "$MCP_ENV_FILE" ]; then
-  warn "$MCP_ENV_FILE already exists — skipping"
-else
-  mkdir -p "$MCP_ENV_DIR"
-  # Re-use values from relay .env if available
-  source "$ENV_FILE" 2>/dev/null || true
-  if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$GROUP_CHAT_ID" ]; then
-    ask "TELEGRAM_BOT_TOKEN (for MCP server):"; read -r TELEGRAM_BOT_TOKEN
-    ask "GROUP_CHAT_ID (for MCP server):"; read -r GROUP_CHAT_ID
+  # Create default sessions.json
+  if [ ! -f "sessions.json" ]; then
+    cat > sessions.json << EOF
+[
+  {
+    "thread_id": 1,
+    "session": "main",
+    "path": "${RELAY_DIR}",
+    "host": null,
+    "group": "infra",
+    "type": "claude",
+    "skills": ["devops", "docker", "general"]
+  }
+]
+EOF
+    warn "Created default sessions.json — update thread_id to your Telegram topic ID"
   fi
-  cat > "$MCP_ENV_FILE" <<EOF
-TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN
-TELEGRAM_CHAT_ID=$GROUP_CHAT_ID
-EOF
-  chmod 600 "$MCP_ENV_FILE"
-  info "MCP credentials written to $MCP_ENV_FILE"
 fi
 
-# ── 6. systemd service ────────────────────────────────────────────────────────
+# ── 4. Docker network and volume ──────────────────────────────────────────────
 
-if [ -f "$SERVICE_FILE" ]; then
-  warn "$SERVICE_FILE already exists — skipping"
-else
-  if ! command -v systemctl &>/dev/null; then
-    warn "systemd not found — skipping service setup. Run manually: python $RELAY_DIR/bot.py"
+log "Setting up Docker network and volumes..."
+docker network create relay_default 2>/dev/null || true
+docker volume create relay-queue 2>/dev/null || true
+
+# ── 5. Build images ───────────────────────────────────────────────────────────
+
+log "Building relay bot image (this takes a few minutes)..."
+docker build -t topix-relay:latest -f Dockerfile . --quiet
+
+log "Building session image..."
+docker build -t relay-session:latest -f session.Dockerfile . --quiet
+
+# ── 6. Generate session containers ───────────────────────────────────────────
+
+log "Generating session docker-compose..."
+python3 scripts/generate-compose.py
+
+# ── 7. Start services ─────────────────────────────────────────────────────────
+
+log "Starting core services..."
+$DOCKER_COMPOSE_CMD up -d relay relay-nomacode relay-api
+
+log "Starting session containers..."
+$DOCKER_COMPOSE_CMD -f docker-compose.sessions.yml up -d
+
+# ── 8. Register Telegram webhook ──────────────────────────────────────────────
+
+# shellcheck source=/dev/null
+source .env
+
+if [ -n "${RELAY_DOMAIN:-}" ] && [ "$RELAY_DOMAIN" != "localhost" ]; then
+  log "Registering Telegram webhook..."
+  WEBHOOK_URL="https://${RELAY_DOMAIN}/webhook"
+  RESPONSE=$(curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
+    -d "url=${WEBHOOK_URL}" \
+    -d "secret_token=${WEBHOOK_SECRET:-}" \
+    -d 'allowed_updates=["message","callback_query"]')
+  if echo "$RESPONSE" | grep -q '"ok":true'; then
+    log "Webhook registered: $WEBHOOK_URL"
   else
-    info "Installing systemd service..."
-    sudo tee "$SERVICE_FILE" > /dev/null <<EOF
-[Unit]
-Description=Topix Relay — Telegram to Claude Code bridge
-After=network.target
-
-[Service]
-Type=simple
-User=$USER
-WorkingDirectory=$RELAY_DIR
-EnvironmentFile=$ENV_FILE
-ExecStart=$(command -v python3) $RELAY_DIR/bot.py
-Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    sudo systemctl daemon-reload
-    sudo systemctl enable "$SERVICE_NAME"
-    sudo systemctl start "$SERVICE_NAME"
-    echo "   Service enabled and started"
+    warn "Webhook registration failed: $RESPONSE"
+    warn "Register manually after setup."
   fi
+else
+  warn "No domain set — skipping webhook registration."
+  warn "After pointing a domain, run: bash scripts/register-webhook.sh"
 fi
 
-# ── 7. Summary ────────────────────────────────────────────────────────────────
+# ── 9. Done ───────────────────────────────────────────────────────────────────
 
 echo ""
-echo "  ✓ Topix Relay is installed and running"
+echo -e "${GREEN}══════════════════════════════════════════${NC}"
+echo -e "${GREEN}  relay is running!${NC}"
+echo -e "${GREEN}══════════════════════════════════════════${NC}"
 echo ""
-echo "  Next: add a project"
-echo "    Send /new /path/to/your/project in your Telegram group"
+# shellcheck disable=SC2153
+echo "  Dashboard:  https://${RELAY_DOMAIN:-localhost}/sessions"
+echo "  Logs:       docker logs relay -f"
+echo "  Status:     docker ps --filter name=relay"
 echo ""
-echo "  Or wire up an existing project manually:"
-echo "    Copy this into your project's .mcp.json:"
-echo ""
-echo '    {'
-echo '      "mcpServers": {'
-echo '        "telegram": {'
-echo '          "command": "bun",'
-echo "          \"args\": [\"run\", \"--cwd\", \"$MCP_DIR\", \"--silent\", \"start\"],"
-echo '          "env": { "TELEGRAM_THREAD_ID": "YOUR_THREAD_ID" }'
-echo '        }'
-echo '      }'
-echo '    }'
-echo ""
-echo "  Copy CLAUDE_TEMPLATE.md to your project's CLAUDE.md"
-echo "  Then: cd /your/project && claude"
-echo ""
-echo "  Logs: journalctl -u relay -f"
+echo "  Next steps:"
+echo "  1. Edit sessions.json — set correct thread_id for each Telegram topic"
+echo "  2. Add .mcp.json to each project directory (see docs)"
+echo "  3. Send a message in your Telegram topic"
 echo ""
