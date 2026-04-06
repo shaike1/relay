@@ -85,11 +85,40 @@ if [ -n "$THREAD_ID" ]; then
     trap "kill $MCP_WRAPPER_PID 2>/dev/null || true" EXIT
   fi
 
-  # Inject a startup message so Claude knows to announce itself and check context.
-  # This ensures sessions are productive immediately after restart, not idle.
+  # Only inject startup message if there are real pending (unprocessed) messages.
+  # Injecting unconditionally burns Claude tokens on every container restart even
+  # when there is nothing to do — with 15+ sessions this adds up significantly.
   QUEUE_FILE="/tmp/tg-queue-${THREAD_ID}.jsonl"
-  STARTUP_MSG='You just started. Call typing then send_message with '"'"'חזרתי ✓'"'"' to announce you'"'"'re online, then fetch_messages and respond to all pending messages.'
-  printf '%s\n' "$(python3 -c "
+  HAS_PENDING=$(python3 -c "
+import json, os, sys
+queue = '/tmp/tg-queue-${THREAD_ID}.jsonl'
+state = '/tmp/tg-queue-${THREAD_ID}.state'
+if not os.path.exists(queue):
+    print('no'); sys.exit()
+last_id, last_ts = 0, 0
+try:
+    s = json.load(open(state))
+    last_id = s.get('lastId', 0)
+    last_ts = s.get('lastTs', 0)
+except Exception:
+    pass
+for line in open(queue):
+    try:
+        msg = json.loads(line.strip())
+        mid = msg.get('message_id', 0)
+        ts = msg.get('ts', 0)
+        if mid > 0 and mid > last_id:
+            print('yes'); sys.exit()
+        if mid < 0 and ts > last_ts:
+            print('yes'); sys.exit()
+    except Exception:
+        pass
+print('no')
+" 2>/dev/null || echo "no")
+
+  if [ "$HAS_PENDING" = "yes" ]; then
+    STARTUP_MSG='You just started. Call typing then send_message with '"'"'חזרתי ✓'"'"' to announce you'"'"'re online, then fetch_messages and respond to all pending messages.'
+    printf '%s\n' "$(python3 -c "
 import json, time
 print(json.dumps({
     'text': '''$STARTUP_MSG''',
@@ -99,6 +128,7 @@ print(json.dumps({
     'force': True
 }))
 ")" >> "$QUEUE_FILE"
+  fi
 fi
 
 # Inner loop script that Claude runs inside tmux
