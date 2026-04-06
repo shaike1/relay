@@ -5,7 +5,7 @@ services:
     restart: always
     working_dir: /nomacode
     command: >
-      sh -c "npm install --omit=dev --quiet 2>/dev/null; node bin/nomacode.js"
+      sh -c "set -euo pipefail; if ! command -v docker >/dev/null 2>&1; then apt-get update >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io >/dev/null; fi; npm install --omit=dev --quiet 2>/dev/null; node bin/nomacode.js"
     environment:
       PORT: "3000"
       HOST: "0.0.0.0"

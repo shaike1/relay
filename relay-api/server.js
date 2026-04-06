@@ -9,6 +9,7 @@ const PORT = process.env.PORT || 9100;
 const NOMACODE_URL = process.env.NOMACODE_URL || 'http://relay-nomacode:3000';
 
 const SESSIONS_FILE = process.env.SESSIONS_FILE || '/relay/sessions.json';
+const METRICS_SCRIPT = 'bash /relay/scripts/metrics.sh';
 const TEMPLATES_FILE = process.env.TEMPLATES_FILE || '/relay/templates.json';
 const METRICS_HTML = process.env.METRICS_HTML || '/relay/metrics.html';
 const CONFIG_HTML = process.env.CONFIG_HTML || '/relay/config.html';
@@ -17,7 +18,14 @@ const CONFIG_HTML = process.env.CONFIG_HTML || '/relay/config.html';
 const AUTH_USER = process.env.AUTH_USER || 'relay';
 const AUTH_PASS = process.env.AUTH_PASS || '';
 const AUTH_COOKIE_NAME = 'relay_auth';
+const NOMACODE_COOKIE_NAME = 'relay_session';
 const AUTH_TOKEN = Buffer.from(`${AUTH_USER}:${AUTH_PASS}`).toString('base64');
+
+function setAuthCookies(res) {
+  const cookieOpts = { maxAge: 86400000, path: '/', sameSite: 'Lax' };
+  res.cookie(AUTH_COOKIE_NAME, AUTH_TOKEN, cookieOpts);
+  res.cookie(NOMACODE_COOKIE_NAME, AUTH_TOKEN, cookieOpts);
+}
 
 function checkAuth(req) {
   // URL token auth (?token=xxx) — sets cookie and redirects
@@ -48,7 +56,7 @@ function authMiddleware(req, res, next) {
   if (checkAuth(req)) {
     // If auth via URL token, set cookie and redirect to clean URL
     if (req.query.token) {
-      res.cookie(AUTH_COOKIE_NAME, AUTH_TOKEN, { maxAge: 86400000, path: '/' });
+      setAuthCookies(res);
       const cleanUrl = req.originalUrl.replace(/[?&]token=[^&]+/, '').replace(/[?&]$/, '').replace(/&/, '?');
       return res.redirect(cleanUrl || '/');
     }
@@ -91,6 +99,9 @@ h1{font-size:16px;font-weight:400;color:#f0f6fc;margin-bottom:20px}
 <button class="btn" type="submit">Login</button>
 <div class="error" id="err">Invalid credentials</div>
 </form></div>
+<div style="margin-top:12px;font-size:12px;color:#8b949e;text-align:center">
+<a href="/clear-cache" style="color:#58a6ff;text-decoration:none">Clear browser cache</a>
+</div>
 <script>
 function doLogin(){
   const u=document.getElementById('user').value;
@@ -98,19 +109,49 @@ function doLogin(){
   const token=btoa(u+':'+p);
   document.cookie='relay_auth='+token+';path=/;max-age=86400;SameSite=Lax';
   fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user:u,pass:p})}).then(r=>r.json()).then(d=>{
-    if(d.ok){location.href='/metrics';}
+    if(d.ok){location.href='/';}
     else{document.getElementById('err').style.display='block';}
   }).catch(()=>{
-    location.href='/metrics?token='+token;
+    location.href='/?token='+token;
   });return false;
 }
 </script></body></html>`);
+});
+
+// Public cache reset page for recovering stale Relay browser state.
+app.get('/clear-cache', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.type('html').send(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Relay Cache Reset</title></head><body><script>
+(async()=>{
+  if ('serviceWorker' in navigator) {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    for (const r of regs) await r.unregister();
+  }
+  if ('caches' in window) {
+    const keys = await caches.keys();
+    for (const k of keys) await caches.delete(k);
+  }
+  document.body.textContent = 'Relay cache cleared. Redirecting...';
+  setTimeout(() => location.href = '/login?cleared=1', 800);
+})().catch(() => {
+  location.href = '/login?cleared=1';
+});
+</script></body></html>`);
+});
+
+// Always serve a self-destructing service worker script on the public domain.
+app.get('/sw.js', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.type('application/javascript').send(`self.addEventListener('install',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.map(key=>caches.delete(key)))));self.skipWaiting();});self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.map(key=>caches.delete(key)))).then(()=>self.registration.unregister()));self.clients.claim();});`);
 });
 
 // Login API (no auth required)
 app.post('/api/login', (req, res) => {
   const { user, pass } = req.body || {};
   if (user === AUTH_USER && pass === AUTH_PASS) {
+    setAuthCookies(res);
     return res.json({ ok: true });
   }
   res.status(401).json({ ok: false, error: 'Invalid credentials' });
@@ -140,6 +181,61 @@ app.post(`/webhook/${CODEX_WEBHOOK_SECRET}`, (req, res) => {
 });
 
 function webhookQueueWrite(update) {
+  // Handle inline button callbacks (callback_query)
+  if (update && update.callback_query) {
+    const cb = update.callback_query;
+    const data = cb.data || '';
+    // Format: btn:THREAD_ID:label
+    const match = data.match(/^btn:(\d+):(.+)$/);
+    if (!match) return;
+    const threadId = match[1];
+    const label = match[2];
+    const queueFile = path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`);
+    const entry = {
+      message_id: cb.message ? cb.message.message_id : Date.now(),
+      user: (cb.from.first_name || cb.from.username || 'unknown'),
+      user_id: cb.from.id,
+      text: label,
+      ts: Math.floor(Date.now() / 1000),
+      via: 'callback'
+    };
+    try {
+      fs.appendFileSync(queueFile, JSON.stringify(entry) + '\n');
+      console.log(`[webhook] ${threadId}: ${cb.from.first_name} clicked: ${label} (cb.id=${cb.id})`);
+      // Answer the callback and visually update the button
+      const botToken = process.env.TELEGRAM_BOT_TOKEN;
+      if (botToken && cb.id) {
+        // 1. Answer callback to remove spinner
+        fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery?callback_query_id=${cb.id}&text=${encodeURIComponent('✓ ' + label)}`)
+          .then(r => r.json())
+          .then(d => console.log(`[webhook] answerCallback: ${JSON.stringify(d)}`))
+          .catch(e => console.error(`[webhook] answerCallback error: ${e.message}`));
+        // 2. Update the message to show which button was clicked
+        if (cb.message) {
+          // Build new markup with clicked button marked
+          const chatId = cb.message.chat.id;
+          const msgId = cb.message.message_id;
+          // Remove all buttons and append clicked label to the message text
+          fetch(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              message_id: msgId,
+              reply_markup: { inline_keyboard: [[{ text: '✓ ' + label, callback_data: 'noop:done' }]] }
+            })
+          })
+            .then(r => r.json())
+            .then(d => console.log(`[webhook] editMarkup: ${JSON.stringify(d).substring(0, 100)}`))
+            .catch(e => console.error(`[webhook] editMarkup error: ${e.message}`));
+        }
+      }
+    } catch (err) {
+      console.error(`[webhook] Callback queue write error:`, err.message);
+    }
+    return;
+  }
+
   const msg = update && update.message;
   if (!msg || !msg.text) return;
   if (String(msg.chat.id) !== String(TG_CHAT_ID)) return;
@@ -318,7 +414,8 @@ app.post('/api/session-create', (req, res) => {
   try {
     // Check if container already exists
     const exists = execSync(`docker inspect relay-session-${session} 2>/dev/null || true`, { timeout: 5000 }).toString().trim();
-    if (exists && exists !== '') {
+    const isEmptyInspect = exists === '' || exists === '[]';
+    if (!isEmptyInspect) {
       return res.status(409).json({ error: 'Container already exists' });
     }
 
@@ -511,6 +608,38 @@ app.post('/api/scale-up', (req, res) => {
       } catch (e) { /* skip */ }
     }
     res.json({ ok: true, started, count: started.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/session-health', (req, res) => {
+  try {
+    const metricsRaw = execSync(METRICS_SCRIPT, { timeout: 15000 }).toString();
+    const metrics = JSON.parse(metricsRaw);
+    const unhealthy = metrics.filter(m => m.status !== 'running');
+    res.json({
+      ok: true,
+      total: metrics.length,
+      healthy: metrics.length - unhealthy.length,
+      unhealthy: unhealthy.map(m => ({ session: m.session, status: m.status })),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/session-heal', (req, res) => {
+  try {
+    const metricsRaw = execSync(METRICS_SCRIPT, { timeout: 15000 }).toString();
+    const metrics = JSON.parse(metricsRaw);
+    const restarted = [];
+    for (const m of metrics) {
+      if (m.status === 'running') continue;
+      if (m.host && m.host !== 'local') continue;
+      try {
+        execSync(`docker start relay-session-${m.session}`, { timeout: 10000 });
+        restarted.push(m.session);
+      } catch (e) { /* skip */ }
+    }
+    const unhealthy = metrics.filter(m => m.status !== 'running');
+    res.json({ ok: true, restarted, count: restarted.length, unhealthy: unhealthy.map(m => m.session) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1336,6 +1465,15 @@ app.use('/', createProxyMiddleware({
   target: NOMACODE_URL,
   changeOrigin: true,
   ws: true,
+  // Re-stream JSON body that express.json() already consumed
+  onProxyReq: (proxyReq, req) => {
+    if (req.body && Object.keys(req.body).length > 0) {
+      const body = JSON.stringify(req.body);
+      proxyReq.setHeader('Content-Type', 'application/json');
+      proxyReq.setHeader('Content-Length', Buffer.byteLength(body));
+      proxyReq.write(body);
+    }
+  },
 }));
 
 const server = app.listen(PORT, '0.0.0.0', () => {

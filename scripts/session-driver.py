@@ -294,7 +294,7 @@ def get_provider():
 
     class RelayCodexProvider(CodexProvider):
         def get_start_cmd(self):
-            cmd = ["codex", "--dangerously-bypass-approvals-and-sandbox"]
+            cmd = ["codex", "--yolo", "--dangerously-bypass-approvals-and-sandbox"]
             if self.model:
                 cmd.extend(["--model", self.model])
             return cmd

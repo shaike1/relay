@@ -392,9 +392,9 @@ let _updateActivity: (() => void) | null = null
 
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args } = req.params
-  // Only confirm delivery when Claude calls fetch_messages — proves it actually read the message.
-  // (Any other tool call could be unrelated work and would falsely advance lastId.)
-  if (name === 'fetch_messages' && _updateActivity) _updateActivity()
+  // Confirm delivery when Claude calls any messaging-related tool — proves it's actively responding.
+  // fetch_messages, send_message, typing, react, send_file all indicate the session is alive and processing.
+  if (_updateActivity && ['fetch_messages', 'send_message', 'typing', 'react', 'send_file', 'message_peer', 'complete_task'].includes(name)) _updateActivity()
 
   if (name === 'send_message') {
     // Accept 'message' as alias for 'text' — Claude sometimes uses wrong param name
@@ -1254,7 +1254,7 @@ async function poll(): Promise<void> {
   // Track Claude activity: updated whenever Claude calls any MCP tool.
   // Used to confirm notification delivery — we only advance lastId after Claude shows activity.
   let lastActivityTs = 0
-  let pendingDelivery: { message_id: number; sentAt: number } | null = null
+  let pendingDelivery: { message_id: number; sentAt: number; firstSentAt: number } | null = null
   _updateActivity = () => { lastActivityTs = Date.now() }
 
   let pollCount = 0
@@ -1274,6 +1274,16 @@ async function poll(): Promise<void> {
 
       // Re-send pending notification if Claude hasn't responded within 3s
       if (pendingDelivery && Date.now() - pendingDelivery.sentAt > 3000) {
+        // Give up after 30s of retries — assume Claude saw it but responded without MCP tools
+        const totalAge = Date.now() - pendingDelivery.firstSentAt
+        if (totalAge > 30_000) {
+          process.stderr.write(`[telegram] giving up on msg ${pendingDelivery.message_id} after 30s — advancing lastId\n`)
+          lastId = pendingDelivery.message_id
+          await saveState(lastId, [...ackedForceIds])
+          pendingDelivery = null
+          await Bun.sleep(500)
+          continue
+        }
         process.stderr.write(`[telegram] no activity after 3s — retrying notification for msg ${pendingDelivery.message_id}\n`)
         // Don't clear pendingDelivery — keep retrying until Claude responds or message expires
         pendingDelivery.sentAt = Date.now()  // reset timer for next retry
@@ -1354,7 +1364,7 @@ async function poll(): Promise<void> {
             await saveState(lastId, trimmed)
           } else if (message_id > lastId) {
             // Don't advance lastId yet — wait for Claude to show activity (call a tool)
-            pendingDelivery = { message_id, sentAt: Date.now() }
+            pendingDelivery = { message_id, sentAt: Date.now(), firstSentAt: Date.now() }
           }
           sentOne = true
 

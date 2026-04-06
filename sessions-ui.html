@@ -31,6 +31,15 @@
   .scaling-stat .lbl { font-size: 10px; color: #8b949e; text-transform: uppercase; }
   .scaling-actions { display: flex; gap: 8px; margin-left: auto; }
   .scaling-rec { font-size: 11px; color: #d29922; flex-basis: 100%; }
+  .health-panel {
+    background: #141922; border: 1px solid #21262d; border-radius: 8px;
+    padding: 14px 18px; display: flex; align-items: center; gap: 12px;
+    margin-bottom: 16px;
+  }
+  .health-panel span { font-size: 12px; color: #8b949e; }
+  .health-panel .health-ok { color: #3fb950; font-weight: 600; }
+  .health-panel .health-alert { color: #f85149; font-weight: 600; }
+  .health-panel .health-actions { margin-left: auto; display: flex; gap: 8px; }
 
   /* Toolbar */
   .toolbar {
@@ -149,6 +158,7 @@
   </div>
 
   <div class="scaling-panel" id="scaling"></div>
+  <div class="health-panel" id="healthPanel"></div>
 
   <div class="toolbar">
     <button class="btn btn-primary" onclick="showCreateModal()">+ New Session</button>
@@ -290,6 +300,21 @@ function filterSessions() {
   renderCards(filtered);
 }
 
+function handleAuth(res) {
+  if (res.status === 401) {
+    window.location = '/login';
+    return false;
+  }
+  return true;
+}
+
+async function parseJsonResponse(res) {
+  if (!handleAuth(res)) throw new Error('Authentication required');
+  const payload = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(payload?.error || 'Request failed');
+  return payload;
+}
+
 async function loadAll() {
   try {
     const [configRes, metricsRes, scalingRes] = await Promise.all([
@@ -297,13 +322,51 @@ async function loadAll() {
       fetch('/api/relay-metrics'),
       fetch('/api/scaling-status'),
     ]);
-    allSessions = await configRes.json();
-    metricsData = await metricsRes.json();
-    const scaling = await scalingRes.json();
+    allSessions = await parseJsonResponse(configRes);
+    metricsData = await parseJsonResponse(metricsRes);
+    const scaling = await parseJsonResponse(scalingRes);
     renderScaling(scaling);
     filterSessions();
+    await loadHealth();
   } catch (e) {
     toast('Failed to load: ' + e.message, 'error');
+  }
+}
+
+async function loadHealth() {
+  try {
+    const res = await fetch('/api/session-health');
+    const data = await parseJsonResponse(res);
+    renderHealth(data);
+  } catch (e) {
+    toast('Health check failed: ' + e.message, 'error');
+  }
+}
+
+function renderHealth(data) {
+  const el = document.getElementById('healthPanel');
+  if (!el) return;
+  const statusClass = data.healthy === data.total ? 'health-ok' : 'health-alert';
+  const message = data.healthy === data.total ? 'All sessions running' : `${data.total - data.healthy} down`;
+  const disabled = data.healthy === data.total;
+  el.innerHTML = `
+    <span class="${statusClass}">${message}</span>
+    <span>${data.healthy}/${data.total} healthy</span>
+    <div class="health-actions">
+      <button class="btn btn-warn" onclick="healSessions()" ${disabled ? 'disabled' : ''}>Heal Sessions</button>
+      <button class="btn" onclick="loadHealth()">Check</button>
+    </div>
+  `;
+}
+
+async function healSessions() {
+  try {
+    const res = await fetch('/api/session-heal', { method: 'POST' });
+    const data = await parseJsonResponse(res);
+    toast(data.count ? `Restarted ${data.count} session(s)` : 'All sessions already healthy', 'success');
+    loadAll();
+  } catch (e) {
+    toast('Heal failed: ' + e.message, 'error');
   }
 }
 
@@ -320,8 +383,7 @@ async function createSession() {
   if (!data.session) { toast('Session name required', 'error'); return; }
   try {
     const r = await fetch('/api/session-create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-    const res = await r.json();
-    if (!r.ok) throw new Error(res.error);
+    const res = await parseJsonResponse(r);
     toast(`Session "${data.session}" created`);
     hideCreateModal();
     loadAll();
@@ -351,9 +413,9 @@ async function deleteSession(name) {
   if (!confirm(`DELETE session "${name}"? This removes the container and config entry.`)) return;
   try {
     const r = await fetch('/api/session-delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session: name }) });
-    const res = await r.json();
-    if (res.ok) { toast(`${name} deleted`); loadAll(); }
-    else throw new Error(res.error);
+    const res = await parseJsonResponse(r);
+    toast(`${name} deleted`);
+    loadAll();
   } catch (e) { toast(e.message, 'error'); }
 }
 

@@ -41,6 +41,28 @@ tmux_s() { tmux -S "$TMUX_SOCKET" "$@"; }
 write_session_mcp_config() {
     [ -n "${THREAD_ID:-}" ] || return 0
 
+    # Read per-session bot_token from sessions.json (falls back to default)
+    local BOT_TOKEN_OVERRIDE
+    BOT_TOKEN_OVERRIDE="$(python3 - "$SESSION" <<'PYBT'
+import json, sys
+session = sys.argv[1]
+try:
+    sessions = json.load(open('/root/relay/sessions.json'))
+    s = next((s for s in sessions if s.get('session') == session), None)
+    print(s.get('bot_token', '') if s else '')
+except Exception:
+    print('')
+PYBT
+)"
+
+    # Build env block — include bot_token override if set
+    local env_block
+    if [ -n "$BOT_TOKEN_OVERRIDE" ]; then
+        env_block='"TELEGRAM_THREAD_ID": "'"${THREAD_ID}"'", "SESSION_NAME": "'"${SESSION}"'", "TELEGRAM_BOT_TOKEN": "'"${BOT_TOKEN_OVERRIDE}"'"'
+    else
+        env_block='"TELEGRAM_THREAD_ID": "'"${THREAD_ID}"'", "SESSION_NAME": "'"${SESSION}"'"'
+    fi
+
     local mcp_json='{
   "mcpServers": {
     "telegram": {
@@ -52,15 +74,16 @@ write_session_mcp_config() {
         "server.ts"
       ],
       "env": {
-        "TELEGRAM_THREAD_ID": "'"${THREAD_ID}"'",
-        "SESSION_NAME": "'"${SESSION}"'"
+        '"${env_block}"'
       }
     }
   }
 }'
     echo "$mcp_json" > "${SESSION_HOME}/.mcp.json"
 
-    # Also inject telegram into /root/.codex/mcp.json (Codex CLI's actual MCP config)
+    # Also inject telegram into /root/.codex/mcp.json (legacy JSON config)
+    local bt_env=""
+    [ -n "$BOT_TOKEN_OVERRIDE" ] && bt_env=", 'TELEGRAM_BOT_TOKEN': '${BOT_TOKEN_OVERRIDE}'"
     if [ -f /root/.codex/mcp.json ]; then
         python3 -c "
 import json
@@ -70,9 +93,37 @@ d['mcpServers']['telegram'] = {
     'type': 'stdio',
     'command': '/root/.bun/bin/bun',
     'args': ['run', '--cwd', '/root/relay/mcp-telegram', 'server.ts'],
-    'env': {'TELEGRAM_THREAD_ID': '${THREAD_ID}', 'SESSION_NAME': '${SESSION}'}
+    'env': {'TELEGRAM_THREAD_ID': '${THREAD_ID}', 'SESSION_NAME': '${SESSION}'${bt_env}}
 }
 json.dump(d, open(p, 'w'), indent=2)
+" 2>/dev/null || true
+    fi
+
+    # Update /root/.codex/config.toml — the actual Codex CLI MCP config (TOML format)
+    if [ -f /root/.codex/config.toml ]; then
+        python3 -c "
+import re, sys
+
+path = '/root/.codex/config.toml'
+content = open(path).read()
+
+thread_id = '${THREAD_ID}'
+session = '${SESSION}'
+bot_token = '${BOT_TOKEN_OVERRIDE}'
+
+if bot_token:
+    env_line = 'env = { TELEGRAM_THREAD_ID = \"' + thread_id + '\", SESSION_NAME = \"' + session + '\", TELEGRAM_BOT_TOKEN = \"' + bot_token + '\" }'
+else:
+    env_line = 'env = { TELEGRAM_THREAD_ID = \"' + thread_id + '\", SESSION_NAME = \"' + session + '\" }'
+
+# Replace existing env line under [mcp_servers.telegram]
+content = re.sub(
+    r'(\[mcp_servers\.telegram\].*?env\s*=\s*\{[^\}]*\})',
+    lambda m: re.sub(r'env\s*=\s*\{[^\}]*\}', env_line, m.group(0)),
+    content,
+    flags=re.DOTALL
+)
+open(path, 'w').write(content)
 " 2>/dev/null || true
     fi
 }
@@ -154,6 +205,7 @@ json.dump(d, open(p, 'w'), indent=2)
 " 2>/dev/null || true
 
         if "${CODEX_BIN}" resume --last \
+            --yolo \
             -c "${TRUST_CONFIG}" \
             --dangerously-bypass-approvals-and-sandbox \
             --no-alt-screen \
@@ -162,6 +214,7 @@ json.dump(d, open(p, 'w'), indent=2)
             :
         else
             "${CODEX_BIN}" \
+                --yolo \
                 -c "${TRUST_CONFIG}" \
                 --dangerously-bypass-approvals-and-sandbox \
                 --no-alt-screen \

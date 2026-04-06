@@ -251,5 +251,18 @@
       "copilot",
       "multi-project"
     ]
+  },
+  {
+    "thread_id": 10170,
+    "session": "remote-desktop",
+    "path": "/root/meshcentral",
+    "host": null,
+    "group": "infra",
+    "skills": [
+      "meshcentral",
+      "remote-desktop",
+      "docker",
+      "networking"
+    ]
   }
 ]

@@ -8,6 +8,7 @@ services:
       - .env
     environment:
       RELAY_BOT_ROLE: "primary"
+      WEBHOOK_MODE: "1"
     volumes:
       # Full home dir — covers all local Claude sessions and ~/.claude state.
       # If your sessions are all remote (SSH), replace this with targeted mounts:
@@ -35,10 +36,39 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  relay-nomacode:
+    image: node:22-slim
+    container_name: relay-nomacode
+    restart: always
+    working_dir: /nomacode
+    command: >
+      sh -c "npm install --omit=dev --quiet 2>/dev/null; node bin/nomacode.js"
+    environment:
+      PORT: "3000"
+      HOST: "0.0.0.0"
+      SHELL: "/root/relay/scripts/hub.sh"
+      NOMACODE_USER: "relay"
+      NOMACODE_PASS: "${RELAY_API_PASS:-PKNfwGoX4-8-LHsxhVphvQ}"
+    expose:
+      - "3000"
+    volumes:
+      - /root/nomacode:/nomacode
+      - /root:/root
+      - /var/run/docker.sock:/var/run/docker.sock
+      - relay-queue:/tmp/relay-sessions
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   relay-api:
     build: ./relay-api
     container_name: relay-api
     restart: always
+    depends_on:
+      - relay-nomacode
+      - relay
     ports:
       - "7070:7070"
     environment:
@@ -64,6 +94,7 @@ services:
       - /root/relay/scripts:/relay/scripts:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - relay-queue:/tmp
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - default
       - relay_default
