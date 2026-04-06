@@ -1,0 +1,18 @@
+#!/command/with-contenv sh
+# finish — called by s6 when the claude-session service exits (for any reason)
+# $1 = exit code of the run script, $2 = signal (if killed), $3 = -1 (if exit, 0 if normal)
+
+EXIT_CODE="${1:-0}"
+echo "[claude-session/finish] Service exited with code ${EXIT_CODE}"
+
+# Only send shutdown notification when the container is actually stopping
+# (i.e. s6 is being told to shut down, not just restarting after a crash)
+# We detect this by checking if s6 sent us a TERM signal ($2 is a signal number)
+if [ "${EXIT_CODE}" = "256" ] || [ "${2}" != "-1" ]; then
+  # Normal s6 restart — don't notify
+  echo "[claude-session/finish] Normal restart — skipping shutdown notification"
+  exit 0
+fi
+
+# Run graceful shutdown
+exec /relay/scripts/graceful-shutdown.sh

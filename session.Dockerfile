@@ -82,6 +82,7 @@ COPY . .
 # s6-rc service definitions for session container (session-specific layout)
 COPY s6-overlay-session/s6-rc.d /etc/s6-overlay/s6-rc.d
 RUN chmod +x /etc/s6-overlay/s6-rc.d/claude-session/run \
+    && chmod +x /etc/s6-overlay/s6-rc.d/claude-session/finish \
     && chmod +x /etc/s6-overlay/s6-rc.d/message-watchdog/run \
     && chmod +x /etc/s6-overlay/s6-rc.d/claude-update/up \
     && chmod +x /etc/s6-overlay/s6-rc.d/codex-bot/run \
@@ -93,6 +94,7 @@ RUN chmod +x /etc/s6-overlay/s6-rc.d/claude-session/run \
     && chmod +x /relay/scripts/message-watchdog.sh \
     && chmod +x /relay/scripts/tg-send.sh \
     && chmod +x /relay/scripts/session-driver.py \
+    && chmod +x /relay/scripts/graceful-shutdown.sh \
     && ln -sf /relay/scripts/tg-send.sh /usr/local/bin/tg-send
 
 # s6-overlay is the init
