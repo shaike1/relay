@@ -111,6 +111,27 @@
   .chart-stats { display: flex; gap: 16px; margin-top: 12px; flex-wrap: wrap; }
   .chart-stat { font-size: 12px; color: #8b949e; }
   .chart-stat span { color: #f0f6fc; }
+
+  /* Timeline */
+  .timeline { padding: 8px 0; }
+  .tl-event {
+    display: flex; gap: 12px; padding: 8px 0; align-items: flex-start;
+    border-left: 2px solid #21262d; padding-left: 16px; margin-left: 8px;
+    position: relative;
+  }
+  .tl-event::before {
+    content: ''; position: absolute; left: -5px; top: 12px;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #30363d; border: 2px solid #21262d;
+  }
+  .tl-event.tool::before { background: #58a6ff; }
+  .tl-event.message::before { background: #3fb950; }
+  .tl-icon { font-size: 14px; min-width: 20px; }
+  .tl-body { flex: 1; }
+  .tl-time { font-size: 10px; color: #484f58; }
+  .tl-title { font-size: 12px; color: #c9d1d9; margin-top: 2px; }
+  .tl-title code { background: #21262d; padding: 1px 5px; border-radius: 3px; font-size: 11px; color: #79c0ff; }
+  .tl-detail { font-size: 11px; color: #6e7681; margin-top: 2px; font-family: monospace; }
 </style>
 </head>
 <body>
@@ -137,6 +158,7 @@
     <button class="tab" onclick="showTab('tasks')">Tasks</button>
     <button class="tab" onclick="showTab('tokens')">Tokens</button>
     <button class="tab" onclick="showTab('logs')">Logs</button>
+    <button class="tab" onclick="showTab('timeline')">Timeline</button>
   </div>
 
   <div class="panel active" id="panel-tmux">
@@ -163,6 +185,11 @@
 
   <div class="panel" id="panel-logs">
     <div class="logs-container" id="logsOutput"><span class="refresh-hint">Loading logs...</span></div>
+    <div class="auto-refresh">Auto-refresh every 10s</div>
+  </div>
+
+  <div class="panel" id="panel-timeline">
+    <div id="timelineContainer"><span class="refresh-hint">Loading timeline...</span></div>
     <div class="auto-refresh">Auto-refresh every 10s</div>
   </div>
 
@@ -388,6 +415,41 @@ async function loadLogs() {
   }
 }
 
+// --- Timeline ---
+async function loadTimeline() {
+  try {
+    const r = await fetch(`/api/timeline/${SESSION}`);
+    const events = await r.json();
+    const el = document.getElementById('timelineContainer');
+    if (!Array.isArray(events) || events.length === 0) {
+      el.innerHTML = '<div class="empty-state">No timeline events yet</div>';
+      return;
+    }
+    // Render newest first
+    const reversed = [...events].reverse();
+    el.innerHTML = '<div class="timeline">' + reversed.map(ev => {
+      const icon = ev.type === 'tool' ? '🔧' : ev.type === 'message' ? '💬' : '📋';
+      const time = ev.ts ? new Date(ev.ts).toLocaleTimeString() : '';
+      const title = ev.type === 'tool'
+        ? `<code>${escHtml(ev.tool || 'tool')}</code>`
+        : `<b>${escHtml(ev.user || 'user')}</b>`;
+      const detail = ev.type === 'tool'
+        ? (ev.command ? escHtml(ev.command.slice(0, 120)) : '')
+        : (ev.text ? escHtml(ev.text.slice(0, 120)) : '');
+      return `<div class="tl-event ${ev.type || ''}">
+        <div class="tl-icon">${icon}</div>
+        <div class="tl-body">
+          <div class="tl-time">${time}</div>
+          <div class="tl-title">${title}</div>
+          ${detail ? `<div class="tl-detail">${detail}</div>` : ''}
+        </div>
+      </div>`;
+    }).join('') + '</div>';
+  } catch (e) {
+    document.getElementById('timelineContainer').innerHTML = '<div class="empty-state">Failed to load timeline</div>';
+  }
+}
+
 // --- Actions ---
 async function doRestart() {
   if (!confirm(`Restart "${SESSION}"?`)) return;
@@ -422,12 +484,13 @@ function loadAll() {
   loadTasks();
   loadTokens();
   loadLogs();
+  loadTimeline();
 }
 
 loadAll();
 // Tmux refreshes faster
 setInterval(loadTmux, 5000);
-setInterval(() => { loadQueue(); loadTasks(); loadLogs(); loadInfo(); }, 10000);
+setInterval(() => { loadQueue(); loadTasks(); loadLogs(); loadInfo(); loadTimeline(); }, 10000);
 </script>
 </body>
 </html>

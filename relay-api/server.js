@@ -376,6 +376,41 @@ function webhookQueueWrite(update) {
     return;
   }
 
+  // /pr [owner/repo] — list open PRs via GitHub CLI
+  const prCmd = msg.text && msg.text.trim().match(/^\/pr(@\S+)?(\s+(\S+))?$/i);
+  if (prCmd) {
+    handlePRCommand(threadId, prCmd[3] || null, msg.message_id).catch(e => console.error('[pr] error:', e.message));
+    return;
+  }
+
+  // /issues [owner/repo] — list open issues via GitHub CLI
+  const issuesCmd = msg.text && msg.text.trim().match(/^\/issues(@\S+)?(\s+(\S+))?$/i);
+  if (issuesCmd) {
+    handleIssuesCommand(threadId, issuesCmd[3] || null, msg.message_id).catch(e => console.error('[issues] error:', e.message));
+    return;
+  }
+
+  // /deploy [service] — docker compose restart [service]
+  const deployCmd = msg.text && msg.text.trim().match(/^\/deploy(@\S+)?(\s+(\S+))?$/i);
+  if (deployCmd) {
+    handleDeployCommand(threadId, deployCmd[3] || null, msg.message_id).catch(e => console.error('[deploy] error:', e.message));
+    return;
+  }
+
+  // /ls [path] — list files in session workdir
+  const lsCmd = msg.text && msg.text.trim().match(/^\/ls(@\S+)?(\s+(.+))?$/i);
+  if (lsCmd) {
+    handleLsCommand(threadId, lsCmd[3] || null, msg.message_id).catch(e => console.error('[ls] error:', e.message));
+    return;
+  }
+
+  // /cat [filepath] — show first 50 lines of a file
+  const catCmd = msg.text && msg.text.trim().match(/^\/cat(@\S+)?\s+(.+)$/i);
+  if (catCmd) {
+    handleCatCommand(threadId, catCmd[2] || null, msg.message_id).catch(e => console.error('[cat] error:', e.message));
+    return;
+  }
+
   // Voice messages — transcribe via Whisper then queue
   if (msg.voice || msg.audio) {
     handleVoiceMessage(msg, threadId).catch(e => console.error('[voice] error:', e.message));
@@ -644,6 +679,125 @@ async function handleReportCommand(threadId, replyTo) {
   } catch (e) {
     console.error('[report] Failed:', e.message);
     await tgSendMessage(threadId, `❌ שגיאה בהפקת דוח: ${e.message}`, replyTo, null);
+  }
+}
+
+// /pr [owner/repo] — list open PRs via GitHub CLI
+async function handlePRCommand(threadId, repo, replyTo) {
+  const ghToken = process.env.GH_TOKEN;
+  if (!ghToken) {
+    await tgSendMessage(threadId, '⚠️ GH_TOKEN לא מוגדר', replyTo, null);
+    return;
+  }
+  try {
+    const repoArg = repo ? `--repo ${repo}` : '';
+    const out = execSync(
+      `gh pr list ${repoArg} --json number,title,state,author --limit 5`,
+      { timeout: 15000, env: { ...process.env, GH_TOKEN: ghToken } }
+    ).toString();
+    const prs = JSON.parse(out);
+    if (!prs.length) {
+      await tgSendMessage(threadId, `📋 אין PRs פתוחים${repo ? ' ב-' + repo : ''}`, replyTo, null);
+      return;
+    }
+    const lines = [`📋 <b>Open PRs${repo ? ' — ' + repo : ''}</b>`, ''];
+    for (const pr of prs) {
+      lines.push(`• #${pr.number} <b>${pr.title.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</b> (${pr.author?.login || 'unknown'})`);
+    }
+    await tgSendMessage(threadId, lines.join('\n'), replyTo, null);
+  } catch (e) {
+    await tgSendMessage(threadId, `❌ שגיאה ב-/pr: ${e.message.substring(0, 200)}`, replyTo, null);
+  }
+}
+
+// /issues [owner/repo] — list open issues via GitHub CLI
+async function handleIssuesCommand(threadId, repo, replyTo) {
+  const ghToken = process.env.GH_TOKEN;
+  if (!ghToken) {
+    await tgSendMessage(threadId, '⚠️ GH_TOKEN לא מוגדר', replyTo, null);
+    return;
+  }
+  try {
+    const repoArg = repo ? `--repo ${repo}` : '';
+    const out = execSync(
+      `gh issue list ${repoArg} --json number,title,state,author --limit 5`,
+      { timeout: 15000, env: { ...process.env, GH_TOKEN: ghToken } }
+    ).toString();
+    const issues = JSON.parse(out);
+    if (!issues.length) {
+      await tgSendMessage(threadId, `🐛 אין issues פתוחים${repo ? ' ב-' + repo : ''}`, replyTo, null);
+      return;
+    }
+    const lines = [`🐛 <b>Open Issues${repo ? ' — ' + repo : ''}</b>`, ''];
+    for (const issue of issues) {
+      lines.push(`• #${issue.number} <b>${issue.title.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</b> (${issue.author?.login || 'unknown'})`);
+    }
+    await tgSendMessage(threadId, lines.join('\n'), replyTo, null);
+  } catch (e) {
+    await tgSendMessage(threadId, `❌ שגיאה ב-/issues: ${e.message.substring(0, 200)}`, replyTo, null);
+  }
+}
+
+// /deploy [service] — docker compose restart [service] or list services
+async function handleDeployCommand(threadId, service, replyTo) {
+  try {
+    if (!service) {
+      // List running containers
+      const out = execSync(
+        `docker ps --format '{{.Names}}' 2>/dev/null | grep -v relay-api || true`,
+        { timeout: 10000 }
+      ).toString().trim();
+      const names = out ? out.split('\n').map(n => n.trim()).filter(Boolean) : [];
+      if (!names.length) {
+        await tgSendMessage(threadId, '🐳 אין containers פעילים', replyTo, null);
+        return;
+      }
+      const btns = names.slice(0, 6).map(n => ({ text: n, callback_data: `btn:${threadId}:/deploy ${n}` }));
+      await tgSendMessage(threadId, `🐳 <b>בחר שירות ל-restart:</b>\n${names.join('\n')}`, replyTo,
+        btns.length ? { inline_keyboard: [btns] } : null);
+      return;
+    }
+    // Sanitize
+    const svc = service.replace(/[^a-zA-Z0-9_-]/g, '');
+    await tgSendMessage(threadId, `🔄 מפעיל מחדש <code>${svc}</code>...`, replyTo, null);
+    const out = execSync(`docker restart ${svc}`, { timeout: 30000 }).toString().trim();
+    await tgSendMessage(threadId, `✅ <code>${svc}</code> הופעל מחדש${out ? '\n<code>' + out.substring(0, 100) + '</code>' : ''}`, null, null);
+  } catch (e) {
+    await tgSendMessage(threadId, `❌ שגיאה ב-/deploy: ${e.message.substring(0, 200)}`, replyTo, null);
+  }
+}
+
+// /ls [path] — list files in session workdir
+async function handleLsCommand(threadId, lsPath, replyTo) {
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const session = sessions.find(s => String(s.thread_id) === String(threadId));
+    const workdir = session ? (session.path || '/root') : '/root';
+    const targetPath = lsPath ? lsPath.trim() : workdir;
+    // Basic path safety — no shell injection
+    const safePath = targetPath.replace(/[`$;|&<>]/g, '');
+    const out = execSync(`ls -la ${safePath}`, { timeout: 5000 }).toString();
+    const truncated = out.length > 3000 ? out.slice(0, 3000) + '\n… (truncated)' : out;
+    await tgSendMessage(threadId, `<pre>${truncated.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`, replyTo, null);
+  } catch (e) {
+    await tgSendMessage(threadId, `❌ שגיאה ב-/ls: ${e.message.substring(0, 200)}`, replyTo, null);
+  }
+}
+
+// /cat [filepath] — show first 50 lines of a file
+async function handleCatCommand(threadId, filePath, replyTo) {
+  if (!filePath) {
+    await tgSendMessage(threadId, '❌ שימוש: /cat [filepath]', replyTo, null);
+    return;
+  }
+  try {
+    // Basic safety check — no shell injection
+    const safePath = filePath.trim().replace(/[`$;|&<>]/g, '');
+    const out = execSync(`head -50 ${safePath}`, { timeout: 5000 }).toString();
+    const truncated = out.length > 3000 ? out.slice(0, 3000) + '\n… (truncated)' : out;
+    await tgSendMessage(threadId, `<pre>${truncated.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`, replyTo, null);
+  } catch (e) {
+    await tgSendMessage(threadId, `❌ שגיאה ב-/cat: ${e.message.substring(0, 200)}`, replyTo, null);
   }
 }
 
@@ -2425,7 +2579,7 @@ app.get('/api/logs/:container', (req, res) => {
   req.on('close', () => proc.kill());
 });
 
-// Tool call timeline — read session JSONL and extract tool calls
+// Tool call timeline — read session JSONL, audit log, and queue for chronological events
 app.get('/api/timeline/:session', (req, res) => {
   if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
   try {
@@ -2434,30 +2588,77 @@ app.get('/api/timeline/:session', (req, res) => {
     const session = sessions.find(s => s.session === sessionName);
     if (!session) return res.status(404).json({ error: 'session not found' });
 
+    const events = [];
+
+    // 1. Read tool calls from Claude project JSONL
     const projectKey = session.path.replace(/\//g, '-').replace(/[^a-zA-Z0-9._-]/g, '-');
     const projectDir = `/root/.claude/projects/${projectKey}`;
     const latest = fs.existsSync(projectDir)
       ? fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl')).sort().pop()
       : null;
-
-    if (!latest) return res.json([]);
-
-    const events = [];
-    const lines = fs.readFileSync(path.join(projectDir, latest), 'utf8').split('\n').filter(l => l.trim());
-    for (const line of lines.slice(-200)) {
-      try {
-        const d = JSON.parse(line);
-        if (d.type === 'tool_use' || (d.type === 'assistant' && d.message?.content)) {
-          const content = d.message?.content || [];
-          for (const block of (Array.isArray(content) ? content : [])) {
-            if (block.type === 'tool_use') {
-              events.push({ ts: d.timestamp, tool: block.name, input: JSON.stringify(block.input || {}).slice(0, 120) });
+    if (latest) {
+      const lines = fs.readFileSync(path.join(projectDir, latest), 'utf8').split('\n').filter(l => l.trim());
+      for (const line of lines.slice(-300)) {
+        try {
+          const d = JSON.parse(line);
+          if (d.type === 'assistant' && d.message?.content) {
+            const content = d.message.content;
+            for (const block of (Array.isArray(content) ? content : [])) {
+              if (block.type === 'tool_use') {
+                events.push({
+                  ts: d.timestamp,
+                  type: 'tool',
+                  tool: block.name,
+                  command: JSON.stringify(block.input || {}).slice(0, 120),
+                });
+              }
             }
           }
-        }
-      } catch (_) {}
+        } catch (_) {}
+      }
     }
-    res.json(events.slice(-50));
+
+    // 2. Read messages from queue
+    const threadId = session.thread_id;
+    const queueFile = `/tmp/tg-queue-${threadId}.jsonl`;
+    if (fs.existsSync(queueFile)) {
+      const lines = fs.readFileSync(queueFile, 'utf8').split('\n').filter(l => l.trim());
+      for (const line of lines.slice(-200)) {
+        try {
+          const m = JSON.parse(line);
+          if (!m.text) continue;
+          events.push({
+            ts: m.ts ? new Date(m.ts * 1000).toISOString() : new Date().toISOString(),
+            type: 'message',
+            text: (m.text || '').slice(0, 200),
+            user: m.user || 'unknown',
+          });
+        } catch (_) {}
+      }
+    }
+
+    // 3. Read audit log
+    const auditFile = `/tmp/relay-audit-${threadId}.jsonl`;
+    if (fs.existsSync(auditFile)) {
+      const lines = fs.readFileSync(auditFile, 'utf8').split('\n').filter(l => l.trim());
+      for (const line of lines.slice(-200)) {
+        try {
+          const e = JSON.parse(line);
+          events.push({
+            ts: e.timestamp || (e.ts ? new Date(e.ts * 1000).toISOString() : new Date().toISOString()),
+            type: e.type === 'tool_use' || e.event === 'tool_use' ? 'tool' : 'message',
+            tool: e.tool || e.name,
+            command: e.input ? JSON.stringify(e.input).slice(0, 120) : undefined,
+            text: e.text ? String(e.text).slice(0, 200) : undefined,
+            user: e.user,
+          });
+        } catch (_) {}
+      }
+    }
+
+    // Sort chronologically and return last 100
+    events.sort((a, b) => (a.ts || '') < (b.ts || '') ? -1 : 1);
+    res.json(events.slice(-100));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
