@@ -117,7 +117,25 @@ print('no')
 " 2>/dev/null || echo "no")
 
   if [ "$HAS_PENDING" = "yes" ]; then
-    STARTUP_MSG='You just started. Call typing then send_message with '"'"'חזרתי ✓'"'"' to announce you'"'"'re online, then fetch_messages and respond to all pending messages.'
+    # Context handoff — inject last session summary if available (< 7 days old)
+    SUMMARY_CONTEXT=""
+    SUMMARY_FILE="/tmp/session-summary-${SESSION}.md"
+    if [ -f "$SUMMARY_FILE" ]; then
+      AGE=$(( $(date +%s) - $(stat -c %Y "$SUMMARY_FILE" 2>/dev/null || echo 0) ))
+      if [ "$AGE" -lt 604800 ]; then  # 7 days
+        SUMMARY_CONTEXT=$(head -c 1000 "$SUMMARY_FILE" 2>/dev/null | sed "s/'/\\\\''/g" || true)
+      fi
+    fi
+
+    if [ -n "$SUMMARY_CONTEXT" ]; then
+      STARTUP_MSG='You just started. Previous session context:
+
+'"$SUMMARY_CONTEXT"'
+
+Call typing then send_message with '"'"'חזרתי ✓ (ממשיך מהיכן שעצרנו)'"'"' then fetch_messages and respond.'
+    else
+      STARTUP_MSG='You just started. Call typing then send_message with '"'"'חזרתי ✓'"'"' to announce you'"'"'re online, then fetch_messages and respond to all pending messages.'
+    fi
     printf '%s\n' "$(python3 -c "
 import json, time
 print(json.dumps({

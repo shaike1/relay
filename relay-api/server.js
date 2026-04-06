@@ -180,7 +180,47 @@ app.post(`/webhook/${CODEX_WEBHOOK_SECRET}`, (req, res) => {
   // Don't forward codex updates to bot.py — they're handled by session-driver
 });
 
+// Reaction emoji → natural language command
+const REACTION_COMMANDS = {
+  '👍': 'Looks good! Continue with the next steps.',
+  '🔁': 'Please retry / redo your last response.',
+  '❌': 'Cancel / stop what you were doing.',
+  '✅': 'Confirmed — go ahead.',
+  '🚀': 'Deploy / run it now.',
+  '🛑': 'Stop immediately.',
+  '💡': 'Good idea — implement it.',
+  '🤔': 'I\'m not sure about this. Please explain your reasoning.',
+};
+
 function webhookQueueWrite(update) {
+  // Handle message reactions (👍, 🔁, ❌, etc.)
+  if (update && update.message_reaction) {
+    const rxn = update.message_reaction;
+    const threadId = rxn.chat && rxn.message_thread_id;
+    if (!threadId || String(rxn.chat.id) !== String(TG_CHAT_ID)) return;
+    const newReactions = rxn.new_reaction || [];
+    for (const r of newReactions) {
+      const emoji = r.emoji || '';
+      const cmd = REACTION_COMMANDS[emoji];
+      if (!cmd) continue;
+      const now = Math.floor(Date.now() / 1000);
+      const entry = {
+        message_id: -(now % 2147483647),
+        user: rxn.user ? (rxn.user.first_name || rxn.user.username || 'user') : 'user',
+        user_id: rxn.user ? rxn.user.id : 0,
+        text: `[Reaction ${emoji}]: ${cmd}`,
+        ts: now,
+        via: 'reaction',
+        force: true,
+      };
+      try {
+        fs.appendFileSync(path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`), JSON.stringify(entry) + '\n');
+        console.log(`[reaction] ${threadId}: ${emoji} → ${cmd}`);
+      } catch (e) { console.error('[reaction] error:', e.message); }
+    }
+    return;
+  }
+
   // Handle inline button callbacks (callback_query)
   if (update && update.callback_query) {
     const cb = update.callback_query;
@@ -264,6 +304,13 @@ function webhookQueueWrite(update) {
   // Auto-handle /status command without waking Claude (saves tokens)
   if (msg.text && /^\/status(@\S+)?$/i.test(msg.text.trim())) {
     handleStatusCommand(threadId, msg.message_id).catch(e => console.error('[status] error:', e.message));
+    return;
+  }
+
+  // /template — list or apply a session template
+  const templateCmd = msg.text && msg.text.trim().match(/^\/template(@\S+)?(\s+(\S+))?$/i);
+  if (templateCmd) {
+    handleTemplateCommand(threadId, msg.message_id, templateCmd[3] || null).catch(e => console.error('[template] error:', e.message));
     return;
   }
 
@@ -372,6 +419,49 @@ async function handleStatusCommand(threadId, replyTo) {
     console.log(`[status] Responded to /status in thread ${threadId}`);
   } catch (e) {
     console.error('[status] Failed:', e.message);
+  }
+}
+
+// /template command — list templates or apply one to current session
+async function handleTemplateCommand(threadId, replyTo, templateName) {
+  const TEMPLATES_DIR = '/relay/templates';
+  try {
+    if (!templateName) {
+      // List available templates
+      const files = fs.existsSync(TEMPLATES_DIR)
+        ? fs.readdirSync(TEMPLATES_DIR).filter(f => f.endsWith('.json'))
+        : [];
+      if (files.length === 0) {
+        await tgSendMessage(threadId, '📋 אין templates זמינים ב-/relay/templates/', replyTo, null);
+        return;
+      }
+      const lines = ['📋 <b>Session Templates</b>', ''];
+      for (const f of files) {
+        try {
+          const t = JSON.parse(fs.readFileSync(path.join(TEMPLATES_DIR, f), 'utf8'));
+          lines.push(`• <code>${t.name}</code> — ${t.description || ''}`);
+        } catch (_) {}
+      }
+      lines.push('', 'שימוש: <code>/template &lt;name&gt;</code>');
+      const btns = files.map(f => {
+        try { return JSON.parse(fs.readFileSync(path.join(TEMPLATES_DIR, f), 'utf8')).name; } catch { return null; }
+      }).filter(Boolean).map(n => ({ text: n, callback_data: `btn:${threadId}:/template ${n}` }));
+      await tgSendMessage(threadId, lines.join('\n'), replyTo, btns.length ? { inline_keyboard: [btns] } : null);
+      return;
+    }
+
+    // Apply template — find session workdir
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const session = sessions.find(s => String(s.thread_id) === String(threadId));
+    if (!session) {
+      await tgSendMessage(threadId, `❌ Session לא נמצא ל-thread ${threadId}`, replyTo, null);
+      return;
+    }
+    const { execSync } = require('child_process');
+    execSync(`bash /relay/scripts/apply-template.sh ${templateName} ${session.path}`, { timeout: 10000 });
+    await tgSendMessage(threadId, `✅ Template <code>${templateName}</code> הוחל על <code>${session.path}</code>\nRestart session לטעינה.`, replyTo, null);
+  } catch (e) {
+    await tgSendMessage(threadId, `❌ שגיאה: ${e.message.substring(0, 200)}`, replyTo, null);
   }
 }
 
@@ -690,7 +780,7 @@ app.post('/api/webhook/set', (req, res) => {
   const https = require('https');
   const payload = JSON.stringify({
     url: webhookUrl,
-    allowed_updates: ['message'],
+    allowed_updates: ['message', 'callback_query', 'message_reaction'],
     drop_pending_updates: false
   });
   const apiReq = https.request(`https://api.telegram.org/bot${TG_BOT_TOKEN}/setWebhook`, {
@@ -1955,6 +2045,67 @@ function startScheduler() {
   console.log('[scheduler] Started — first tick in', Math.round(msToNextMinute / 1000), 's');
 }
 startScheduler();
+
+// Live logs — Server-Sent Events stream of docker container logs
+app.get('/api/logs/:container', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  const container = req.params.container.replace(/[^a-zA-Z0-9_-]/g, '');
+  const tail = parseInt(req.query.tail || '50');
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const { spawn } = require('child_process');
+  const proc = spawn('docker', ['logs', '--tail', String(tail), '-f', `relay-session-${container}`]);
+
+  const send = (data) => {
+    const escaped = data.replace(/\n/g, '\\n').replace(/\r/g, '');
+    res.write(`data: ${escaped}\n\n`);
+  };
+
+  proc.stdout.on('data', d => send(d.toString()));
+  proc.stderr.on('data', d => send(d.toString()));
+  proc.on('close', () => { res.write('data: [stream ended]\n\n'); res.end(); });
+  req.on('close', () => proc.kill());
+});
+
+// Tool call timeline — read session JSONL and extract tool calls
+app.get('/api/timeline/:session', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const sessionName = req.params.session.replace(/[^a-zA-Z0-9_-]/g, '');
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const session = sessions.find(s => s.session === sessionName);
+    if (!session) return res.status(404).json({ error: 'session not found' });
+
+    const projectKey = session.path.replace(/\//g, '-').replace(/[^a-zA-Z0-9._-]/g, '-');
+    const projectDir = `/root/.claude/projects/${projectKey}`;
+    const latest = fs.existsSync(projectDir)
+      ? fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl')).sort().pop()
+      : null;
+
+    if (!latest) return res.json([]);
+
+    const events = [];
+    const lines = fs.readFileSync(path.join(projectDir, latest), 'utf8').split('\n').filter(l => l.trim());
+    for (const line of lines.slice(-200)) {
+      try {
+        const d = JSON.parse(line);
+        if (d.type === 'tool_use' || (d.type === 'assistant' && d.message?.content)) {
+          const content = d.message?.content || [];
+          for (const block of (Array.isArray(content) ? content : [])) {
+            if (block.type === 'tool_use') {
+              events.push({ ts: d.timestamp, tool: block.name, input: JSON.stringify(block.input || {}).slice(0, 120) });
+            }
+          }
+        }
+      } catch (_) {}
+    }
+    res.json(events.slice(-50));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // API endpoints for schedules
 app.get('/api/schedules', (req, res) => {
