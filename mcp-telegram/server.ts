@@ -436,7 +436,23 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
   if (name === 'send_message') {
     // Accept 'message' as alias for 'text' — Claude sometimes uses wrong param name
-    const text = String(args?.text ?? args?.message ?? '')
+    let text = String(args?.text ?? args?.message ?? '')
+
+    // Append response time if a start timestamp file exists for this thread
+    try {
+      const startFile = `/tmp/relay-msg-start-${THREAD_ID}`
+      const { existsSync, readFileSync, unlinkSync } = await import('fs')
+      if (existsSync(startFile)) {
+        const startMs = parseInt(readFileSync(startFile, 'utf8').trim(), 10)
+        if (!isNaN(startMs) && startMs > 0) {
+          const elapsedSec = Math.round((Date.now() - startMs) / 1000)
+          if (elapsedSec >= 0) {
+            text = text + `\n<i>⏱ ${elapsedSec}s</i>`
+          }
+          unlinkSync(startFile) // consume it — next message gets fresh timing
+        }
+      }
+    } catch (_) { /* best-effort */ }
     // Claude sometimes passes buttons as a JSON string instead of array — parse it
     const rawButtons = args?.buttons
     const buttons: string[][] | undefined = typeof rawButtons === 'string'
