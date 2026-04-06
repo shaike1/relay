@@ -4,6 +4,65 @@ const { createProxyMiddleware } = require('http-proxy-middleware');
 const fs = require('fs');
 const path = require('path');
 
+// ── Error reporter ────────────────────────────────────────────────────────────
+// Catches unhandled errors and:
+//   1. Appends to /tmp/relay-errors.jsonl
+//   2. Sends a Telegram alert to ALERT_THREAD_ID (or first session's thread_id)
+//
+const ERROR_LOG = process.env.ERROR_LOG || '/tmp/relay-errors.jsonl';
+const ALERT_THREAD_ID = process.env.ALERT_THREAD_ID || null;
+
+function _alertThreadId() {
+  if (ALERT_THREAD_ID) return ALERT_THREAD_ID;
+  try {
+    const sf = process.env.SESSIONS_FILE || '/relay/sessions.json';
+    const sessions = JSON.parse(fs.readFileSync(sf, 'utf8'));
+    if (sessions.length > 0) return sessions[0].thread_id;
+  } catch (_) {}
+  return null;
+}
+
+function reportError(type, err) {
+  const entry = {
+    t: new Date().toISOString(),
+    type,
+    message: err && err.message ? err.message : String(err),
+    stack: err && err.stack ? err.stack.split('\n').slice(0, 6).join('\n') : undefined,
+  };
+  try { fs.appendFileSync(ERROR_LOG, JSON.stringify(entry) + '\n'); } catch (_) {}
+
+  // Send Telegram alert (best-effort, non-blocking)
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.GROUP_CHAT_ID;
+  const threadId = _alertThreadId();
+  if (token && chatId && threadId) {
+    const text = `⚠️ <b>relay-api error</b> [${type}]\n<code>${entry.message.substring(0, 300)}</code>`;
+    const body = JSON.stringify({
+      chat_id: chatId,
+      message_thread_id: Number(threadId),
+      text,
+      parse_mode: 'HTML',
+    });
+    fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      signal: AbortSignal.timeout(8000),
+    }).catch(() => {});
+  }
+}
+
+process.on('uncaughtException', (err) => {
+  console.error('[error-reporter] uncaughtException:', err);
+  reportError('uncaughtException', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[error-reporter] unhandledRejection:', reason);
+  reportError('unhandledRejection', reason instanceof Error ? reason : new Error(String(reason)));
+});
+// ─────────────────────────────────────────────────────────────────────────────
+
 const app = express();
 const PORT = process.env.PORT || 9100;
 const NOMACODE_URL = process.env.NOMACODE_URL || 'http://relay-nomacode:3000';
@@ -351,6 +410,18 @@ function webhookQueueWrite(update) {
     return;
   }
 
+  // /pause — pause watchdog nudges for this session
+  if (msg.text && /^\/pause(@\S+)?$/i.test(msg.text.trim())) {
+    handlePauseCommand(threadId, msg.message_id).catch(e => console.error('[pause] error:', e.message));
+    return;
+  }
+
+  // /resume — resume watchdog nudges for this session
+  if (msg.text && /^\/resume(@\S+)?$/i.test(msg.text.trim())) {
+    handleResumeCommand(threadId, msg.message_id).catch(e => console.error('[resume] error:', e.message));
+    return;
+  }
+
   // /restart — restart the session container
   if (msg.text && /^\/restart(@\S+)?$/i.test(msg.text.trim())) {
     handleRestartCommand(threadId, msg.message_id).catch(e => console.error('[restart] error:', e.message));
@@ -453,6 +524,33 @@ function webhookQueueWrite(update) {
   } catch (err) {
     console.error(`[webhook] Queue write error:`, err.message);
   }
+
+  // Mention routing: if message contains @session_name, copy to that session's queue
+  try {
+    const mentionMatches = msg.text.match(/@([a-zA-Z0-9_-]+)/g);
+    if (mentionMatches) {
+      const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+      for (const mention of mentionMatches) {
+        const mentionName = mention.slice(1); // strip '@'
+        const targetSession = sessions.find(s =>
+          s.session === mentionName || s.name === mentionName
+        );
+        if (!targetSession || String(targetSession.thread_id) === String(effectiveThreadId)) continue;
+        const targetQueue = path.join(QUEUE_DIR, `tg-queue-${targetSession.thread_id}.jsonl`);
+        const mentionEntry = {
+          ...entry,
+          message_id: -(Math.floor(Date.now() / 1000) % 2147483647),
+          via: 'mention',
+          force: true,
+          mention_from_thread: effectiveThreadId,
+        };
+        fs.appendFileSync(targetQueue, JSON.stringify(mentionEntry) + '\n');
+        console.log(`[mention] Routed @${mentionName} → thread ${targetSession.thread_id}`);
+      }
+    }
+  } catch (e) {
+    console.error('[mention] Routing error:', e.message);
+  }
 }
 
 // Multi-tenant routing: maps (thread_id, user_id) → isolated virtual thread_id
@@ -533,6 +631,34 @@ async function handleCancelCommand(threadId, replyTo) {
     }
   } catch (e) {
     console.error('[cancel] Failed:', e.message);
+  }
+}
+
+// /pause command — write flag file to pause watchdog nudges for this session
+async function handlePauseCommand(threadId, replyTo) {
+  try {
+    const flagFile = `/tmp/relay-paused-${threadId}`;
+    fs.writeFileSync(flagFile, String(Date.now()));
+    await tgSendMessage(threadId, `⏸ Session paused — Claude will not be nudged.\nSend /resume to re-enable.`, replyTo, null);
+    console.log(`[pause] Thread ${threadId} paused`);
+  } catch (e) {
+    console.error('[pause] Failed:', e.message);
+  }
+}
+
+// /resume command — remove pause flag file
+async function handleResumeCommand(threadId, replyTo) {
+  try {
+    const flagFile = `/tmp/relay-paused-${threadId}`;
+    if (fs.existsSync(flagFile)) {
+      fs.unlinkSync(flagFile);
+      await tgSendMessage(threadId, `▶️ Session resumed — watchdog nudges re-enabled.`, replyTo, null);
+      console.log(`[resume] Thread ${threadId} resumed`);
+    } else {
+      await tgSendMessage(threadId, `▶️ Session was not paused — already active.`, replyTo, null);
+    }
+  } catch (e) {
+    console.error('[resume] Failed:', e.message);
   }
 }
 

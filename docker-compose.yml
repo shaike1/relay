@@ -105,6 +105,52 @@ services:
         max-size: "5m"
         max-file: "2"
 
+  # Dev-mode relay-api with hot reload via nodemon.
+  # Start with: docker compose --profile dev up relay-api-dev
+  relay-api-dev:
+    build: ./relay-api
+    container_name: relay-api-dev
+    restart: "no"
+    profiles:
+      - dev
+    command: npx nodemon server.js
+    ports:
+      - "7070:7070"
+    environment:
+      PORT: "7070"
+      NOMACODE_URL: "http://relay-nomacode:3000"
+      SESSIONS_FILE: "/relay/sessions.json"
+      AUTH_USER: "relay"
+      AUTH_PASS: "${RELAY_API_PASS:-PKNfwGoX4-8-LHsxhVphvQ}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
+      GROUP_CHAT_ID: "${GROUP_CHAT_ID}"
+      WEBHOOK_SECRET: "${WEBHOOK_SECRET:-codex-relay-wh-2026}"
+    volumes:
+      - /root/relay/relay-api/server.js:/relay-api/server.js
+      - /root/relay/relay-api/utils.js:/relay-api/utils.js
+      - /root/relay/relay-api/.nodemon.json:/relay-api/.nodemon.json
+      - /root/relay/sessions.json:/relay/sessions.json
+      - /root/relay/schedules.json:/relay/schedules.json
+      - /root/relay/templates.json:/relay/templates.json
+      - /root/relay/metrics.html:/relay/metrics.html:ro
+      - /root/relay/config.html:/relay/config.html:ro
+      - /root/relay/sessions-ui.html:/relay/sessions-ui.html:ro
+      - /root/relay/session-detail.html:/relay/session-detail.html:ro
+      - /root/relay/tasks-dashboard.html:/relay/tasks-dashboard.html:ro
+      - /root/relay/orchestrator.html:/relay/orchestrator.html:ro
+      - /root/relay/pipeline.html:/relay/pipeline.html:ro
+      - /root/relay/scripts:/relay/scripts:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - relay-queue:/tmp
+    networks:
+      - default
+      - relay_default
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
   whatsapp-bridge:
     build: ./whatsapp-bridge
     container_name: whatsapp-bridge

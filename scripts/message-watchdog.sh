@@ -36,6 +36,12 @@ tmux_s() { tmux -S "$TMUX_SOCKET" "$@"; }
 while true; do
   sleep "$INTERVAL"
 
+  # Session pause — if /tmp/relay-paused-THREAD_ID exists, skip all nudge/wakeup logic
+  if [ -f "/tmp/relay-paused-${THREAD_ID}" ]; then
+    sleep 10
+    continue
+  fi
+
   # Claude launches the MCP server eagerly. Codex can keep MCP wiring dormant
   # until the interactive session actually touches a tool, so skip the hard
   # restart check there and only keep the queue nudge behavior.
