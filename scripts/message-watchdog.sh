@@ -148,7 +148,7 @@ print(count)
   last_nudge=$now
 
   # Streaming — launch background pane streamer so user sees live progress
-  if [ "${STREAM_MONITOR:-1}" = "1" ] && [ "$SESSION_TYPE" = "claude" ]; then
+  if [ "${STREAM_MONITOR:-0}" = "1" ] && [ "$SESSION_TYPE" = "claude" ]; then
     bash /relay/scripts/stream-pane.sh "$TMUX_SOCKET" "$SESSION" "$THREAD_ID" &
   fi
 done
