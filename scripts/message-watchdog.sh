@@ -15,9 +15,12 @@ NUDGE="You have a pending Telegram message. Call fetch_messages and respond."
 INTERVAL=5
 IDLE_GRACE=60          # 60 seconds between tmux nudges
 MCP_CHECK_INTERVAL=30  # seconds between MCP health checks
+TOOL_NOTIFY_COOLDOWN=3 # min seconds between tool-use notifications
 
 last_nudge=0
 last_mcp_check=0
+last_tool_hash=""
+last_tool_notify=0
 
 # Helper: run tmux with this session's socket
 tmux_s() { tmux -S "$TMUX_SOCKET" "$@"; }
@@ -38,6 +41,25 @@ while true; do
         echo "[watchdog:${SESSION}] MCP server missing — restarting container to reload .mcp.json" >&2
         # Kill claude so s6 restarts the whole session (which reloads .mcp.json)
         pkill -f 'claude' 2>/dev/null || true
+      fi
+    fi
+  fi
+
+  # Tool monitoring — detect active tool calls and notify Telegram in real time
+  if [ "$SESSION_TYPE" = "claude" ] && tmux_s has-session -t "$SESSION" 2>/dev/null; then
+    raw_pane=$(tmux_s capture-pane -t "$SESSION" -p 2>/dev/null || echo "")
+    # Strip ANSI escape codes, find the most recent tool call line
+    tool_line=$(echo "$raw_pane" | sed 's/\x1b\[[0-9;]*m//g' | \
+      grep -oE '[●⬤] (Bash|Read|Edit|Write|Glob|Grep|WebFetch|Agent|TodoWrite|TodoRead|mcp__[A-Za-z_]+)\([^)]{0,120}\)' | \
+      tail -1 || echo "")
+    if [ -n "$tool_line" ]; then
+      now=$(date +%s)
+      tool_hash=$(echo "$tool_line" | cksum | cut -d' ' -f1)
+      if [ "$tool_hash" != "$last_tool_hash" ] && [ $((now - last_tool_notify)) -ge "$TOOL_NOTIFY_COOLDOWN" ]; then
+        short=$(echo "$tool_line" | cut -c1-100)
+        tg-send "<code>${short}</code>" 2>/dev/null &
+        last_tool_hash="$tool_hash"
+        last_tool_notify=$now
       fi
     fi
   fi
