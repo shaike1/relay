@@ -267,8 +267,15 @@ function webhookQueueWrite(update) {
   }
 }
 
+// Dedup set for /status — prevents double-response when both bots receive the same message
+const _handledStatusIds = new Set();
+
 // /status command — auto-respond with container health (no Claude needed)
 async function handleStatusCommand(threadId, replyTo) {
+  const key = `${threadId}:${replyTo}`;
+  if (_handledStatusIds.has(key)) return;
+  _handledStatusIds.add(key);
+  setTimeout(() => _handledStatusIds.delete(key), 30000); // clean up after 30s
   try {
     const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
     const lines = ['<b>Session Status</b>'];
