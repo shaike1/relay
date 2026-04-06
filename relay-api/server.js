@@ -209,15 +209,13 @@ function webhookQueueWrite(update) {
     const queueFile = path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`);
     const now = Math.floor(Date.now() / 1000);
     const entry = {
-      // Use negative timestamp-based ID so fetch_messages picks it up even when
-      // lastId has advanced past the original button message_id.
-      // Negative IDs are treated as "forced" messages: accepted if ts > last_nudge_ts.
       message_id: -(now % 2147483647),
       user: (cb.from.first_name || cb.from.username || 'unknown'),
       user_id: cb.from.id,
       text: label,
       ts: now,
-      via: 'callback'
+      via: 'callback',
+      force: true,  // required: bypasses message_id <= lastId check in fetch_messages
     };
     try {
       fs.appendFileSync(queueFile, JSON.stringify(entry) + '\n');
@@ -1937,6 +1935,7 @@ function tickScheduler() {
         ts: Math.floor(Date.now() / 1000),
         via: 'scheduler',
         schedule_id: sched.id,
+        force: true,
       };
       fs.appendFileSync(queueFile, JSON.stringify(entry) + '\n');
       console.log(`[scheduler] Fired "${sched.id}" → thread ${sched.thread_id}: ${sched.message.substring(0, 60)}`);
