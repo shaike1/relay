@@ -243,6 +243,12 @@ function webhookQueueWrite(update) {
   const threadId = msg.message_thread_id;
   if (!threadId) return;
 
+  // Auto-handle /status command without waking Claude (saves tokens)
+  if (msg.text && msg.text.trim().toLowerCase() === '/status') {
+    handleStatusCommand(threadId, msg.message_id).catch(e => console.error('[status] error:', e.message));
+    return;
+  }
+
   const queueFile = path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`);
   const entry = {
     message_id: msg.message_id,
@@ -257,6 +263,48 @@ function webhookQueueWrite(update) {
     console.log(`[webhook] ${threadId}: ${msg.from.first_name}: ${msg.text.substring(0, 60)}`);
   } catch (err) {
     console.error(`[webhook] Queue write error:`, err.message);
+  }
+}
+
+// /status command — auto-respond with container health (no Claude needed)
+async function handleStatusCommand(threadId, replyTo) {
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const lines = ['<b>Session Status</b>'];
+    for (const s of sessions) {
+      if (s.host) continue; // skip remote sessions for now
+      const name = `relay-session-${s.session}`;
+      let status = '❓';
+      try {
+        const out = execSync(`docker inspect --format '{{.State.Status}}' ${name} 2>/dev/null`, { timeout: 3000 }).toString().trim();
+        const health = execSync(`docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' ${name} 2>/dev/null`, { timeout: 3000 }).toString().trim();
+        if (out === 'running' && health === 'healthy') status = '✅';
+        else if (out === 'running') status = '🟡';
+        else status = '🔴';
+      } catch (_) { status = '🔴'; }
+      lines.push(`${status} <code>${s.session}</code>`);
+    }
+    const text = lines.join('\n');
+    const https = require('https');
+    const body = JSON.stringify({
+      chat_id: TG_CHAT_ID,
+      message_thread_id: parseInt(threadId),
+      text,
+      parse_mode: 'HTML',
+      reply_to_message_id: replyTo,
+    });
+    await new Promise((resolve, reject) => {
+      const req = https.request(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      }, res => { res.resume(); resolve(); });
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+    });
+    console.log(`[status] Responded to /status in thread ${threadId}`);
+  } catch (e) {
+    console.error('[status] Failed:', e.message);
   }
 }
 
