@@ -14846,6 +14846,32 @@ mcp.setRequestHandler(ListToolsRequestSchema2, async () => ({
           ttl: { type: "integer", description: "Seconds before task expires (default: 600)", default: 600 }
         }
       }
+    },
+    {
+      name: "delegate_task",
+      description: "Delegate a task to a specific session as an orchestrator. Queues the task into the target session's message queue with orchestrator priority. If expect_result is true, creates a result file the target can write to when done.",
+      inputSchema: {
+        type: "object",
+        required: ["target_session", "task"],
+        properties: {
+          target_session: { type: "string", description: "Target session name (from list_peers)" },
+          task: { type: "string", description: "Task description / prompt to send to the target session" },
+          expect_result: { type: "boolean", description: "If true, creates a pending-result file the target can write to when done", default: false }
+        }
+      }
+    },
+    {
+      name: "send_code",
+      description: "Send a properly formatted code block to Telegram. The code will have a native tap-to-copy button in Telegram. Use this instead of wrapping code manually in <pre> tags.",
+      inputSchema: {
+        type: "object",
+        required: ["code"],
+        properties: {
+          code: { type: "string", description: "The code to send" },
+          language: { type: "string", description: 'Optional language for syntax hint (e.g. "bash", "python", "javascript")' },
+          caption: { type: "string", description: "Optional caption text to show above the code block" }
+        }
+      }
     }
   ]
 }));
@@ -15503,6 +15529,78 @@ ${prompt}`,
     } catch (e) {
       return { content: [{ type: "text", text: `Error auto-dispatching: ${e}` }] };
     }
+  }
+  if (name === "delegate_task") {
+    const targetSession = String(args?.target_session ?? "");
+    const task = String(args?.task ?? "");
+    const expectResult = Boolean(args?.expect_result ?? false);
+    try {
+      const sessionsPath = new URL("../sessions.json", import.meta.url).pathname;
+      const sessions = JSON.parse(readFileSync(sessionsPath, "utf8"));
+      const target = sessions.find((s) => s.session === targetSession);
+      if (!target)
+        return { content: [{ type: "text", text: `Session '${targetSession}' not found. Use list_peers to see available sessions.` }] };
+      const selfName = process.env.SESSION_NAME ?? `session-${THREAD_ID}`;
+      const queueFile = `/tmp/tg-queue-${target.thread_id}.jsonl`;
+      const entry = JSON.stringify({
+        text: `[Delegated task from orchestrator ${selfName}]
+${task}`,
+        user: `orchestrator:${selfName}`,
+        message_id: -Date.now(),
+        thread_id: target.thread_id,
+        ts: Date.now() / 1000,
+        force: true,
+        via: "orchestrator"
+      });
+      if (target.host) {
+        const proc = Bun.spawn([
+          "ssh",
+          "-o",
+          "StrictHostKeyChecking=no",
+          "-o",
+          "ConnectTimeout=5",
+          target.host,
+          `cat >> ${queueFile}`
+        ], { stdin: new TextEncoder().encode(entry + `
+`) });
+        await proc.exited;
+        if (proc.exitCode !== 0)
+          throw new Error(`SSH exit code ${proc.exitCode}`);
+      } else {
+        await Bun.write(queueFile, entry + `
+`, { append: true });
+      }
+      let resultMsg = `Task delegated to '${targetSession}'.`;
+      if (expectResult) {
+        const resultFile = `/tmp/relay-delegate-result-${target.thread_id}`;
+        await Bun.write(resultFile, JSON.stringify({
+          pending: true,
+          from: selfName,
+          from_thread: THREAD_ID,
+          task: task.slice(0, 200),
+          created: Date.now() / 1000
+        }));
+        resultMsg += ` Result file created at ${resultFile}.`;
+      }
+      logToPeersTopic(selfName, targetSession, `[delegate] ${task.slice(0, 200)}`);
+      return { content: [{ type: "text", text: resultMsg }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error delegating task: ${e}` }] };
+    }
+  }
+  if (name === "send_code") {
+    const code = String(args?.code ?? "");
+    const language = args?.language ? String(args.language) : "";
+    const caption = args?.caption ? String(args.caption) : "";
+    const escaped = code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const langAttr = language ? ` class="${language}"` : "";
+    const block = `${caption ? caption + `
+` : ""}<pre><code${langAttr}>${escaped}</code></pre>`;
+    const ids = await sendMessage(block);
+    if (ids.length === 0) {
+      return { content: [{ type: "text", text: "ERROR: failed to send code block." }], isError: true };
+    }
+    return { content: [{ type: "text", text: `Code block sent (message_id: ${ids.join(", ")})` }] };
   }
   return { content: [{ type: "text", text: `Unknown tool: ${name}` }] };
 });
