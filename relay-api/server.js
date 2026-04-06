@@ -2159,6 +2159,91 @@ app.get('/pipeline', (req, res) => {
   } catch (e) { res.status(500).send('Pipeline dashboard not found'); }
 });
 
+// --- Token usage graph ---
+// GET /api/token-graph/:session — daily aggregated token usage for a session
+app.get('/api/token-graph/:session', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const sessionName = req.params.session.replace(/[^a-zA-Z0-9_-]/g, '');
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const session = sessions.find(s => s.session === sessionName);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+
+    const threadId = session.thread_id;
+    const statsFile = path.join(QUEUE_DIR, `token-stats-${threadId}.jsonl`);
+    if (!fs.existsSync(statsFile)) return res.json([]);
+
+    const lines = fs.readFileSync(statsFile, 'utf8').split('\n').filter(l => l.trim());
+    const byDate = {};
+    for (const line of lines) {
+      try {
+        const e = JSON.parse(line);
+        const date = (e.ts || '').slice(0, 10);
+        if (!date) continue;
+        if (!byDate[date]) byDate[date] = { date, input_tokens: 0, output_tokens: 0, cost_usd: 0 };
+        byDate[date].input_tokens  += e.input  || 0;
+        byDate[date].output_tokens += e.output || 0;
+        byDate[date].cost_usd      += e.cost_usd || 0;
+      } catch (_) {}
+    }
+    const result = Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date));
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// --- Sessions graph (dependency/peer graph for orchestrator) ---
+app.get('/api/sessions/graph', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const nodes = sessions.map(s => {
+      const node = {
+        session:      s.session,
+        thread_id:    s.thread_id,
+        host:         s.host || null,
+        path:         s.path || null,
+        type:         s.type || 'claude',
+        skills:       s.skills || [],
+        group:        s.group || '',
+        orchestrator: !!s.orchestrator,
+      };
+
+      // Check last activity
+      const lastSentFile = `/tmp/tg-last-sent-${s.thread_id}`;
+      try {
+        const ts = parseFloat(fs.readFileSync(lastSentFile, 'utf8').trim());
+        node.last_active = isNaN(ts) ? null : ts;
+      } catch { node.last_active = null; }
+
+      // Read recent peer-to-peer queue entries to find edges
+      const queueFile = path.join(QUEUE_DIR, `tg-queue-${s.thread_id}.jsonl`);
+      const recentPeers = new Set();
+      try {
+        const lines = fs.readFileSync(queueFile, 'utf8').split('\n').filter(l => l.trim());
+        for (const line of lines.slice(-100)) {
+          try {
+            const m = JSON.parse(line);
+            if (m.user && m.user.startsWith('peer:')) {
+              recentPeers.add(m.user.slice(5));
+            }
+            if (m.user && m.user.startsWith('agent:')) {
+              recentPeers.add(m.user.slice(6));
+            }
+          } catch (_) {}
+        }
+      } catch (_) {}
+      node.recent_peers = Array.from(recentPeers);
+
+      return node;
+    });
+    res.json(nodes);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // --- Knowledge base endpoint ---
 // GET /api/knowledge/:session — returns pinned knowledge entries for a session
 app.get('/api/knowledge/:session', (req, res) => {
