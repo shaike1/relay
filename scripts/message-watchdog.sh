@@ -12,6 +12,11 @@ STATE="/tmp/tg-queue-${THREAD_ID}.state"
 TMUX_SOCKET="/tmp/tmux-${SESSION}.sock"
 NUDGE="You have a pending Telegram message. Call fetch_messages and respond."
 
+# Per-session env overrides — survives watchdog restarts without container recreation
+# e.g. echo "STREAM_MONITOR=0" > /tmp/relay-session-env-${THREAD_ID}
+OVERRIDE_ENV="/tmp/relay-session-env-${THREAD_ID}"
+[ -f "$OVERRIDE_ENV" ] && source "$OVERRIDE_ENV" 2>/dev/null || true
+
 INTERVAL=5
 IDLE_GRACE=60          # 60 seconds between tmux nudges
 MCP_CHECK_INTERVAL=30  # seconds between MCP health checks

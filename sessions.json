@@ -93,6 +93,9 @@
     "path": "/root/relay",
     "host": null,
     "group": "infra",
+    "env": {
+      "STREAM_MONITOR": "0"
+    },
     "skills": [
       "relay",
       "mcp",

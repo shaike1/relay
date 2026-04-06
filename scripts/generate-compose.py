@@ -41,7 +41,8 @@ def _session_service_block(name: str, thread_id: int, workdir: str,
                            depends_on_relay: bool,
                            with_build: bool = False,
                            session_type: str = "claude",
-                           driver: str = "") -> list[str]:
+                           driver: str = "",
+                           extra_env: dict | None = None) -> list[str]:
     """Return lines for a single session service block."""
     svc = sanitize_service_name(name)
     dockerfile = "codex-session.Dockerfile" if session_type == "codex" else "session.Dockerfile"
@@ -68,6 +69,9 @@ def _session_service_block(name: str, thread_id: int, workdir: str,
     if allowed_users:
         allowed = ",".join(str(u) for u in allowed_users)
         lines.append(f"      ALLOWED_USERS: \"{allowed}\"")
+    if extra_env:
+        for k, v in extra_env.items():
+            lines.append(f"      {k}: \"{v}\"")
     lines.append(f"    volumes:")
     lines.append(f"      # Shared queue between bot and session containers")
     lines.append(f"      - {tmp_volume}:/tmp")
@@ -133,6 +137,7 @@ def generate_compose(sessions: list, output_path: str) -> None:
             with_build=True,
             session_type=stype,
             driver=session.get("driver", ""),
+            extra_env=session.get("env"),
         )
 
     lines.append("volumes:")

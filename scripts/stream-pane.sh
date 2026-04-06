@@ -52,9 +52,13 @@ get_clean_pane() {
     | sed 's/\x1b\[[0-9;]*[mGKHFABCDJP]//g' \
     | grep -v '^[[:space:]]*$' \
     | grep -v '^[─═│╭╮╰╯┤├┬┴┼]' \
+    | grep -v '^\s*[⎿⏎]' \
+    | grep -v '^\s*>' \
     | tail -8 \
-    | head -c 800 \
-    | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\\"/g; s/\\/\\\\/g'
+    | head -c 600 \
+    | tr -d '\r' \
+    | sed 's/\\n/\n/g' \
+    | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g; s/\\/\&#92;/g'
 }
 
 is_active() {

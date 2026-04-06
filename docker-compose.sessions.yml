@@ -164,6 +164,7 @@ services:
       SESSION_NAME: "relay"
       TELEGRAM_THREAD_ID: "183"
       WORKDIR: "/root/relay"
+      STREAM_MONITOR: "0"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
