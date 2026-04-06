@@ -83,6 +83,7 @@ services:
     volumes:
       - /root/relay/relay-api/server.js:/relay-api/server.js:ro
       - /root/relay/sessions.json:/relay/sessions.json
+      - /root/relay/schedules.json:/relay/schedules.json
       - /root/relay/templates.json:/relay/templates.json
       - /root/relay/metrics.html:/relay/metrics.html:ro
       - /root/relay/config.html:/relay/config.html:ro

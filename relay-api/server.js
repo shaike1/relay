@@ -257,26 +257,40 @@ function webhookQueueWrite(update) {
   }
 
   const msg = update && update.message;
-  if (!msg || !msg.text) return;
+  if (!msg) return;
   if (String(msg.chat.id) !== String(TG_CHAT_ID)) return;
   if (msg.from && msg.from.is_bot) return;
   const threadId = msg.message_thread_id;
   if (!threadId) return;
 
   // Auto-handle /status command without waking Claude (saves tokens)
-  // Match /status or /status@botname
   if (msg.text && /^\/status(@\S+)?$/i.test(msg.text.trim())) {
     handleStatusCommand(threadId, msg.message_id).catch(e => console.error('[status] error:', e.message));
     return;
   }
 
-  // Auto-handle /history [page] command — show paginated message history
+  // Auto-handle /history [page] command
   const histCmd = msg.text && msg.text.trim().match(/^\/history(@\S+)?(\s+(\d+))?$/i);
   if (histCmd) {
     const page = parseInt(histCmd[3] || '1');
     handleHistoryCommand(threadId, msg.message_id, page, null).catch(e => console.error('[history] error:', e.message));
     return;
   }
+
+  // Voice messages — transcribe via Whisper then queue
+  if (msg.voice || msg.audio) {
+    handleVoiceMessage(msg, threadId).catch(e => console.error('[voice] error:', e.message));
+    return;
+  }
+
+  // Photo/image messages — download and queue with file path
+  if (msg.photo || (msg.document && msg.document.mime_type && msg.document.mime_type.startsWith('image/'))) {
+    handlePhotoMessage(msg, threadId).catch(e => console.error('[photo] error:', e.message));
+    return;
+  }
+
+  // Drop non-text messages we don't handle
+  if (!msg.text) return;
 
   const queueFile = path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`);
   const entry = {
@@ -326,6 +340,126 @@ async function handleStatusCommand(threadId, replyTo) {
   } catch (e) {
     console.error('[status] Failed:', e.message);
   }
+}
+
+// Download a file from Telegram and return its local path
+async function downloadTelegramFile(fileId, destPath) {
+  const https = require('https');
+  // Step 1: get file path
+  const info = await new Promise((resolve, reject) => {
+    https.get(`https://api.telegram.org/bot${TG_BOT_TOKEN}/getFile?file_id=${fileId}`, res => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => { try { resolve(JSON.parse(d)); } catch (e) { reject(e); } });
+    }).on('error', reject);
+  });
+  if (!info.ok) throw new Error('getFile failed: ' + JSON.stringify(info));
+  const filePath = info.result.file_path;
+  // Step 2: download
+  await new Promise((resolve, reject) => {
+    const out = fs.createWriteStream(destPath);
+    https.get(`https://api.telegram.org/file/bot${TG_BOT_TOKEN}/${filePath}`, res => {
+      res.pipe(out);
+      out.on('finish', resolve);
+      out.on('error', reject);
+    }).on('error', reject);
+  });
+  return destPath;
+}
+
+// Voice/audio message — transcribe with Whisper if OPENAI_API_KEY set
+async function handleVoiceMessage(msg, threadId) {
+  const fileId = (msg.voice || msg.audio).file_id;
+  const duration = (msg.voice || msg.audio).duration || 0;
+  const user = msg.from.first_name || msg.from.username || 'unknown';
+  const localFile = `/tmp/relay-voice-${threadId}-${msg.message_id}.ogg`;
+
+  let text;
+  try {
+    await downloadTelegramFile(fileId, localFile);
+    const openaiKey = process.env.OPENAI_API_KEY;
+    if (openaiKey) {
+      // Transcribe via Whisper API
+      const FormData = require('form-data');
+      const form = new FormData();
+      form.append('file', fs.createReadStream(localFile), { filename: 'voice.ogg', contentType: 'audio/ogg' });
+      form.append('model', 'whisper-1');
+      const transcription = await new Promise((resolve, reject) => {
+        const req = require('https').request('https://api.openai.com/v1/audio/transcriptions', {
+          method: 'POST',
+          headers: { ...form.getHeaders(), 'Authorization': `Bearer ${openaiKey}` },
+        }, res => {
+          let d = '';
+          res.on('data', c => d += c);
+          res.on('end', () => { try { resolve(JSON.parse(d)); } catch (e) { reject(e); } });
+        });
+        req.on('error', reject);
+        form.pipe(req);
+      });
+      text = transcription.text
+        ? `🎤 [Voice ${duration}s]: ${transcription.text}`
+        : `🎤 [Voice message ${duration}s — transcription failed]`;
+    } else {
+      text = `🎤 [Voice message ${duration}s — saved to ${localFile}. Set OPENAI_API_KEY for auto-transcription]`;
+    }
+  } catch (e) {
+    text = `🎤 [Voice message ${duration}s — download failed: ${e.message}]`;
+  }
+
+  const queueFile = path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`);
+  const entry = {
+    message_id: msg.message_id,
+    user,
+    user_id: msg.from.id,
+    text,
+    ts: Math.floor(Date.now() / 1000),
+    via: 'webhook',
+    media_type: 'voice',
+  };
+  fs.appendFileSync(queueFile, JSON.stringify(entry) + '\n');
+  console.log(`[voice] ${threadId}: ${user}: ${text.substring(0, 80)}`);
+}
+
+// Photo/image message — download and queue with local file path
+async function handlePhotoMessage(msg, threadId) {
+  const user = msg.from.first_name || msg.from.username || 'unknown';
+  const caption = msg.caption || '';
+
+  // Pick highest-resolution photo
+  let fileId;
+  if (msg.photo) {
+    const largest = msg.photo.sort((a, b) => b.file_size - a.file_size)[0];
+    fileId = largest.file_id;
+  } else {
+    fileId = msg.document.file_id;
+  }
+
+  const ext = msg.document ? (msg.document.file_name || 'img').split('.').pop() : 'jpg';
+  const localFile = `/tmp/relay-photo-${threadId}-${msg.message_id}.${ext}`;
+
+  let text;
+  try {
+    await downloadTelegramFile(fileId, localFile);
+    text = caption
+      ? `📷 [Photo: ${localFile}] ${caption}`
+      : `📷 [Photo saved to: ${localFile}]`;
+  } catch (e) {
+    text = `📷 [Photo — download failed: ${e.message}]${caption ? ' ' + caption : ''}`;
+  }
+
+  const queueFile = path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`);
+  const entry = {
+    message_id: msg.message_id,
+    user,
+    user_id: msg.from.id,
+    text,
+    ts: Math.floor(Date.now() / 1000),
+    via: 'webhook',
+    media_type: 'photo',
+    local_path: localFile,
+  };
+  fs.appendFileSync(queueFile, JSON.stringify(entry) + '\n');
+  console.log(`[photo] ${threadId}: ${user}: ${text.substring(0, 80)}`);
 }
 
 // /history command — paginated message history from queue file
@@ -1649,4 +1783,119 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 server.on('upgrade', (req, socket, head) => {
   const proxy = createProxyMiddleware({ target: NOMACODE_URL, ws: true });
   proxy.upgrade(req, socket, head);
+});
+
+// ── Scheduled Tasks ───────────────────────────────────────────────────────────
+// Reads /relay/schedules.json every minute and fires due tasks.
+//
+// schedules.json format:
+// [
+//   {
+//     "id": "daily-standup",
+//     "cron": "0 9 * * 1-5",        // standard 5-field cron (min hour dom mon dow)
+//     "thread_id": 183,
+//     "message": "בוקר טוב! מה התוכנית להיום?",
+//     "enabled": true
+//   }
+// ]
+const SCHEDULES_FILE = process.env.SCHEDULES_FILE || '/relay/schedules.json';
+
+function parseCronField(field, value, min, max) {
+  if (field === '*') return true;
+  if (field.includes('/')) {
+    const [, step] = field.split('/');
+    return value % parseInt(step) === 0;
+  }
+  if (field.includes('-')) {
+    const [lo, hi] = field.split('-').map(Number);
+    return value >= lo && value <= hi;
+  }
+  if (field.includes(',')) {
+    return field.split(',').map(Number).includes(value);
+  }
+  return parseInt(field) === value;
+}
+
+function cronMatches(cronExpr, date) {
+  const parts = cronExpr.trim().split(/\s+/);
+  if (parts.length !== 5) return false;
+  const [min, hour, dom, mon, dow] = parts;
+  return (
+    parseCronField(min,  date.getMinutes(),  0, 59) &&
+    parseCronField(hour, date.getHours(),    0, 23) &&
+    parseCronField(dom,  date.getDate(),     1, 31) &&
+    parseCronField(mon,  date.getMonth() + 1, 1, 12) &&
+    parseCronField(dow,  date.getDay(),      0,  6)
+  );
+}
+
+function tickScheduler() {
+  try {
+    if (!fs.existsSync(SCHEDULES_FILE)) return;
+    const schedules = JSON.parse(fs.readFileSync(SCHEDULES_FILE, 'utf8'));
+    const now = new Date();
+    for (const sched of schedules) {
+      if (!sched.enabled) continue;
+      if (!cronMatches(sched.cron, now)) continue;
+      const queueFile = path.join(QUEUE_DIR, `tg-queue-${sched.thread_id}.jsonl`);
+      const entry = {
+        message_id: -(Math.floor(Date.now() / 1000) % 2147483647),
+        user: 'scheduler',
+        text: sched.message,
+        ts: Math.floor(Date.now() / 1000),
+        via: 'scheduler',
+        schedule_id: sched.id,
+      };
+      fs.appendFileSync(queueFile, JSON.stringify(entry) + '\n');
+      console.log(`[scheduler] Fired "${sched.id}" → thread ${sched.thread_id}: ${sched.message.substring(0, 60)}`);
+    }
+  } catch (e) {
+    console.error('[scheduler] Error:', e.message);
+  }
+}
+
+// Tick every minute, aligned to the minute boundary
+function startScheduler() {
+  const msToNextMinute = (60 - new Date().getSeconds()) * 1000 - new Date().getMilliseconds();
+  setTimeout(() => {
+    tickScheduler();
+    setInterval(tickScheduler, 60000);
+  }, msToNextMinute);
+  console.log('[scheduler] Started — first tick in', Math.round(msToNextMinute / 1000), 's');
+}
+startScheduler();
+
+// API endpoints for schedules
+app.get('/api/schedules', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const schedules = fs.existsSync(SCHEDULES_FILE) ? JSON.parse(fs.readFileSync(SCHEDULES_FILE, 'utf8')) : [];
+    res.json(schedules);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/schedules', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const schedules = fs.existsSync(SCHEDULES_FILE) ? JSON.parse(fs.readFileSync(SCHEDULES_FILE, 'utf8')) : [];
+    const sched = req.body;
+    if (!sched.id || !sched.cron || !sched.thread_id || !sched.message) {
+      return res.status(400).json({ error: 'id, cron, thread_id, message required' });
+    }
+    const idx = schedules.findIndex(s => s.id === sched.id);
+    if (idx >= 0) schedules[idx] = sched;
+    else schedules.push(sched);
+    fs.writeFileSync(SCHEDULES_FILE, JSON.stringify(schedules, null, 2));
+    res.json({ ok: true, schedule: sched });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/schedules/:id', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const schedules = fs.existsSync(SCHEDULES_FILE) ? JSON.parse(fs.readFileSync(SCHEDULES_FILE, 'utf8')) : [];
+    const filtered = schedules.filter(s => s.id !== req.params.id);
+    fs.writeFileSync(SCHEDULES_FILE, JSON.stringify(filtered, null, 2));
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
