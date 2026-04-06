@@ -328,6 +328,18 @@ function webhookQueueWrite(update) {
     return;
   }
 
+  // /cancel — send SIGINT to Claude in the session container
+  if (msg.text && /^\/cancel(@\S+)?$/i.test(msg.text.trim())) {
+    handleCancelCommand(threadId, msg.message_id).catch(e => console.error('[cancel] error:', e.message));
+    return;
+  }
+
+  // /restart — restart the session container
+  if (msg.text && /^\/restart(@\S+)?$/i.test(msg.text.trim())) {
+    handleRestartCommand(threadId, msg.message_id).catch(e => console.error('[restart] error:', e.message));
+    return;
+  }
+
   // Voice messages — transcribe via Whisper then queue
   if (msg.voice || msg.audio) {
     handleVoiceMessage(msg, threadId).catch(e => console.error('[voice] error:', e.message));
@@ -419,6 +431,51 @@ async function handleStatusCommand(threadId, replyTo) {
     console.log(`[status] Responded to /status in thread ${threadId}`);
   } catch (e) {
     console.error('[status] Failed:', e.message);
+  }
+}
+
+// /cancel command — send SIGINT to Claude process in the session container
+async function handleCancelCommand(threadId, replyTo) {
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const session = sessions.find(s => String(s.thread_id) === String(threadId));
+    if (!session) {
+      await tgSendMessage(threadId, `❌ לא נמצא session ל-thread ${threadId}`, replyTo, null);
+      return;
+    }
+    const containerName = `relay-session-${session.session}`;
+    try {
+      execSync(`docker exec ${containerName} pkill -INT -f "claude" 2>/dev/null || true`, { timeout: 5000 });
+      await tgSendMessage(threadId, `⏹ נשלח SIGINT ל-Claude ב-<code>${session.session}</code>`, replyTo, null);
+      console.log(`[cancel] Sent SIGINT to claude in ${containerName}`);
+    } catch (e) {
+      await tgSendMessage(threadId, `⚠️ שגיאה בשליחת SIGINT: ${e.message}`, replyTo, null);
+    }
+  } catch (e) {
+    console.error('[cancel] Failed:', e.message);
+  }
+}
+
+// /restart command — restart the session container
+async function handleRestartCommand(threadId, replyTo) {
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const session = sessions.find(s => String(s.thread_id) === String(threadId));
+    if (!session) {
+      await tgSendMessage(threadId, `❌ לא נמצא session ל-thread ${threadId}`, replyTo, null);
+      return;
+    }
+    const containerName = `relay-session-${session.session}`;
+    await tgSendMessage(threadId, `🔄 מפעיל מחדש את <code>${session.session}</code>...`, replyTo, null);
+    try {
+      execSync(`docker restart ${containerName}`, { timeout: 30000 });
+      await tgSendMessage(threadId, `✅ Container <code>${session.session}</code> הופעל מחדש`, null, null);
+      console.log(`[restart] Restarted container ${containerName}`);
+    } catch (e) {
+      await tgSendMessage(threadId, `⚠️ שגיאה בהפעלה מחדש: ${e.message}`, null, null);
+    }
+  } catch (e) {
+    console.error('[restart] Failed:', e.message);
   }
 }
 
