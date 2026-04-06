@@ -164,6 +164,23 @@ const TG_CHAT_ID = process.env.GROUP_CHAT_ID || '';
 const QUEUE_DIR = '/tmp';
 const BOT_WEBHOOK_URL = process.env.BOT_WEBHOOK_URL || 'http://relay:18793/tg';
 
+// --- Rate limiter: 30 messages per minute per user ---
+const RATE_LIMIT_MAX = 30;
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+const _rateLimitMap = new Map(); // userId → number[]
+
+function checkRateLimit(userId) {
+  const now = Date.now();
+  const timestamps = (_rateLimitMap.get(userId) || []).filter(t => now - t < RATE_LIMIT_WINDOW_MS);
+  if (timestamps.length >= RATE_LIMIT_MAX) {
+    _rateLimitMap.set(userId, timestamps);
+    return false; // rate limited
+  }
+  timestamps.push(now);
+  _rateLimitMap.set(userId, timestamps);
+  return true; // allowed
+}
+
 // Webhook endpoints — receive Telegram updates from both bots,
 // write to per-topic queues, and forward to bot.py for processing.
 // Main bot webhook
@@ -354,6 +371,13 @@ function webhookQueueWrite(update) {
 
   // Drop non-text messages we don't handle
   if (!msg.text) return;
+
+  // Rate limiting: 30 messages per minute per user
+  if (msg.from && msg.from.id && !checkRateLimit(msg.from.id)) {
+    console.log(`[rate-limit] User ${msg.from.id} exceeded rate limit in thread ${threadId}`);
+    tgSendMessage(threadId, '⏳ יותר מדי הודעות — נסה שוב בעוד דקה', msg.message_id, null).catch(() => {});
+    return;
+  }
 
   // Multi-tenant: if session has multi_tenant=true, route per user_id to isolated thread
   const effectiveThreadId = resolveMultiTenantThread(threadId, msg.from.id, msg.from.first_name || msg.from.username || 'user');
