@@ -244,7 +244,8 @@ function webhookQueueWrite(update) {
   if (!threadId) return;
 
   // Auto-handle /status command without waking Claude (saves tokens)
-  if (msg.text && msg.text.trim().toLowerCase() === '/status') {
+  // Match /status or /status@botname
+  if (msg.text && /^\/status(@\S+)?$/i.test(msg.text.trim())) {
     handleStatusCommand(threadId, msg.message_id).catch(e => console.error('[status] error:', e.message));
     return;
   }
