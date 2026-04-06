@@ -19,4 +19,3 @@ backup-rclone.sh
 mcp-copilot/node_modules/
 mcp-copilot/bun.lock
 queues-backup/
-.github/
