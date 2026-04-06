@@ -14872,6 +14872,40 @@ mcp.setRequestHandler(ListToolsRequestSchema2, async () => ({
           caption: { type: "string", description: "Optional caption text to show above the code block" }
         }
       }
+    },
+    {
+      name: "memory_write",
+      description: "Write or update a key-value pair in the session memory store. Use this to persist structured data across conversations. Better than knowledge_write for simple key\u2192value data.",
+      inputSchema: {
+        type: "object",
+        required: ["key", "value"],
+        properties: {
+          key: { type: "string", description: "The key to store the value under" },
+          value: { type: "string", description: "The value to store (any string, including JSON)" }
+        }
+      }
+    },
+    {
+      name: "memory_read",
+      description: "Read from the session memory store. If key is given, returns that value. If no key, returns all keys as JSON.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          key: { type: "string", description: "Optional key to read. If omitted, returns all keys." }
+        }
+      }
+    },
+    {
+      name: "send_diff",
+      description: "Send a git diff to Telegram. Parses the diff for stats (files changed, insertions, deletions) and sends a summary followed by the diff content.",
+      inputSchema: {
+        type: "object",
+        required: ["diff"],
+        properties: {
+          diff: { type: "string", description: "Git diff output (e.g. from git diff HEAD or git diff --stat)" },
+          caption: { type: "string", description: "Optional caption/title for the diff" }
+        }
+      }
     }
   ]
 }));
@@ -15297,6 +15331,33 @@ ${t.prompt}`,
       } else {
         info.push("", "No session context available.");
       }
+      const summaryFile = `/tmp/session-summary-${target.thread_id}.md`;
+      try {
+        const sf = Bun.file(summaryFile);
+        if (await sf.exists()) {
+          const summary = (await sf.text()).trim();
+          if (summary)
+            info.push("", "--- Last Session Summary ---", summary);
+        }
+      } catch {}
+      try {
+        const queueFile = `/tmp/tg-queue-${target.thread_id}.jsonl`;
+        const qf = Bun.file(queueFile);
+        if (await qf.exists()) {
+          const lines = (await qf.text()).trim().split(`
+`).filter((l) => l.trim());
+          const recent = lines.slice(-5).map((l) => {
+            try {
+              const m = JSON.parse(l);
+              return `[${m.user ?? "unknown"}]: ${(m.text ?? "").slice(0, 120)}`;
+            } catch {
+              return l.slice(0, 120);
+            }
+          });
+          if (recent.length > 0)
+            info.push("", "--- Last 5 Messages ---", ...recent);
+        }
+      } catch {}
       return { content: [{ type: "text", text: info.join(`
 `) }] };
     } catch (e) {
@@ -15601,6 +15662,83 @@ ${task}`,
       return { content: [{ type: "text", text: "ERROR: failed to send code block." }], isError: true };
     }
     return { content: [{ type: "text", text: `Code block sent (message_id: ${ids.join(", ")})` }] };
+  }
+  const MEMORY_FILE = `/tmp/relay-memory-${THREAD_ID}.json`;
+  if (name === "memory_write") {
+    const key = String(args?.key ?? "");
+    const value = String(args?.value ?? "");
+    if (!key)
+      return { content: [{ type: "text", text: "Error: key is required." }] };
+    try {
+      let store = {};
+      try {
+        const f = Bun.file(MEMORY_FILE);
+        if (await f.exists())
+          store = JSON.parse(await f.text());
+      } catch {}
+      store[key] = value;
+      await Bun.write(MEMORY_FILE, JSON.stringify(store, null, 2));
+      return { content: [{ type: "text", text: "Saved." }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error writing memory: ${e}` }] };
+    }
+  }
+  if (name === "memory_read") {
+    const key = args?.key ? String(args.key) : undefined;
+    try {
+      let store = {};
+      try {
+        const f = Bun.file(MEMORY_FILE);
+        if (await f.exists())
+          store = JSON.parse(await f.text());
+      } catch {}
+      if (key) {
+        if (key in store) {
+          return { content: [{ type: "text", text: store[key] }] };
+        } else {
+          return { content: [{ type: "text", text: `Key '${key}' not found in memory.` }] };
+        }
+      } else {
+        if (Object.keys(store).length === 0) {
+          return { content: [{ type: "text", text: "Memory store is empty." }] };
+        }
+        return { content: [{ type: "text", text: JSON.stringify(store, null, 2) }] };
+      }
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error reading memory: ${e}` }] };
+    }
+  }
+  if (name === "send_diff") {
+    const diff = String(args?.diff ?? "");
+    const caption = args?.caption ? String(args.caption) : "";
+    try {
+      let filesChanged = 0, insertions = 0, deletions = 0;
+      const statLine = diff.match(/(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?/);
+      if (statLine) {
+        filesChanged = parseInt(statLine[1] ?? "0");
+        insertions = parseInt(statLine[2] ?? "0");
+        deletions = parseInt(statLine[3] ?? "0");
+      } else {
+        for (const line of diff.split(`
+`)) {
+          if (line.startsWith("+") && !line.startsWith("+++"))
+            insertions++;
+          else if (line.startsWith("-") && !line.startsWith("---"))
+            deletions++;
+        }
+        filesChanged = new Set(diff.match(/^diff --git .*/gm) ?? []).size;
+      }
+      const summary = `\uD83D\uDCDD ${caption ? caption + `
+` : ""}+${insertions} insertions, -${deletions} deletions, ${filesChanged} files changed`;
+      await sendMessage(summary);
+      const truncated = diff.length > 3000 ? diff.slice(0, 3000) + `
+\u2026 (truncated)` : diff;
+      const escaped = truncated.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      await sendMessage(`<pre>${escaped}</pre>`);
+      return { content: [{ type: "text", text: `Diff sent. ${filesChanged} files, +${insertions}/-${deletions}` }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error sending diff: ${e}` }] };
+    }
   }
   return { content: [{ type: "text", text: `Unknown tool: ${name}` }] };
 });
