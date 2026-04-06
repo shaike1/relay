@@ -207,12 +207,16 @@ function webhookQueueWrite(update) {
     const threadId = match[1];
     const label = match[2];
     const queueFile = path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`);
+    const now = Math.floor(Date.now() / 1000);
     const entry = {
-      message_id: cb.message ? cb.message.message_id : Date.now(),
+      // Use negative timestamp-based ID so fetch_messages picks it up even when
+      // lastId has advanced past the original button message_id.
+      // Negative IDs are treated as "forced" messages: accepted if ts > last_nudge_ts.
+      message_id: -(now % 2147483647),
       user: (cb.from.first_name || cb.from.username || 'unknown'),
       user_id: cb.from.id,
       text: label,
-      ts: Math.floor(Date.now() / 1000),
+      ts: now,
       via: 'callback'
     };
     try {
