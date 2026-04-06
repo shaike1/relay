@@ -124,6 +124,25 @@ async function forwardToDiscord(threadId: number | undefined, text: string): Pro
   }
 }
 
+// Forward message to WhatsApp if a whatsapp-ctx file exists for this thread
+async function forwardToWhatsApp(threadId: number | undefined, text: string): Promise<void> {
+  if (!threadId) return
+  const WA_BRIDGE = process.env.WA_BRIDGE_URL || 'http://whatsapp-bridge:9103'
+  try {
+    const ctxFile = `/tmp/whatsapp-ctx-${threadId}`
+    const { existsSync } = await import('fs')
+    if (!existsSync(ctxFile)) return
+    await fetch(`${WA_BRIDGE}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ thread_id: threadId, text }),
+      signal: AbortSignal.timeout(5000),
+    })
+  } catch (_) {
+    // WhatsApp forward is best-effort
+  }
+}
+
 async function logToPeersTopic(from: string, to: string, text: string): Promise<void> {
   try {
     const peerTopicPath = new URL('../peers-topic.json', import.meta.url).pathname
@@ -474,8 +493,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       return { content: [{ type: 'text', text: `ERROR: message failed to send. text param was: "${text.slice(0, 100)}". Call send_message again with correct params (use 'text' not 'message').` }], isError: true }
     }
 
-    // Forward to Discord if a Discord context exists for this thread
+    // Forward to Discord/WhatsApp if context exists for this thread
     void forwardToDiscord(THREAD_ID, text)
+    void forwardToWhatsApp(THREAD_ID, text)
 
     return { content: [{ type: 'text', text: `Sent. message_ids: ${ids.join(', ')}` }] }
   }

@@ -104,6 +104,33 @@ services:
         max-size: "5m"
         max-file: "2"
 
+  whatsapp-bridge:
+    build: ./whatsapp-bridge
+    container_name: whatsapp-bridge
+    restart: always
+    profiles:
+      - whatsapp
+    environment:
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
+      TELEGRAM_CHAT_ID: "${GROUP_CHAT_ID}"
+      WA_QR_THREAD_ID: "${WA_QR_THREAD_ID:-183}"
+      WA_SESSION_DIR: "/wa-session"
+      WA_BRIDGE_PORT: "9103"
+      WA_DEFAULT_THREAD_ID: "${WA_DEFAULT_THREAD_ID:-}"
+      SESSIONS_FILE: "/relay/sessions.json"
+      QUEUE_DIR: "/tmp"
+    expose:
+      - "9103"
+    volumes:
+      - /root/relay/sessions.json:/relay/sessions.json:ro
+      - relay-queue:/tmp
+      - wa-session:/wa-session
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
   discord-bridge:
     build: ./discord-bridge
     container_name: discord-bridge
@@ -133,3 +160,4 @@ networks:
 volumes:
   relay-queue:
     external: true
+  wa-session:
