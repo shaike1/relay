@@ -143,6 +143,25 @@ async function forwardToWhatsApp(threadId: number | undefined, text: string): Pr
   }
 }
 
+// Forward message to Slack if a slack-ctx file exists for this thread
+async function forwardToSlack(threadId: number | undefined, text: string): Promise<void> {
+  if (!threadId) return
+  const SLACK_BRIDGE = process.env.SLACK_BRIDGE_URL || 'http://slack-bridge:9104'
+  try {
+    const ctxFile = `/tmp/slack-ctx-${threadId}`
+    const { existsSync } = await import('fs')
+    if (!existsSync(ctxFile)) return // no Slack context for this thread
+    await fetch(`${SLACK_BRIDGE}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ thread_id: threadId, text }),
+      signal: AbortSignal.timeout(5000),
+    })
+  } catch (_) {
+    // Slack forward is best-effort — never block Telegram response
+  }
+}
+
 async function logToPeersTopic(from: string, to: string, text: string): Promise<void> {
   try {
     const peerTopicPath = new URL('../peers-topic.json', import.meta.url).pathname
@@ -569,9 +588,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       return { content: [{ type: 'text', text: `ERROR: message failed to send. text param was: "${text.slice(0, 100)}". Call send_message again with correct params (use 'text' not 'message').` }], isError: true }
     }
 
-    // Forward to Discord/WhatsApp if context exists for this thread
+    // Forward to Discord/WhatsApp/Slack if context exists for this thread
     void forwardToDiscord(THREAD_ID, text)
     void forwardToWhatsApp(THREAD_ID, text)
+    void forwardToSlack(THREAD_ID, text)
 
     return { content: [{ type: 'text', text: `Sent. message_ids: ${ids.join(', ')}` }] }
   }

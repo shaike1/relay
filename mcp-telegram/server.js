@@ -14580,6 +14580,23 @@ async function forwardToWhatsApp(threadId, text) {
     });
   } catch (_) {}
 }
+async function forwardToSlack(threadId, text) {
+  if (!threadId)
+    return;
+  const SLACK_BRIDGE = process.env.SLACK_BRIDGE_URL || "http://slack-bridge:9104";
+  try {
+    const ctxFile = `/tmp/slack-ctx-${threadId}`;
+    const { existsSync } = await import("fs");
+    if (!existsSync(ctxFile))
+      return;
+    await fetch(`${SLACK_BRIDGE}/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ thread_id: threadId, text }),
+      signal: AbortSignal.timeout(5000)
+    });
+  } catch (_) {}
+}
 async function logToPeersTopic(from, to, text) {
   try {
     const peerTopicPath = new URL("../peers-topic.json", import.meta.url).pathname;
@@ -14990,6 +15007,7 @@ mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
     }
     forwardToDiscord(THREAD_ID, text);
     forwardToWhatsApp(THREAD_ID, text);
+    forwardToSlack(THREAD_ID, text);
     return { content: [{ type: "text", text: `Sent. message_ids: ${ids.join(", ")}` }] };
   }
   if (name === "send_file") {

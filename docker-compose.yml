@@ -178,6 +178,29 @@ services:
         max-size: "5m"
         max-file: "2"
 
+  slack-bridge:
+    build: ./slack-bridge
+    container_name: slack-bridge
+    restart: always
+    profiles:
+      - slack
+    environment:
+      SLACK_BOT_TOKEN: "${SLACK_BOT_TOKEN:-}"
+      SLACK_APP_TOKEN: "${SLACK_APP_TOKEN:-}"
+      SLACK_BRIDGE_PORT: "9104"
+      SESSIONS_FILE: "/relay/sessions.json"
+      QUEUE_DIR: "/tmp"
+    expose:
+      - "9104"
+    volumes:
+      - /root/relay/sessions.json:/relay/sessions.json:ro
+      - relay-queue:/tmp
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
   discord-bridge:
     build: ./discord-bridge
     container_name: discord-bridge
