@@ -357,6 +357,25 @@ function webhookQueueWrite(update) {
     return;
   }
 
+  // /ask [session] [question] — send a question to another session
+  const askCmd = msg.text && msg.text.trim().match(/^\/ask(@\S+)?\s+(\S+)\s+([\s\S]+)$/i);
+  if (askCmd) {
+    handleAskCommand(threadId, msg.message_id, askCmd[2], askCmd[3]).catch(e => console.error('[ask] error:', e.message));
+    return;
+  }
+
+  // /pin — pin a replied-to message to the knowledge base
+  if (msg.text && /^\/pin(@\S+)?$/i.test(msg.text.trim())) {
+    handlePinCommand(threadId, msg.message_id, msg.reply_to_message).catch(e => console.error('[pin] error:', e.message));
+    return;
+  }
+
+  // /report — daily summary
+  if (msg.text && /^\/report(@\S+)?$/i.test(msg.text.trim())) {
+    handleReportCommand(threadId, msg.message_id).catch(e => console.error('[report] error:', e.message));
+    return;
+  }
+
   // Voice messages — transcribe via Whisper then queue
   if (msg.voice || msg.audio) {
     handleVoiceMessage(msg, threadId).catch(e => console.error('[voice] error:', e.message));
@@ -393,6 +412,8 @@ function webhookQueueWrite(update) {
   };
   try {
     fs.appendFileSync(queueFile, JSON.stringify(entry) + '\n');
+    // Write start timestamp for response-time tracking (read by MCP send_message)
+    fs.writeFileSync(path.join(QUEUE_DIR, `relay-msg-start-${effectiveThreadId}`), String(Date.now()));
     console.log(`[webhook] ${effectiveThreadId}: ${msg.from.first_name}: ${msg.text.substring(0, 60)}`);
   } catch (err) {
     console.error(`[webhook] Queue write error:`, err.message);
@@ -500,6 +521,129 @@ async function handleRestartCommand(threadId, replyTo) {
     }
   } catch (e) {
     console.error('[restart] Failed:', e.message);
+  }
+}
+
+// /ask [session] [question] — forward a question to another session's queue
+async function handleAskCommand(fromThreadId, replyTo, targetSession, question) {
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const target = sessions.find(s => s.session === targetSession);
+    if (!target) {
+      await tgSendMessage(fromThreadId, `❌ Session <code>${targetSession}</code> לא נמצא`, replyTo, null);
+      return;
+    }
+    const queueFile = path.join(QUEUE_DIR, `tg-queue-${target.thread_id}.jsonl`);
+    const entry = {
+      message_id: -(Math.floor(Date.now() / 1000) % 2147483647),
+      user: `ask:thread-${fromThreadId}`,
+      text: question,
+      ts: Math.floor(Date.now() / 1000),
+      via: 'ask',
+      force: true,
+    };
+    fs.appendFileSync(queueFile, JSON.stringify(entry) + '\n');
+    await tgSendMessage(fromThreadId, `📨 שאלה נשלחה ל-<code>${targetSession}</code>`, replyTo, null);
+    console.log(`[ask] thread ${fromThreadId} → ${targetSession}: ${question.substring(0, 60)}`);
+  } catch (e) {
+    console.error('[ask] Failed:', e.message);
+    await tgSendMessage(fromThreadId, `❌ שגיאה בשליחת שאלה: ${e.message}`, replyTo, null);
+  }
+}
+
+// /pin — save replied-to message to per-thread knowledge base
+async function handlePinCommand(threadId, replyTo, replyToMsg) {
+  try {
+    if (!replyToMsg) {
+      await tgSendMessage(threadId, '📌 השתמש ב-/pin כ-reply להודעה שרוצה לשמור', replyTo, null);
+      return;
+    }
+    // Extract text from the replied-to message
+    const text = replyToMsg.text || replyToMsg.caption || JSON.stringify(replyToMsg);
+    const knowledgeFile = path.join(QUEUE_DIR, `relay-knowledge-${threadId}.jsonl`);
+    const entry = {
+      ts: Math.floor(Date.now() / 1000),
+      message_id: replyToMsg.message_id,
+      user: replyToMsg.from ? (replyToMsg.from.first_name || replyToMsg.from.username || 'unknown') : 'unknown',
+      text,
+      pinned_by_msg: replyTo,
+    };
+    fs.appendFileSync(knowledgeFile, JSON.stringify(entry) + '\n');
+    await tgSendMessage(threadId, '📌 נשמר ב-knowledge base', replyTo, null);
+    console.log(`[pin] thread ${threadId}: pinned message ${replyToMsg.message_id}`);
+  } catch (e) {
+    console.error('[pin] Failed:', e.message);
+    await tgSendMessage(threadId, `❌ שגיאה בשמירה: ${e.message}`, replyTo, null);
+  }
+}
+
+// /report — daily summary of activity
+async function handleReportCommand(threadId, replyTo) {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const queueFile = path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`);
+    const statsFile = path.join(QUEUE_DIR, `token-stats-${threadId}.jsonl`);
+    const auditFile = path.join(QUEUE_DIR, `relay-audit-${threadId}.jsonl`);
+
+    let userMsgs = 0, claudeMsgs = 0, toolCalls = 0;
+    let totalInput = 0, totalOutput = 0, totalCost = 0;
+
+    // Count messages from queue
+    if (fs.existsSync(queueFile)) {
+      const lines = fs.readFileSync(queueFile, 'utf8').split('\n').filter(l => l.trim());
+      for (const line of lines) {
+        try {
+          const m = JSON.parse(line);
+          const msgDate = m.ts ? new Date(m.ts * 1000).toISOString().slice(0, 10) : '';
+          if (msgDate !== today) continue;
+          if (m.via === 'claude' || m.user === 'claude') claudeMsgs++;
+          else if (m.via === 'webhook' || m.via === 'reaction' || m.via === 'callback') userMsgs++;
+        } catch (_) {}
+      }
+    }
+
+    // Count tool calls from audit log
+    if (fs.existsSync(auditFile)) {
+      const lines = fs.readFileSync(auditFile, 'utf8').split('\n').filter(l => l.trim());
+      for (const line of lines) {
+        try {
+          const e = JSON.parse(line);
+          const eDate = e.ts ? new Date(e.ts * 1000).toISOString().slice(0, 10) : (e.timestamp || '').slice(0, 10);
+          if (eDate !== today) continue;
+          if (e.type === 'tool_use' || e.event === 'tool_use') toolCalls++;
+        } catch (_) {}
+      }
+    }
+
+    // Token stats for today
+    if (fs.existsSync(statsFile)) {
+      const lines = fs.readFileSync(statsFile, 'utf8').split('\n').filter(l => l.trim());
+      for (const line of lines) {
+        try {
+          const e = JSON.parse(line);
+          if (!(e.ts || '').startsWith(today)) continue;
+          totalInput += e.input || 0;
+          totalOutput += e.output || 0;
+          totalCost += e.cost_usd || 0;
+        } catch (_) {}
+      }
+    }
+
+    const fmt = n => n.toLocaleString('en-US');
+    const text = [
+      `📊 <b>דוח יומי — ${today}</b>`,
+      '',
+      `💬 הודעות: ${userMsgs} (משתמש) + ${claudeMsgs} (Claude)`,
+      `🔧 קריאות כלים: ${toolCalls}`,
+      `🪙 טוקנים: ${fmt(totalInput)} (in) + ${fmt(totalOutput)} (out)`,
+      `💰 עלות: $${totalCost.toFixed(4)}`,
+    ].join('\n');
+
+    await tgSendMessage(threadId, text, replyTo, null);
+    console.log(`[report] Generated daily report for thread ${threadId}`);
+  } catch (e) {
+    console.error('[report] Failed:', e.message);
+    await tgSendMessage(threadId, `❌ שגיאה בהפקת דוח: ${e.message}`, replyTo, null);
   }
 }
 
@@ -2013,6 +2157,27 @@ app.get('/pipeline', (req, res) => {
   try {
     res.type('html').send(fs.readFileSync('/relay/pipeline.html', 'utf8'));
   } catch (e) { res.status(500).send('Pipeline dashboard not found'); }
+});
+
+// --- Knowledge base endpoint ---
+// GET /api/knowledge/:session — returns pinned knowledge entries for a session
+app.get('/api/knowledge/:session', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const session = sessions.find(s => s.session === req.params.session);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    const knowledgeFile = path.join(QUEUE_DIR, `relay-knowledge-${session.thread_id}.jsonl`);
+    if (!fs.existsSync(knowledgeFile)) return res.json([]);
+    const entries = fs.readFileSync(knowledgeFile, 'utf8')
+      .split('\n')
+      .filter(l => l.trim())
+      .map(l => { try { return JSON.parse(l); } catch (_) { return null; } })
+      .filter(Boolean);
+    res.json(entries);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // --- Audit log endpoint ---
