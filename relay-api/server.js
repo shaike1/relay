@@ -269,6 +269,12 @@ function webhookQueueWrite(update) {
     return;
   }
 
+  // /stats — token usage summary
+  if (msg.text && /^\/stats(@\S+)?$/i.test(msg.text.trim())) {
+    handleStatsCommand(threadId, msg.message_id).catch(e => console.error('[stats] error:', e.message));
+    return;
+  }
+
   // Auto-handle /history [page] command
   const histCmd = msg.text && msg.text.trim().match(/^\/history(@\S+)?(\s+(\d+))?$/i);
   if (histCmd) {
@@ -292,7 +298,10 @@ function webhookQueueWrite(update) {
   // Drop non-text messages we don't handle
   if (!msg.text) return;
 
-  const queueFile = path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`);
+  // Multi-tenant: if session has multi_tenant=true, route per user_id to isolated thread
+  const effectiveThreadId = resolveMultiTenantThread(threadId, msg.from.id, msg.from.first_name || msg.from.username || 'user');
+
+  const queueFile = path.join(QUEUE_DIR, `tg-queue-${effectiveThreadId}.jsonl`);
   const entry = {
     message_id: msg.message_id,
     user: (msg.from.first_name || msg.from.username || 'unknown'),
@@ -303,9 +312,35 @@ function webhookQueueWrite(update) {
   };
   try {
     fs.appendFileSync(queueFile, JSON.stringify(entry) + '\n');
-    console.log(`[webhook] ${threadId}: ${msg.from.first_name}: ${msg.text.substring(0, 60)}`);
+    console.log(`[webhook] ${effectiveThreadId}: ${msg.from.first_name}: ${msg.text.substring(0, 60)}`);
   } catch (err) {
     console.error(`[webhook] Queue write error:`, err.message);
+  }
+}
+
+// Multi-tenant routing: maps (thread_id, user_id) → isolated virtual thread_id
+// Virtual thread IDs are stored in /tmp/mt-map-{threadId}.json
+function resolveMultiTenantThread(threadId, userId, userName) {
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const session = sessions.find(s => String(s.thread_id) === String(threadId));
+    if (!session || !session.multi_tenant) return threadId;
+
+    const mapFile = path.join(QUEUE_DIR, `mt-map-${threadId}.json`);
+    let map = {};
+    try { map = JSON.parse(fs.readFileSync(mapFile, 'utf8')); } catch (_) {}
+
+    if (!map[userId]) {
+      // Assign a new virtual thread_id: base thread_id * 10000 + sequential index
+      const existing = Object.values(map);
+      const idx = existing.length + 1;
+      map[userId] = { virtual_thread: parseInt(threadId) * 10000 + idx, name: userName };
+      fs.writeFileSync(mapFile, JSON.stringify(map, null, 2));
+      console.log(`[multi-tenant] New user ${userName} (${userId}) → virtual thread ${map[userId].virtual_thread}`);
+    }
+    return map[userId].virtual_thread;
+  } catch (_) {
+    return threadId;
   }
 }
 
@@ -339,6 +374,63 @@ async function handleStatusCommand(threadId, replyTo) {
     console.log(`[status] Responded to /status in thread ${threadId}`);
   } catch (e) {
     console.error('[status] Failed:', e.message);
+  }
+}
+
+// /stats command — token usage and cost summary from token-stats file
+const _handledStatsIds = new Set();
+
+async function handleStatsCommand(threadId, replyTo) {
+  const key = `${threadId}:${replyTo}`;
+  if (_handledStatsIds.has(key)) return;
+  _handledStatsIds.add(key);
+  setTimeout(() => _handledStatsIds.delete(key), 30000);
+
+  try {
+    const statsFile = path.join(QUEUE_DIR, `token-stats-${threadId}.jsonl`);
+    const lines = fs.existsSync(statsFile)
+      ? fs.readFileSync(statsFile, 'utf8').split('\n').filter(l => l.trim())
+      : [];
+
+    if (lines.length === 0) {
+      await tgSendMessage(threadId, '📊 אין נתוני שימוש עדיין (Stop hook לא הופעל)', replyTo, null);
+      return;
+    }
+
+    let totalInput = 0, totalOutput = 0, totalCacheRead = 0, totalCacheWrite = 0, totalCost = 0;
+    let todayInput = 0, todayOutput = 0, todayCost = 0;
+    const today = new Date().toISOString().slice(0, 10);
+
+    for (const line of lines) {
+      try {
+        const e = JSON.parse(line);
+        totalInput += e.input || 0;
+        totalOutput += e.output || 0;
+        totalCacheRead += e.cache_read || 0;
+        totalCacheWrite += e.cache_write || 0;
+        totalCost += e.cost_usd || 0;
+        if ((e.ts || '').startsWith(today)) {
+          todayInput += e.input || 0;
+          todayOutput += e.output || 0;
+          todayCost += e.cost_usd || 0;
+        }
+      } catch (_) {}
+    }
+
+    const fmt = n => n.toLocaleString('en-US');
+    const text = [
+      '📊 <b>Token Usage</b>',
+      '',
+      `<b>היום:</b> ${fmt(todayInput)} in / ${fmt(todayOutput)} out — $${todayCost.toFixed(4)}`,
+      `<b>סה"כ:</b> ${fmt(totalInput)} in / ${fmt(totalOutput)} out`,
+      `<b>Cache:</b> ${fmt(totalCacheRead)} read / ${fmt(totalCacheWrite)} write`,
+      `<b>עלות כוללת:</b> $${totalCost.toFixed(4)}`,
+      `<b>קריאות:</b> ${lines.length}`,
+    ].join('\n');
+
+    await tgSendMessage(threadId, text, replyTo, null);
+  } catch (e) {
+    console.error('[stats] Failed:', e.message);
   }
 }
 
