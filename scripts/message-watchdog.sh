@@ -141,4 +141,9 @@ print(count)
   sleep 0.3
   tmux_s send-keys -t "$SESSION" "" Enter
   last_nudge=$now
+
+  # Streaming — launch background pane streamer so user sees live progress
+  if [ "${STREAM_MONITOR:-1}" = "1" ] && [ "$SESSION_TYPE" = "claude" ]; then
+    bash /relay/scripts/stream-pane.sh "$TMUX_SOCKET" "$SESSION" "$THREAD_ID" &
+  fi
 done
