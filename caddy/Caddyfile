@@ -1,0 +1,68 @@
+https://relay.right-api.com {
+	@websocket {
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	tls internal
+	reverse_proxy @websocket relay-api:7070 {
+		header_up -Sec-WebSocket-Extensions
+		transport http {
+			versions 1.1
+		}
+	}
+	reverse_proxy relay-api:7070
+}
+
+http://relay.right-api.com {
+	redir https://relay.right-api.com{uri} permanent
+}
+
+https://rustdesk.right-api.com {
+	tls internal
+
+	# RustDesk hbbs WebSocket (ID/rendezvous server)
+	@ws_id {
+		path /ws/id
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	reverse_proxy @ws_id rustdesk-hbbs:21118 {
+		header_up -Sec-WebSocket-Extensions
+		transport http {
+			versions 1.1
+		}
+	}
+
+	# RustDesk hbbr WebSocket (relay server)
+	@ws_relay {
+		path /ws/relay
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	reverse_proxy @ws_relay rustdesk-hbbr:21119 {
+		header_up -Sec-WebSocket-Extensions
+		transport http {
+			versions 1.1
+		}
+	}
+
+	# Default: reverse proxy to hbbs websocket
+	reverse_proxy rustdesk-hbbs:21118
+}
+
+http://rustdesk.right-api.com {
+	redir https://rustdesk.right-api.com{uri} permanent
+}
+
+https://meshcentral.right-api.com {
+	tls internal
+	reverse_proxy meshcentral:443 {
+		transport http {
+			tls_insecure_skip_verify
+		}
+	}
+}
+
+http://meshcentral.right-api.com {
+	redir https://meshcentral.right-api.com{uri} permanent
+}

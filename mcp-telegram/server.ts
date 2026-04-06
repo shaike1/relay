@@ -1262,6 +1262,20 @@ async function poll(): Promise<void> {
     pollCount++
     // Trim queue every ~5 minutes (600 cycles × 500ms)
     if (pollCount % 600 === 0) void trimQueue(lastId)
+    // Re-read state file every 10s (20 cycles × 500ms) to pick up manual lastId advances
+    if (pollCount % 20 === 0) {
+      try {
+        const sf = Bun.file(STATE_FILE)
+        if (await sf.exists()) {
+          const s = JSON.parse(await sf.text()) as { lastId?: number }
+          if (s.lastId && s.lastId > lastId) {
+            process.stderr.write(`[telegram] state file advanced lastId ${lastId} → ${s.lastId}\n`)
+            lastId = s.lastId
+            pendingDelivery = null
+          }
+        }
+      } catch {}
+    }
 
     try {
       // If Claude showed activity after we sent a pending notification, confirm delivery

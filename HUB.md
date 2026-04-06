@@ -7,7 +7,7 @@ A browser-based session manager for all relay Claude sessions, accessible from a
 | URL | Auth |
 |-----|------|
 | https://relay.right-api.com | Username: `relay` · Password: `relay2026` |
-| http://100.64.0.7:7070 | Tailscale only (no auth required) |
+| http://YOUR_SERVER_IP:7070 | Tailscale only (no auth required) |
 
 ## What is Relay Hub?
 
@@ -24,13 +24,13 @@ When you open the hub, you see a menu like this:
 ║           RELAY SESSION HUB              ║
 ╚══════════════════════════════════════════╝
 
-  LOCAL (100.64.0.7):
+  LOCAL (YOUR_SERVER_IP):
    1) claude-runner          [running]
    2) clawdbot               [running]
    3) relay                  [running]
    ...
 
-  REMOTE (root@100.64.0.12):
+  REMOTE (root@YOUR_REMOTE_HOST):
    8) duplicacy              [remote]
    9) edushare               [remote]
   10) headscale              [remote]
@@ -40,8 +40,8 @@ When you open the hub, you see a menu like this:
   r) Refresh    q) Quit
 ```
 
-- **LOCAL** — relay session containers running on 100.64.0.7
-- **REMOTE** — relay session containers running on 100.64.0.12
+- **LOCAL** — relay session containers running on YOUR_SERVER_IP
+- **REMOTE** — relay session containers running on YOUR_REMOTE_HOST
 
 Select a number to attach to that session's tmux pane (you see Claude's live output).
 Press `Ctrl+B d` to detach and return to the menu.
@@ -61,10 +61,10 @@ Browser → https://relay.right-api.com → Caddy (TLS) → nomacode:3000 → hu
 
 | Component | Host | Container | Port |
 |-----------|------|-----------|------|
-| nomacode web terminal | 100.64.0.7 | `nomacode` | 7070 (host) / 3000 (internal) |
-| Caddy HTTPS proxy | 100.64.0.7 | `caddy` | 443 |
-| Local sessions | 100.64.0.7 | `relay-session-*` | — |
-| Remote sessions | 100.64.0.12 | `relay-session-*` | — |
+| nomacode web terminal | YOUR_SERVER_IP | `nomacode` | 7070 (host) / 3000 (internal) |
+| Caddy HTTPS proxy | YOUR_SERVER_IP | `caddy` | 443 |
+| Local sessions | YOUR_SERVER_IP | `relay-session-*` | — |
+| Remote sessions | YOUR_REMOTE_HOST | `relay-session-*` | — |
 
 ## hub.sh Details
 
@@ -73,19 +73,19 @@ Location: `/root/relay/scripts/hub.sh`
 Key behaviors:
 - **Non-interactive SSH** (e.g. `ssh host "cmd"`): exits immediately via `-c` flag handler or no-TTY fallback — does **not** show the menu
 - **Interactive SSH / web terminal**: shows the session picker menu
-- `RELAY_REMOTE_HOST` env var controls which server is listed as REMOTE (default: `root@100.64.0.12`)
+- `RELAY_REMOTE_HOST` env var controls which server is listed as REMOTE (default: `root@YOUR_REMOTE_HOST`)
 
 ### Remote session listing
 
 hub.sh SSH-es to `$RELAY_REMOTE_HOST` to list containers:
 ```bash
-ssh root@100.64.0.12 "docker ps --format '{{.Names}}' | grep relay-session-"
+ssh root@YOUR_REMOTE_HOST "docker ps --format '{{.Names}}' | grep relay-session-"
 ```
 
-**Important:** The `.bashrc` on `100.64.0.12` must have an interactive guard to prevent hub.sh from blocking non-interactive SSH:
+**Important:** The `.bashrc` on `YOUR_REMOTE_HOST` must have an interactive guard to prevent hub.sh from blocking non-interactive SSH:
 ```bash
 if [ -z "$TMUX" ] && [ -n "$SSH_CONNECTION" ] && [[ $- == *i* ]] && command -v docker &>/dev/null; then
-    exec env RELAY_REMOTE_HOST=root@100.64.0.7 /root/relay/scripts/hub.sh
+    exec env RELAY_REMOTE_HOST=root@YOUR_SERVER_IP /root/relay/scripts/hub.sh
 fi
 ```
 Without `[[ $- == *i* ]]`, `list_remote()` would hang indefinitely.

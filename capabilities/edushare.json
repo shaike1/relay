@@ -6,5 +6,5 @@
     {"type": "feature-development", "description": "Build Edushare features", "example": "Add user permissions to Edushare"},
     {"type": "bug-fix", "description": "Fix bugs in Edushare", "example": "Login flow is broken"}
   ],
-  "context": "Runs on remote host 100.64.0.12 (ARM64)"
+  "context": "Runs on remote host your-remote-host (ARM64)"
 }

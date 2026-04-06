@@ -50,7 +50,7 @@
     "description": "Claude session on a remote host via SSH",
     "type": "claude",
     "path": "/root",
-    "host": "root@100.64.0.12",
+    "host": "root@your-remote-host",
     "group": "remote",
     "skills": []
   }

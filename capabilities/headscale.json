@@ -6,5 +6,5 @@
     {"type": "user-management", "description": "Manage Headscale users and nodes", "example": "Add new device to the network"},
     {"type": "config", "description": "Configure Headscale settings", "example": "Update ACL rules"}
   ],
-  "context": "Runs on remote host 100.64.0.12"
+  "context": "Runs on remote host your-remote-host"
 }

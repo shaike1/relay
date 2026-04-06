@@ -2,7 +2,7 @@
 # relay-menu.sh — interactive session picker for nomacode/web terminals.
 # No tmux hub required — directly execs into each container's tmux session.
 
-REMOTE_HOST="${RELAY_REMOTE_HOST:-root@100.64.0.12}"
+REMOTE_HOST="${RELAY_REMOTE_HOST:-root@your-remote-host}"
 
 while true; do
     clear

@@ -43,7 +43,7 @@
     "thread_id": 12,
     "session": "edushare",
     "path": "/root/.openclaw/workspace/edushare",
-    "host": "root@100.64.0.12",
+    "host": "root@your-remote-host",
     "group": "openclaw",
     "skills": [
       "education",
@@ -55,7 +55,7 @@
     "thread_id": 14,
     "session": "teamy",
     "path": "/root/teamy",
-    "host": "root@100.64.0.12",
+    "host": "root@your-remote-host",
     "group": "tools",
     "skills": [
       "teams",
@@ -79,7 +79,7 @@
     "thread_id": 138,
     "session": "right-api-web",
     "path": "/root/right-api-com",
-    "host": "root@100.64.0.12",
+    "host": "root@your-remote-host",
     "group": "web",
     "skills": [
       "web",
@@ -142,7 +142,7 @@
     "thread_id": 210,
     "session": "headscale",
     "path": "/root/headscale",
-    "host": "root@100.64.0.12",
+    "host": "root@your-remote-host",
     "group": "infra",
     "skills": [
       "networking",
@@ -155,7 +155,7 @@
     "thread_id": 236,
     "session": "duplicacy",
     "path": "/root/duplicacy",
-    "host": "root@100.64.0.12",
+    "host": "root@your-remote-host",
     "group": "infra",
     "skills": [
       "backup",

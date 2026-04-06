@@ -4,7 +4,7 @@
 #
 # Usage:
 #   ./scripts/attach-session.sh cliproxy           # local container
-#   ./scripts/attach-session.sh edushare root@100.64.0.12  # remote container
+#   ./scripts/attach-session.sh edushare root@your-remote-host  # remote container
 set -euo pipefail
 
 SESSION="${1:?session name required}"
