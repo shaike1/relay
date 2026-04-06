@@ -23,6 +23,7 @@ import json
 import os
 import sys
 import time
+import threading
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -325,6 +326,18 @@ def ask_claude(prompt: str, user: str = "") -> str:
     provider = get_provider()
     start = time.time()
     timed_out = False
+
+    # Send continuous typing indicator while Claude processes — gives immediate feedback
+    _typing_stop = threading.Event()
+    def _keep_typing():
+        while not _typing_stop.wait(timeout=4):
+            try:
+                send_typing()
+            except Exception:
+                pass
+    _typing_thread = threading.Thread(target=_keep_typing, daemon=True)
+    _typing_thread.start()
+
     try:
         response = provider.ask(prompt, timeout=ASK_TIMEOUT)
         response = response.strip() if response else ""
@@ -333,6 +346,8 @@ def ask_claude(prompt: str, user: str = "") -> str:
         response = f"Error: {e}"
         if "timeout" in str(e).lower() or "Timeout" in str(e):
             timed_out = True
+    finally:
+        _typing_stop.set()
 
     elapsed = time.time() - start
 
@@ -488,10 +503,15 @@ def main():
             "Then call fetch_messages and respond to any pending messages."
         )
 
-    # Send startup prompt — Claude will respond via MCP (Telegram)
-    log.info("Sending startup prompt...")
-    ask_claude(startup_prompt)
-    log.info("Startup prompt completed")
+    # Send startup prompt only when needed — skip if no pending messages and no checkpoint.
+    # This avoids burning tokens on every container restart when there's nothing to do.
+    startup_pending = read_pending_messages()
+    if startup_pending or restored:
+        log.info(f"Sending startup prompt ({len(startup_pending)} pending messages, restored={bool(restored)})...")
+        ask_claude(startup_prompt)
+        log.info("Startup prompt completed")
+    else:
+        log.info("No pending messages and no checkpoint — skipping startup ask() to save tokens")
 
     log.info("Entering message loop")
 
