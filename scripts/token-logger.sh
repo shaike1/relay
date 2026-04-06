@@ -74,4 +74,41 @@ entry["cost_usd"] = round(cost, 6)
 
 with open(stats_file, "a") as f:
     f.write(json.dumps(entry) + "\n")
+
+# --- Auto-compact threshold check ---
+import datetime
+threshold = int(os.environ.get("TOKEN_COMPACT_THRESHOLD", "50000"))
+today = datetime.date.today().isoformat()
+flag_file = f"/tmp/relay-compact-triggered-{today}-{thread_id}"
+
+if not os.path.exists(flag_file):
+    # Sum today's output tokens for this session
+    total_output = 0
+    try:
+        for line in open(stats_file):
+            try:
+                r = json.loads(line.strip())
+                if r.get("ts", "").startswith(today):
+                    total_output += r.get("output", 0)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    if total_output > threshold:
+        ts = int(datetime.datetime.now().timestamp())
+        queue_file = f"/tmp/tg-queue-{thread_id}.jsonl"
+        compact_entry = {
+            "message_id": -ts,
+            "user": "system",
+            "text": "/compact — context approaching limit, auto-compacting",
+            "ts": ts,
+            "via": "token-monitor",
+            "force": True,
+        }
+        with open(queue_file, "a") as f:
+            f.write(json.dumps(compact_entry) + "\n")
+        # Write flag to prevent multiple triggers today
+        open(flag_file, "w").close()
+        print(f"[token-monitor] Auto-compact triggered for thread {thread_id} (output={total_output} > threshold={threshold})", file=sys.stderr)
 PY

@@ -1,1 +1,122 @@
-[]
+[
+  {
+    "id": "daily-compact-openclaw",
+    "cron": "0 6 * * *",
+    "thread_id": 202,
+    "message": "Please run /compact to compact the context and summarize the session state.",
+    "via": "scheduler",
+    "enabled": true
+  },
+  {
+    "id": "daily-compact-main",
+    "cron": "0 6 * * *",
+    "thread_id": 213,
+    "message": "Please run /compact to compact the context and summarize the session state.",
+    "via": "scheduler",
+    "enabled": true
+  },
+  {
+    "id": "daily-compact-itops-dev",
+    "cron": "0 6 * * *",
+    "thread_id": 185,
+    "message": "Please run /compact to compact the context and summarize the session state.",
+    "via": "scheduler",
+    "enabled": true
+  },
+  {
+    "id": "daily-compact-voice",
+    "cron": "0 6 * * *",
+    "thread_id": 201,
+    "message": "Please run /compact to compact the context and summarize the session state.",
+    "via": "scheduler",
+    "enabled": true
+  },
+  {
+    "id": "daily-compact-relay",
+    "cron": "0 6 * * *",
+    "thread_id": 183,
+    "message": "Please run /compact to compact the context and summarize the session state.",
+    "via": "scheduler",
+    "enabled": true
+  },
+  {
+    "id": "daily-compact-cliproxy",
+    "cron": "0 6 * * *",
+    "thread_id": 187,
+    "message": "Please run /compact to compact the context and summarize the session state.",
+    "via": "scheduler",
+    "enabled": true
+  },
+  {
+    "id": "daily-compact-claude-runner",
+    "cron": "0 6 * * *",
+    "thread_id": 189,
+    "message": "Please run /compact to compact the context and summarize the session state.",
+    "via": "scheduler",
+    "enabled": true
+  },
+  {
+    "id": "daily-compact-oref-native",
+    "cron": "0 6 * * *",
+    "thread_id": 200,
+    "message": "Please run /compact to compact the context and summarize the session state.",
+    "via": "scheduler",
+    "enabled": true
+  },
+  {
+    "id": "daily-compact-clawdbot",
+    "cron": "0 6 * * *",
+    "thread_id": 456,
+    "message": "Please run /compact to compact the context and summarize the session state.",
+    "via": "scheduler",
+    "enabled": true
+  },
+  {
+    "id": "daily-compact-openclaw-core",
+    "cron": "0 6 * * *",
+    "thread_id": 495,
+    "message": "Please run /compact to compact the context and summarize the session state.",
+    "via": "scheduler",
+    "enabled": true
+  },
+  {
+    "id": "daily-compact-mybill",
+    "cron": "0 6 * * *",
+    "thread_id": 2595,
+    "message": "Please run /compact to compact the context and summarize the session state.",
+    "via": "scheduler",
+    "enabled": true
+  },
+  {
+    "id": "daily-compact-tala-planner",
+    "cron": "0 6 * * *",
+    "thread_id": 4067,
+    "message": "Please run /compact to compact the context and summarize the session state.",
+    "via": "scheduler",
+    "enabled": true
+  },
+  {
+    "id": "daily-compact-mikrotik",
+    "cron": "0 6 * * *",
+    "thread_id": 6252,
+    "message": "Please run /compact to compact the context and summarize the session state.",
+    "via": "scheduler",
+    "enabled": true
+  },
+  {
+    "id": "daily-compact-remote-desktop",
+    "cron": "0 6 * * *",
+    "thread_id": 10170,
+    "message": "Please run /compact to compact the context and summarize the session state.",
+    "via": "scheduler",
+    "enabled": true
+  },
+  {
+    "id": "daily-compact-copilot",
+    "cron": "0 6 * * *",
+    "thread_id": 8928,
+    "message": "Please run /compact to compact the context and summarize the session state.",
+    "via": "scheduler",
+    "enabled": true
+  }
+]

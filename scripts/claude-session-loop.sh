@@ -127,14 +127,32 @@ print('no')
       fi
     fi
 
+    # Read memory keys from per-session key-value store (if present)
+    MEMORY_FILE="/tmp/relay-memory-${SESSION}.json"
+    MEMORY_KEYS_MSG=""
+    if [ -f "$MEMORY_FILE" ]; then
+      MEMORY_KEYS_MSG=$(python3 -c "
+import json, sys
+try:
+    data = json.load(open('$MEMORY_FILE'))
+    keys = list(data.keys())
+    if keys:
+        print('Memory keys available: ' + ', '.join(keys) + ' — call memory_read(key) to retrieve')
+except Exception:
+    pass
+" 2>/dev/null || true)
+    fi
+
     if [ -n "$SUMMARY_CONTEXT" ]; then
       STARTUP_MSG='You just started. Previous session context:
 
 '"$SUMMARY_CONTEXT"'
-
+'"${MEMORY_KEYS_MSG:+
+$MEMORY_KEYS_MSG
+}"'
 Call typing then send_message with '"'"'חזרתי ✓ (ממשיך מהיכן שעצרנו)'"'"' then fetch_messages and respond.'
     else
-      STARTUP_MSG='You just started. Call typing then send_message with '"'"'חזרתי ✓'"'"' to announce you'"'"'re online, then fetch_messages and respond to all pending messages.'
+      STARTUP_MSG='You just started.'"${MEMORY_KEYS_MSG:+ $MEMORY_KEYS_MSG.}"' Call typing then send_message with '"'"'חזרתי ✓'"'"' to announce you'"'"'re online, then fetch_messages and respond to all pending messages.'
     fi
     printf '%s\n' "$(python3 -c "
 import json, time
