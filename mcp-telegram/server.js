@@ -14855,7 +14855,22 @@ mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
   if (_updateActivity && ["fetch_messages", "send_message", "typing", "react", "send_file", "message_peer", "complete_task"].includes(name))
     _updateActivity();
   if (name === "send_message") {
-    const text = String(args?.text ?? args?.message ?? "");
+    let text = String(args?.text ?? args?.message ?? "");
+    try {
+      const startFile = `/tmp/relay-msg-start-${THREAD_ID}`;
+      const { existsSync, readFileSync: readFileSync2, unlinkSync } = await import("fs");
+      if (existsSync(startFile)) {
+        const startMs = parseInt(readFileSync2(startFile, "utf8").trim(), 10);
+        if (!isNaN(startMs) && startMs > 0) {
+          const elapsedSec = Math.round((Date.now() - startMs) / 1000);
+          if (elapsedSec >= 0) {
+            text = text + `
+<i>\u23F1 ${elapsedSec}s</i>`;
+          }
+          unlinkSync(startFile);
+        }
+      }
+    } catch (_) {}
     const rawButtons = args?.buttons;
     const buttons = typeof rawButtons === "string" ? (() => {
       try {
