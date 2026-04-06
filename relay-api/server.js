@@ -185,6 +185,22 @@ function webhookQueueWrite(update) {
   if (update && update.callback_query) {
     const cb = update.callback_query;
     const data = cb.data || '';
+
+    // History pagination callback: hist:THREAD_ID:PAGE
+    const histMatch = data.match(/^hist:(\d+):(\d+)$/);
+    if (histMatch) {
+      const threadId = histMatch[1];
+      const page = parseInt(histMatch[2]);
+      const msgId = cb.message && cb.message.message_id;
+      // Answer callback to remove spinner
+      if (cb.id) {
+        fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/answerCallbackQuery?callback_query_id=${cb.id}`)
+          .catch(() => {});
+      }
+      handleHistoryCommand(threadId, null, page, msgId).catch(e => console.error('[history] error:', e.message));
+      return;
+    }
+
     // Format: btn:THREAD_ID:label
     const match = data.match(/^btn:(\d+):(.+)$/);
     if (!match) return;
@@ -250,6 +266,14 @@ function webhookQueueWrite(update) {
     return;
   }
 
+  // Auto-handle /history [page] command — show paginated message history
+  const histCmd = msg.text && msg.text.trim().match(/^\/history(@\S+)?(\s+(\d+))?$/i);
+  if (histCmd) {
+    const page = parseInt(histCmd[3] || '1');
+    handleHistoryCommand(threadId, msg.message_id, page, null).catch(e => console.error('[history] error:', e.message));
+    return;
+  }
+
   const queueFile = path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`);
   const entry = {
     message_id: msg.message_id,
@@ -293,27 +317,108 @@ async function handleStatusCommand(threadId, replyTo) {
       lines.push(`${status} <code>${s.session}</code>`);
     }
     const text = lines.join('\n');
-    const https = require('https');
-    const body = JSON.stringify({
-      chat_id: TG_CHAT_ID,
-      message_thread_id: parseInt(threadId),
-      text,
-      parse_mode: 'HTML',
-      reply_to_message_id: replyTo,
-    });
-    await new Promise((resolve, reject) => {
-      const req = https.request(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-      }, res => { res.resume(); resolve(); });
-      req.on('error', reject);
-      req.write(body);
-      req.end();
-    });
+    await tgSendMessage(threadId, text, replyTo, null);
     console.log(`[status] Responded to /status in thread ${threadId}`);
   } catch (e) {
     console.error('[status] Failed:', e.message);
   }
+}
+
+// /history command — paginated message history from queue file
+const HISTORY_PAGE_SIZE = 12;
+const _handledHistoryIds = new Set();
+
+async function handleHistoryCommand(threadId, replyTo, page = 1, editMsgId = null) {
+  // Dedup for fresh /history commands (not pagination clicks)
+  if (replyTo) {
+    const key = `${threadId}:${replyTo}`;
+    if (_handledHistoryIds.has(key)) return;
+    _handledHistoryIds.add(key);
+    setTimeout(() => _handledHistoryIds.delete(key), 30000);
+  }
+
+  try {
+    const queueFile = path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`);
+    let messages = [];
+    if (fs.existsSync(queueFile)) {
+      const lines = fs.readFileSync(queueFile, 'utf8').split('\n').filter(l => l.trim());
+      for (const line of lines) {
+        try {
+          const m = JSON.parse(line);
+          if (m.message_id > 0 && m.text) messages.push(m);
+        } catch (_) {}
+      }
+    }
+
+    if (messages.length === 0) {
+      await tgSendMessage(threadId, '📜 אין הודעות בhist', replyTo, null);
+      return;
+    }
+
+    // Newest first for display
+    messages = messages.slice().reverse();
+    const totalPages = Math.ceil(messages.length / HISTORY_PAGE_SIZE);
+    page = Math.max(1, Math.min(page, totalPages));
+    const slice = messages.slice((page - 1) * HISTORY_PAGE_SIZE, page * HISTORY_PAGE_SIZE);
+
+    const lines = [`📜 <b>History</b> — עמוד ${page}/${totalPages}`];
+    for (const m of slice) {
+      const d = new Date(m.ts * 1000);
+      const time = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+      const text = (m.text || '').substring(0, 80).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      lines.push(`<code>${time}</code> <b>${m.user}</b>: ${text}`);
+    }
+    const text = lines.join('\n');
+
+    // Build pagination buttons
+    const btns = [];
+    if (page > 1) btns.push({ text: '◀ Prev', callback_data: `hist:${threadId}:${page - 1}` });
+    btns.push({ text: `${page}/${totalPages}`, callback_data: `hist:${threadId}:${page}` });
+    if (page < totalPages) btns.push({ text: 'Next ▶', callback_data: `hist:${threadId}:${page + 1}` });
+    const replyMarkup = { inline_keyboard: [btns] };
+
+    if (editMsgId) {
+      await tgEditMessage(threadId, editMsgId, text, replyMarkup);
+    } else {
+      await tgSendMessage(threadId, text, replyTo, replyMarkup);
+    }
+    console.log(`[history] thread ${threadId} page ${page}/${totalPages}`);
+  } catch (e) {
+    console.error('[history] Failed:', e.message);
+  }
+}
+
+async function tgSendMessage(threadId, text, replyTo, replyMarkup) {
+  const https = require('https');
+  const payload = { chat_id: TG_CHAT_ID, message_thread_id: parseInt(threadId), text, parse_mode: 'HTML' };
+  if (replyTo) payload.reply_to_message_id = replyTo;
+  if (replyMarkup) payload.reply_markup = replyMarkup;
+  const body = JSON.stringify(payload);
+  await new Promise((resolve, reject) => {
+    const req = https.request(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    }, res => { res.resume(); resolve(); });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+async function tgEditMessage(threadId, msgId, text, replyMarkup) {
+  const https = require('https');
+  const payload = { chat_id: TG_CHAT_ID, message_id: msgId, text, parse_mode: 'HTML' };
+  if (replyMarkup) payload.reply_markup = replyMarkup;
+  const body = JSON.stringify(payload);
+  await new Promise((resolve, reject) => {
+    const req = https.request(`https://api.telegram.org/bot${TG_BOT_TOKEN}/editMessageText`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    }, res => { res.resume(); resolve(); });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
 }
 
 // Forward webhook updates to bot.py for processing (NLP routing, dispatch, mentions, etc.)

@@ -105,6 +105,25 @@ function autoCode(html: string): string {
 
 // ── peer topic logging ────────────────────────────────────────────────────────
 
+// Forward message to Discord if a discord-ctx file exists for this thread
+async function forwardToDiscord(threadId: number | undefined, text: string): Promise<void> {
+  if (!threadId) return
+  const DISCORD_BRIDGE = process.env.DISCORD_BRIDGE_URL || 'http://discord-bridge:9102'
+  try {
+    const ctxFile = `/tmp/discord-ctx-${threadId}`
+    const { existsSync } = await import('fs')
+    if (!existsSync(ctxFile)) return // no Discord context for this thread
+    await fetch(`${DISCORD_BRIDGE}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ thread_id: threadId, text }),
+      signal: AbortSignal.timeout(5000),
+    })
+  } catch (_) {
+    // Discord forward is best-effort — never block Telegram response
+  }
+}
+
 async function logToPeersTopic(from: string, to: string, text: string): Promise<void> {
   try {
     const peerTopicPath = new URL('../peers-topic.json', import.meta.url).pathname
@@ -454,6 +473,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     if (ids.length === 0) {
       return { content: [{ type: 'text', text: `ERROR: message failed to send. text param was: "${text.slice(0, 100)}". Call send_message again with correct params (use 'text' not 'message').` }], isError: true }
     }
+
+    // Forward to Discord if a Discord context exists for this thread
+    void forwardToDiscord(THREAD_ID, text)
+
     return { content: [{ type: 'text', text: `Sent. message_ids: ${ids.join(', ')}` }] }
   }
 

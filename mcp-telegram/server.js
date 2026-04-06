@@ -1,32 +1,51 @@
 #!/usr/bin/env bun
 // @bun
+import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+function __accessProp(key) {
+  return this[key];
+}
+var __toESMCache_node;
+var __toESMCache_esm;
 var __toESM = (mod, isNodeMode, target) => {
+  var canCache = mod != null && typeof mod === "object";
+  if (canCache) {
+    var cache = isNodeMode ? __toESMCache_node ??= new WeakMap : __toESMCache_esm ??= new WeakMap;
+    var cached = cache.get(mod);
+    if (cached)
+      return cached;
+  }
   target = mod != null ? __create(__getProtoOf(mod)) : {};
   const to = isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
   for (let key of __getOwnPropNames(mod))
     if (!__hasOwnProp.call(to, key))
       __defProp(to, key, {
-        get: () => mod[key],
+        get: __accessProp.bind(mod, key),
         enumerable: true
       });
+  if (canCache)
+    cache.set(mod, to);
   return to;
 };
 var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+var __returnValue = (v) => v;
+function __exportSetter(name, newValue) {
+  this[name] = __returnValue.bind(null, newValue);
+}
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, {
       get: all[name],
       enumerable: true,
       configurable: true,
-      set: (newValue) => all[name] = () => newValue
+      set: __exportSetter.bind(all, name)
     });
 };
-var __require = import.meta.require;
+var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // node_modules/ajv/dist/compile/codegen/code.js
 var require_code = __commonJS((exports) => {
@@ -6287,7 +6306,7 @@ var require_formats = __commonJS((exports) => {
   }
   var TIME = /^(\d\d):(\d\d):(\d\d(?:\.\d+)?)(z|([+-])(\d\d)(?::?(\d\d))?)?$/i;
   function getTime(strictTimeZone) {
-    return function time(str) {
+    return function time3(str) {
       const matches = TIME.exec(str);
       if (!matches)
         return false;
@@ -13549,7 +13568,7 @@ class Server extends Protocol {
 }
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
-import process3 from "process";
+import process3 from "node:process";
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
 class ReadBuffer {
@@ -13639,26 +13658,845 @@ class StdioServerTransport {
   }
 }
 
+// node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
+var RELATED_TASK_META_KEY2 = "io.modelcontextprotocol/related-task";
+var JSONRPC_VERSION2 = "2.0";
+var AssertObjectSchema2 = custom((v) => v !== null && (typeof v === "object" || typeof v === "function"));
+var ProgressTokenSchema2 = union([string2(), number2().int()]);
+var CursorSchema2 = string2();
+var TaskCreationParamsSchema2 = looseObject({
+  ttl: union([number2(), _null3()]).optional(),
+  pollInterval: number2().optional()
+});
+var TaskMetadataSchema2 = object2({
+  ttl: number2().optional()
+});
+var RelatedTaskMetadataSchema2 = object2({
+  taskId: string2()
+});
+var RequestMetaSchema2 = looseObject({
+  progressToken: ProgressTokenSchema2.optional(),
+  [RELATED_TASK_META_KEY2]: RelatedTaskMetadataSchema2.optional()
+});
+var BaseRequestParamsSchema2 = object2({
+  _meta: RequestMetaSchema2.optional()
+});
+var TaskAugmentedRequestParamsSchema2 = BaseRequestParamsSchema2.extend({
+  task: TaskMetadataSchema2.optional()
+});
+var RequestSchema2 = object2({
+  method: string2(),
+  params: BaseRequestParamsSchema2.loose().optional()
+});
+var NotificationsParamsSchema2 = object2({
+  _meta: RequestMetaSchema2.optional()
+});
+var NotificationSchema2 = object2({
+  method: string2(),
+  params: NotificationsParamsSchema2.loose().optional()
+});
+var ResultSchema2 = looseObject({
+  _meta: RequestMetaSchema2.optional()
+});
+var RequestIdSchema2 = union([string2(), number2().int()]);
+var JSONRPCRequestSchema2 = object2({
+  jsonrpc: literal(JSONRPC_VERSION2),
+  id: RequestIdSchema2,
+  ...RequestSchema2.shape
+}).strict();
+var JSONRPCNotificationSchema2 = object2({
+  jsonrpc: literal(JSONRPC_VERSION2),
+  ...NotificationSchema2.shape
+}).strict();
+var JSONRPCResultResponseSchema2 = object2({
+  jsonrpc: literal(JSONRPC_VERSION2),
+  id: RequestIdSchema2,
+  result: ResultSchema2
+}).strict();
+var ErrorCode2;
+(function(ErrorCode3) {
+  ErrorCode3[ErrorCode3["ConnectionClosed"] = -32000] = "ConnectionClosed";
+  ErrorCode3[ErrorCode3["RequestTimeout"] = -32001] = "RequestTimeout";
+  ErrorCode3[ErrorCode3["ParseError"] = -32700] = "ParseError";
+  ErrorCode3[ErrorCode3["InvalidRequest"] = -32600] = "InvalidRequest";
+  ErrorCode3[ErrorCode3["MethodNotFound"] = -32601] = "MethodNotFound";
+  ErrorCode3[ErrorCode3["InvalidParams"] = -32602] = "InvalidParams";
+  ErrorCode3[ErrorCode3["InternalError"] = -32603] = "InternalError";
+  ErrorCode3[ErrorCode3["UrlElicitationRequired"] = -32042] = "UrlElicitationRequired";
+})(ErrorCode2 || (ErrorCode2 = {}));
+var JSONRPCErrorResponseSchema2 = object2({
+  jsonrpc: literal(JSONRPC_VERSION2),
+  id: RequestIdSchema2.optional(),
+  error: object2({
+    code: number2().int(),
+    message: string2(),
+    data: unknown().optional()
+  })
+}).strict();
+var JSONRPCMessageSchema2 = union([
+  JSONRPCRequestSchema2,
+  JSONRPCNotificationSchema2,
+  JSONRPCResultResponseSchema2,
+  JSONRPCErrorResponseSchema2
+]);
+var JSONRPCResponseSchema2 = union([JSONRPCResultResponseSchema2, JSONRPCErrorResponseSchema2]);
+var EmptyResultSchema2 = ResultSchema2.strict();
+var CancelledNotificationParamsSchema2 = NotificationsParamsSchema2.extend({
+  requestId: RequestIdSchema2.optional(),
+  reason: string2().optional()
+});
+var CancelledNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/cancelled"),
+  params: CancelledNotificationParamsSchema2
+});
+var IconSchema2 = object2({
+  src: string2(),
+  mimeType: string2().optional(),
+  sizes: array(string2()).optional(),
+  theme: _enum(["light", "dark"]).optional()
+});
+var IconsSchema2 = object2({
+  icons: array(IconSchema2).optional()
+});
+var BaseMetadataSchema2 = object2({
+  name: string2(),
+  title: string2().optional()
+});
+var ImplementationSchema2 = BaseMetadataSchema2.extend({
+  ...BaseMetadataSchema2.shape,
+  ...IconsSchema2.shape,
+  version: string2(),
+  websiteUrl: string2().optional(),
+  description: string2().optional()
+});
+var FormElicitationCapabilitySchema2 = intersection(object2({
+  applyDefaults: boolean2().optional()
+}), record(string2(), unknown()));
+var ElicitationCapabilitySchema2 = preprocess((value) => {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    if (Object.keys(value).length === 0) {
+      return { form: {} };
+    }
+  }
+  return value;
+}, intersection(object2({
+  form: FormElicitationCapabilitySchema2.optional(),
+  url: AssertObjectSchema2.optional()
+}), record(string2(), unknown()).optional()));
+var ClientTasksCapabilitySchema2 = looseObject({
+  list: AssertObjectSchema2.optional(),
+  cancel: AssertObjectSchema2.optional(),
+  requests: looseObject({
+    sampling: looseObject({
+      createMessage: AssertObjectSchema2.optional()
+    }).optional(),
+    elicitation: looseObject({
+      create: AssertObjectSchema2.optional()
+    }).optional()
+  }).optional()
+});
+var ServerTasksCapabilitySchema2 = looseObject({
+  list: AssertObjectSchema2.optional(),
+  cancel: AssertObjectSchema2.optional(),
+  requests: looseObject({
+    tools: looseObject({
+      call: AssertObjectSchema2.optional()
+    }).optional()
+  }).optional()
+});
+var ClientCapabilitiesSchema2 = object2({
+  experimental: record(string2(), AssertObjectSchema2).optional(),
+  sampling: object2({
+    context: AssertObjectSchema2.optional(),
+    tools: AssertObjectSchema2.optional()
+  }).optional(),
+  elicitation: ElicitationCapabilitySchema2.optional(),
+  roots: object2({
+    listChanged: boolean2().optional()
+  }).optional(),
+  tasks: ClientTasksCapabilitySchema2.optional()
+});
+var InitializeRequestParamsSchema2 = BaseRequestParamsSchema2.extend({
+  protocolVersion: string2(),
+  capabilities: ClientCapabilitiesSchema2,
+  clientInfo: ImplementationSchema2
+});
+var InitializeRequestSchema2 = RequestSchema2.extend({
+  method: literal("initialize"),
+  params: InitializeRequestParamsSchema2
+});
+var ServerCapabilitiesSchema2 = object2({
+  experimental: record(string2(), AssertObjectSchema2).optional(),
+  logging: AssertObjectSchema2.optional(),
+  completions: AssertObjectSchema2.optional(),
+  prompts: object2({
+    listChanged: boolean2().optional()
+  }).optional(),
+  resources: object2({
+    subscribe: boolean2().optional(),
+    listChanged: boolean2().optional()
+  }).optional(),
+  tools: object2({
+    listChanged: boolean2().optional()
+  }).optional(),
+  tasks: ServerTasksCapabilitySchema2.optional()
+});
+var InitializeResultSchema2 = ResultSchema2.extend({
+  protocolVersion: string2(),
+  capabilities: ServerCapabilitiesSchema2,
+  serverInfo: ImplementationSchema2,
+  instructions: string2().optional()
+});
+var InitializedNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/initialized"),
+  params: NotificationsParamsSchema2.optional()
+});
+var PingRequestSchema2 = RequestSchema2.extend({
+  method: literal("ping"),
+  params: BaseRequestParamsSchema2.optional()
+});
+var ProgressSchema2 = object2({
+  progress: number2(),
+  total: optional(number2()),
+  message: optional(string2())
+});
+var ProgressNotificationParamsSchema2 = object2({
+  ...NotificationsParamsSchema2.shape,
+  ...ProgressSchema2.shape,
+  progressToken: ProgressTokenSchema2
+});
+var ProgressNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/progress"),
+  params: ProgressNotificationParamsSchema2
+});
+var PaginatedRequestParamsSchema2 = BaseRequestParamsSchema2.extend({
+  cursor: CursorSchema2.optional()
+});
+var PaginatedRequestSchema2 = RequestSchema2.extend({
+  params: PaginatedRequestParamsSchema2.optional()
+});
+var PaginatedResultSchema2 = ResultSchema2.extend({
+  nextCursor: CursorSchema2.optional()
+});
+var TaskStatusSchema2 = _enum(["working", "input_required", "completed", "failed", "cancelled"]);
+var TaskSchema2 = object2({
+  taskId: string2(),
+  status: TaskStatusSchema2,
+  ttl: union([number2(), _null3()]),
+  createdAt: string2(),
+  lastUpdatedAt: string2(),
+  pollInterval: optional(number2()),
+  statusMessage: optional(string2())
+});
+var CreateTaskResultSchema2 = ResultSchema2.extend({
+  task: TaskSchema2
+});
+var TaskStatusNotificationParamsSchema2 = NotificationsParamsSchema2.merge(TaskSchema2);
+var TaskStatusNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/tasks/status"),
+  params: TaskStatusNotificationParamsSchema2
+});
+var GetTaskRequestSchema2 = RequestSchema2.extend({
+  method: literal("tasks/get"),
+  params: BaseRequestParamsSchema2.extend({
+    taskId: string2()
+  })
+});
+var GetTaskResultSchema2 = ResultSchema2.merge(TaskSchema2);
+var GetTaskPayloadRequestSchema2 = RequestSchema2.extend({
+  method: literal("tasks/result"),
+  params: BaseRequestParamsSchema2.extend({
+    taskId: string2()
+  })
+});
+var GetTaskPayloadResultSchema2 = ResultSchema2.loose();
+var ListTasksRequestSchema2 = PaginatedRequestSchema2.extend({
+  method: literal("tasks/list")
+});
+var ListTasksResultSchema2 = PaginatedResultSchema2.extend({
+  tasks: array(TaskSchema2)
+});
+var CancelTaskRequestSchema2 = RequestSchema2.extend({
+  method: literal("tasks/cancel"),
+  params: BaseRequestParamsSchema2.extend({
+    taskId: string2()
+  })
+});
+var CancelTaskResultSchema2 = ResultSchema2.merge(TaskSchema2);
+var ResourceContentsSchema2 = object2({
+  uri: string2(),
+  mimeType: optional(string2()),
+  _meta: record(string2(), unknown()).optional()
+});
+var TextResourceContentsSchema2 = ResourceContentsSchema2.extend({
+  text: string2()
+});
+var Base64Schema2 = string2().refine((val) => {
+  try {
+    atob(val);
+    return true;
+  } catch {
+    return false;
+  }
+}, { message: "Invalid Base64 string" });
+var BlobResourceContentsSchema2 = ResourceContentsSchema2.extend({
+  blob: Base64Schema2
+});
+var RoleSchema2 = _enum(["user", "assistant"]);
+var AnnotationsSchema2 = object2({
+  audience: array(RoleSchema2).optional(),
+  priority: number2().min(0).max(1).optional(),
+  lastModified: exports_iso.datetime({ offset: true }).optional()
+});
+var ResourceSchema2 = object2({
+  ...BaseMetadataSchema2.shape,
+  ...IconsSchema2.shape,
+  uri: string2(),
+  description: optional(string2()),
+  mimeType: optional(string2()),
+  annotations: AnnotationsSchema2.optional(),
+  _meta: optional(looseObject({}))
+});
+var ResourceTemplateSchema2 = object2({
+  ...BaseMetadataSchema2.shape,
+  ...IconsSchema2.shape,
+  uriTemplate: string2(),
+  description: optional(string2()),
+  mimeType: optional(string2()),
+  annotations: AnnotationsSchema2.optional(),
+  _meta: optional(looseObject({}))
+});
+var ListResourcesRequestSchema2 = PaginatedRequestSchema2.extend({
+  method: literal("resources/list")
+});
+var ListResourcesResultSchema2 = PaginatedResultSchema2.extend({
+  resources: array(ResourceSchema2)
+});
+var ListResourceTemplatesRequestSchema2 = PaginatedRequestSchema2.extend({
+  method: literal("resources/templates/list")
+});
+var ListResourceTemplatesResultSchema2 = PaginatedResultSchema2.extend({
+  resourceTemplates: array(ResourceTemplateSchema2)
+});
+var ResourceRequestParamsSchema2 = BaseRequestParamsSchema2.extend({
+  uri: string2()
+});
+var ReadResourceRequestParamsSchema2 = ResourceRequestParamsSchema2;
+var ReadResourceRequestSchema2 = RequestSchema2.extend({
+  method: literal("resources/read"),
+  params: ReadResourceRequestParamsSchema2
+});
+var ReadResourceResultSchema2 = ResultSchema2.extend({
+  contents: array(union([TextResourceContentsSchema2, BlobResourceContentsSchema2]))
+});
+var ResourceListChangedNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/resources/list_changed"),
+  params: NotificationsParamsSchema2.optional()
+});
+var SubscribeRequestParamsSchema2 = ResourceRequestParamsSchema2;
+var SubscribeRequestSchema2 = RequestSchema2.extend({
+  method: literal("resources/subscribe"),
+  params: SubscribeRequestParamsSchema2
+});
+var UnsubscribeRequestParamsSchema2 = ResourceRequestParamsSchema2;
+var UnsubscribeRequestSchema2 = RequestSchema2.extend({
+  method: literal("resources/unsubscribe"),
+  params: UnsubscribeRequestParamsSchema2
+});
+var ResourceUpdatedNotificationParamsSchema2 = NotificationsParamsSchema2.extend({
+  uri: string2()
+});
+var ResourceUpdatedNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/resources/updated"),
+  params: ResourceUpdatedNotificationParamsSchema2
+});
+var PromptArgumentSchema2 = object2({
+  name: string2(),
+  description: optional(string2()),
+  required: optional(boolean2())
+});
+var PromptSchema2 = object2({
+  ...BaseMetadataSchema2.shape,
+  ...IconsSchema2.shape,
+  description: optional(string2()),
+  arguments: optional(array(PromptArgumentSchema2)),
+  _meta: optional(looseObject({}))
+});
+var ListPromptsRequestSchema2 = PaginatedRequestSchema2.extend({
+  method: literal("prompts/list")
+});
+var ListPromptsResultSchema2 = PaginatedResultSchema2.extend({
+  prompts: array(PromptSchema2)
+});
+var GetPromptRequestParamsSchema2 = BaseRequestParamsSchema2.extend({
+  name: string2(),
+  arguments: record(string2(), string2()).optional()
+});
+var GetPromptRequestSchema2 = RequestSchema2.extend({
+  method: literal("prompts/get"),
+  params: GetPromptRequestParamsSchema2
+});
+var TextContentSchema2 = object2({
+  type: literal("text"),
+  text: string2(),
+  annotations: AnnotationsSchema2.optional(),
+  _meta: record(string2(), unknown()).optional()
+});
+var ImageContentSchema2 = object2({
+  type: literal("image"),
+  data: Base64Schema2,
+  mimeType: string2(),
+  annotations: AnnotationsSchema2.optional(),
+  _meta: record(string2(), unknown()).optional()
+});
+var AudioContentSchema2 = object2({
+  type: literal("audio"),
+  data: Base64Schema2,
+  mimeType: string2(),
+  annotations: AnnotationsSchema2.optional(),
+  _meta: record(string2(), unknown()).optional()
+});
+var ToolUseContentSchema2 = object2({
+  type: literal("tool_use"),
+  name: string2(),
+  id: string2(),
+  input: record(string2(), unknown()),
+  _meta: record(string2(), unknown()).optional()
+});
+var EmbeddedResourceSchema2 = object2({
+  type: literal("resource"),
+  resource: union([TextResourceContentsSchema2, BlobResourceContentsSchema2]),
+  annotations: AnnotationsSchema2.optional(),
+  _meta: record(string2(), unknown()).optional()
+});
+var ResourceLinkSchema2 = ResourceSchema2.extend({
+  type: literal("resource_link")
+});
+var ContentBlockSchema2 = union([
+  TextContentSchema2,
+  ImageContentSchema2,
+  AudioContentSchema2,
+  ResourceLinkSchema2,
+  EmbeddedResourceSchema2
+]);
+var PromptMessageSchema2 = object2({
+  role: RoleSchema2,
+  content: ContentBlockSchema2
+});
+var GetPromptResultSchema2 = ResultSchema2.extend({
+  description: string2().optional(),
+  messages: array(PromptMessageSchema2)
+});
+var PromptListChangedNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/prompts/list_changed"),
+  params: NotificationsParamsSchema2.optional()
+});
+var ToolAnnotationsSchema2 = object2({
+  title: string2().optional(),
+  readOnlyHint: boolean2().optional(),
+  destructiveHint: boolean2().optional(),
+  idempotentHint: boolean2().optional(),
+  openWorldHint: boolean2().optional()
+});
+var ToolExecutionSchema2 = object2({
+  taskSupport: _enum(["required", "optional", "forbidden"]).optional()
+});
+var ToolSchema2 = object2({
+  ...BaseMetadataSchema2.shape,
+  ...IconsSchema2.shape,
+  description: string2().optional(),
+  inputSchema: object2({
+    type: literal("object"),
+    properties: record(string2(), AssertObjectSchema2).optional(),
+    required: array(string2()).optional()
+  }).catchall(unknown()),
+  outputSchema: object2({
+    type: literal("object"),
+    properties: record(string2(), AssertObjectSchema2).optional(),
+    required: array(string2()).optional()
+  }).catchall(unknown()).optional(),
+  annotations: ToolAnnotationsSchema2.optional(),
+  execution: ToolExecutionSchema2.optional(),
+  _meta: record(string2(), unknown()).optional()
+});
+var ListToolsRequestSchema2 = PaginatedRequestSchema2.extend({
+  method: literal("tools/list")
+});
+var ListToolsResultSchema2 = PaginatedResultSchema2.extend({
+  tools: array(ToolSchema2)
+});
+var CallToolResultSchema2 = ResultSchema2.extend({
+  content: array(ContentBlockSchema2).default([]),
+  structuredContent: record(string2(), unknown()).optional(),
+  isError: boolean2().optional()
+});
+var CompatibilityCallToolResultSchema2 = CallToolResultSchema2.or(ResultSchema2.extend({
+  toolResult: unknown()
+}));
+var CallToolRequestParamsSchema2 = TaskAugmentedRequestParamsSchema2.extend({
+  name: string2(),
+  arguments: record(string2(), unknown()).optional()
+});
+var CallToolRequestSchema2 = RequestSchema2.extend({
+  method: literal("tools/call"),
+  params: CallToolRequestParamsSchema2
+});
+var ToolListChangedNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/tools/list_changed"),
+  params: NotificationsParamsSchema2.optional()
+});
+var ListChangedOptionsBaseSchema2 = object2({
+  autoRefresh: boolean2().default(true),
+  debounceMs: number2().int().nonnegative().default(300)
+});
+var LoggingLevelSchema2 = _enum(["debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"]);
+var SetLevelRequestParamsSchema2 = BaseRequestParamsSchema2.extend({
+  level: LoggingLevelSchema2
+});
+var SetLevelRequestSchema2 = RequestSchema2.extend({
+  method: literal("logging/setLevel"),
+  params: SetLevelRequestParamsSchema2
+});
+var LoggingMessageNotificationParamsSchema2 = NotificationsParamsSchema2.extend({
+  level: LoggingLevelSchema2,
+  logger: string2().optional(),
+  data: unknown()
+});
+var LoggingMessageNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/message"),
+  params: LoggingMessageNotificationParamsSchema2
+});
+var ModelHintSchema2 = object2({
+  name: string2().optional()
+});
+var ModelPreferencesSchema2 = object2({
+  hints: array(ModelHintSchema2).optional(),
+  costPriority: number2().min(0).max(1).optional(),
+  speedPriority: number2().min(0).max(1).optional(),
+  intelligencePriority: number2().min(0).max(1).optional()
+});
+var ToolChoiceSchema2 = object2({
+  mode: _enum(["auto", "required", "none"]).optional()
+});
+var ToolResultContentSchema2 = object2({
+  type: literal("tool_result"),
+  toolUseId: string2().describe("The unique identifier for the corresponding tool call."),
+  content: array(ContentBlockSchema2).default([]),
+  structuredContent: object2({}).loose().optional(),
+  isError: boolean2().optional(),
+  _meta: record(string2(), unknown()).optional()
+});
+var SamplingContentSchema2 = discriminatedUnion("type", [TextContentSchema2, ImageContentSchema2, AudioContentSchema2]);
+var SamplingMessageContentBlockSchema2 = discriminatedUnion("type", [
+  TextContentSchema2,
+  ImageContentSchema2,
+  AudioContentSchema2,
+  ToolUseContentSchema2,
+  ToolResultContentSchema2
+]);
+var SamplingMessageSchema2 = object2({
+  role: RoleSchema2,
+  content: union([SamplingMessageContentBlockSchema2, array(SamplingMessageContentBlockSchema2)]),
+  _meta: record(string2(), unknown()).optional()
+});
+var CreateMessageRequestParamsSchema2 = TaskAugmentedRequestParamsSchema2.extend({
+  messages: array(SamplingMessageSchema2),
+  modelPreferences: ModelPreferencesSchema2.optional(),
+  systemPrompt: string2().optional(),
+  includeContext: _enum(["none", "thisServer", "allServers"]).optional(),
+  temperature: number2().optional(),
+  maxTokens: number2().int(),
+  stopSequences: array(string2()).optional(),
+  metadata: AssertObjectSchema2.optional(),
+  tools: array(ToolSchema2).optional(),
+  toolChoice: ToolChoiceSchema2.optional()
+});
+var CreateMessageRequestSchema2 = RequestSchema2.extend({
+  method: literal("sampling/createMessage"),
+  params: CreateMessageRequestParamsSchema2
+});
+var CreateMessageResultSchema2 = ResultSchema2.extend({
+  model: string2(),
+  stopReason: optional(_enum(["endTurn", "stopSequence", "maxTokens"]).or(string2())),
+  role: RoleSchema2,
+  content: SamplingContentSchema2
+});
+var CreateMessageResultWithToolsSchema2 = ResultSchema2.extend({
+  model: string2(),
+  stopReason: optional(_enum(["endTurn", "stopSequence", "maxTokens", "toolUse"]).or(string2())),
+  role: RoleSchema2,
+  content: union([SamplingMessageContentBlockSchema2, array(SamplingMessageContentBlockSchema2)])
+});
+var BooleanSchemaSchema2 = object2({
+  type: literal("boolean"),
+  title: string2().optional(),
+  description: string2().optional(),
+  default: boolean2().optional()
+});
+var StringSchemaSchema2 = object2({
+  type: literal("string"),
+  title: string2().optional(),
+  description: string2().optional(),
+  minLength: number2().optional(),
+  maxLength: number2().optional(),
+  format: _enum(["email", "uri", "date", "date-time"]).optional(),
+  default: string2().optional()
+});
+var NumberSchemaSchema2 = object2({
+  type: _enum(["number", "integer"]),
+  title: string2().optional(),
+  description: string2().optional(),
+  minimum: number2().optional(),
+  maximum: number2().optional(),
+  default: number2().optional()
+});
+var UntitledSingleSelectEnumSchemaSchema2 = object2({
+  type: literal("string"),
+  title: string2().optional(),
+  description: string2().optional(),
+  enum: array(string2()),
+  default: string2().optional()
+});
+var TitledSingleSelectEnumSchemaSchema2 = object2({
+  type: literal("string"),
+  title: string2().optional(),
+  description: string2().optional(),
+  oneOf: array(object2({
+    const: string2(),
+    title: string2()
+  })),
+  default: string2().optional()
+});
+var LegacyTitledEnumSchemaSchema2 = object2({
+  type: literal("string"),
+  title: string2().optional(),
+  description: string2().optional(),
+  enum: array(string2()),
+  enumNames: array(string2()).optional(),
+  default: string2().optional()
+});
+var SingleSelectEnumSchemaSchema2 = union([UntitledSingleSelectEnumSchemaSchema2, TitledSingleSelectEnumSchemaSchema2]);
+var UntitledMultiSelectEnumSchemaSchema2 = object2({
+  type: literal("array"),
+  title: string2().optional(),
+  description: string2().optional(),
+  minItems: number2().optional(),
+  maxItems: number2().optional(),
+  items: object2({
+    type: literal("string"),
+    enum: array(string2())
+  }),
+  default: array(string2()).optional()
+});
+var TitledMultiSelectEnumSchemaSchema2 = object2({
+  type: literal("array"),
+  title: string2().optional(),
+  description: string2().optional(),
+  minItems: number2().optional(),
+  maxItems: number2().optional(),
+  items: object2({
+    anyOf: array(object2({
+      const: string2(),
+      title: string2()
+    }))
+  }),
+  default: array(string2()).optional()
+});
+var MultiSelectEnumSchemaSchema2 = union([UntitledMultiSelectEnumSchemaSchema2, TitledMultiSelectEnumSchemaSchema2]);
+var EnumSchemaSchema2 = union([LegacyTitledEnumSchemaSchema2, SingleSelectEnumSchemaSchema2, MultiSelectEnumSchemaSchema2]);
+var PrimitiveSchemaDefinitionSchema2 = union([EnumSchemaSchema2, BooleanSchemaSchema2, StringSchemaSchema2, NumberSchemaSchema2]);
+var ElicitRequestFormParamsSchema2 = TaskAugmentedRequestParamsSchema2.extend({
+  mode: literal("form").optional(),
+  message: string2(),
+  requestedSchema: object2({
+    type: literal("object"),
+    properties: record(string2(), PrimitiveSchemaDefinitionSchema2),
+    required: array(string2()).optional()
+  })
+});
+var ElicitRequestURLParamsSchema2 = TaskAugmentedRequestParamsSchema2.extend({
+  mode: literal("url"),
+  message: string2(),
+  elicitationId: string2(),
+  url: string2().url()
+});
+var ElicitRequestParamsSchema2 = union([ElicitRequestFormParamsSchema2, ElicitRequestURLParamsSchema2]);
+var ElicitRequestSchema2 = RequestSchema2.extend({
+  method: literal("elicitation/create"),
+  params: ElicitRequestParamsSchema2
+});
+var ElicitationCompleteNotificationParamsSchema2 = NotificationsParamsSchema2.extend({
+  elicitationId: string2()
+});
+var ElicitationCompleteNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/elicitation/complete"),
+  params: ElicitationCompleteNotificationParamsSchema2
+});
+var ElicitResultSchema2 = ResultSchema2.extend({
+  action: _enum(["accept", "decline", "cancel"]),
+  content: preprocess((val) => val === null ? undefined : val, record(string2(), union([string2(), number2(), boolean2(), array(string2())])).optional())
+});
+var ResourceTemplateReferenceSchema2 = object2({
+  type: literal("ref/resource"),
+  uri: string2()
+});
+var PromptReferenceSchema2 = object2({
+  type: literal("ref/prompt"),
+  name: string2()
+});
+var CompleteRequestParamsSchema2 = BaseRequestParamsSchema2.extend({
+  ref: union([PromptReferenceSchema2, ResourceTemplateReferenceSchema2]),
+  argument: object2({
+    name: string2(),
+    value: string2()
+  }),
+  context: object2({
+    arguments: record(string2(), string2()).optional()
+  }).optional()
+});
+var CompleteRequestSchema2 = RequestSchema2.extend({
+  method: literal("completion/complete"),
+  params: CompleteRequestParamsSchema2
+});
+var CompleteResultSchema2 = ResultSchema2.extend({
+  completion: looseObject({
+    values: array(string2()).max(100),
+    total: optional(number2().int()),
+    hasMore: optional(boolean2())
+  })
+});
+var RootSchema2 = object2({
+  uri: string2().startsWith("file://"),
+  name: string2().optional(),
+  _meta: record(string2(), unknown()).optional()
+});
+var ListRootsRequestSchema2 = RequestSchema2.extend({
+  method: literal("roots/list"),
+  params: BaseRequestParamsSchema2.optional()
+});
+var ListRootsResultSchema2 = ResultSchema2.extend({
+  roots: array(RootSchema2)
+});
+var RootsListChangedNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/roots/list_changed"),
+  params: NotificationsParamsSchema2.optional()
+});
+var ClientRequestSchema2 = union([
+  PingRequestSchema2,
+  InitializeRequestSchema2,
+  CompleteRequestSchema2,
+  SetLevelRequestSchema2,
+  GetPromptRequestSchema2,
+  ListPromptsRequestSchema2,
+  ListResourcesRequestSchema2,
+  ListResourceTemplatesRequestSchema2,
+  ReadResourceRequestSchema2,
+  SubscribeRequestSchema2,
+  UnsubscribeRequestSchema2,
+  CallToolRequestSchema2,
+  ListToolsRequestSchema2,
+  GetTaskRequestSchema2,
+  GetTaskPayloadRequestSchema2,
+  ListTasksRequestSchema2,
+  CancelTaskRequestSchema2
+]);
+var ClientNotificationSchema2 = union([
+  CancelledNotificationSchema2,
+  ProgressNotificationSchema2,
+  InitializedNotificationSchema2,
+  RootsListChangedNotificationSchema2,
+  TaskStatusNotificationSchema2
+]);
+var ClientResultSchema2 = union([
+  EmptyResultSchema2,
+  CreateMessageResultSchema2,
+  CreateMessageResultWithToolsSchema2,
+  ElicitResultSchema2,
+  ListRootsResultSchema2,
+  GetTaskResultSchema2,
+  ListTasksResultSchema2,
+  CreateTaskResultSchema2
+]);
+var ServerRequestSchema2 = union([
+  PingRequestSchema2,
+  CreateMessageRequestSchema2,
+  ElicitRequestSchema2,
+  ListRootsRequestSchema2,
+  GetTaskRequestSchema2,
+  GetTaskPayloadRequestSchema2,
+  ListTasksRequestSchema2,
+  CancelTaskRequestSchema2
+]);
+var ServerNotificationSchema2 = union([
+  CancelledNotificationSchema2,
+  ProgressNotificationSchema2,
+  LoggingMessageNotificationSchema2,
+  ResourceUpdatedNotificationSchema2,
+  ResourceListChangedNotificationSchema2,
+  ToolListChangedNotificationSchema2,
+  PromptListChangedNotificationSchema2,
+  TaskStatusNotificationSchema2,
+  ElicitationCompleteNotificationSchema2
+]);
+var ServerResultSchema2 = union([
+  EmptyResultSchema2,
+  InitializeResultSchema2,
+  CompleteResultSchema2,
+  GetPromptResultSchema2,
+  ListPromptsResultSchema2,
+  ListResourcesResultSchema2,
+  ListResourceTemplatesResultSchema2,
+  ReadResourceResultSchema2,
+  CallToolResultSchema2,
+  ListToolsResultSchema2,
+  GetTaskResultSchema2,
+  ListTasksResultSchema2,
+  CreateTaskResultSchema2
+]);
+
 // server.ts
 import { readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { Database } from "bun:sqlite";
-var ENV_FILE = join(homedir(), ".claude", "channels", "telegram", ".env");
-try {
-  for (const line of readFileSync(ENV_FILE, "utf8").split(`
+
+// threading.ts
+var TELEGRAM_GENERAL_TOPIC_ID = 1;
+function buildMessageThreadParams(messageThreadId) {
+  if (messageThreadId == null)
+    return;
+  const normalized = Math.trunc(messageThreadId);
+  if (normalized === TELEGRAM_GENERAL_TOPIC_ID)
+    return;
+  return { message_thread_id: normalized };
+}
+function buildTypingThreadParams(messageThreadId) {
+  if (messageThreadId == null)
+    return;
+  return { message_thread_id: Math.trunc(messageThreadId) };
+}
+
+// server.ts
+var ENV_FILES = [
+  "/root/relay/.env",
+  join(homedir(), ".claude", "channels", "telegram", ".env")
+];
+for (const ENV_FILE of ENV_FILES) {
+  try {
+    for (const line of readFileSync(ENV_FILE, "utf8").split(`
 `)) {
-    const m = line.match(/^(\w+)=(.*)$/);
-    if (m && process.env[m[1]] === undefined)
-      process.env[m[1]] = m[2];
-  }
-} catch {}
+      const m = line.match(/^(\w+)=(.+)$/);
+      if (m && !process.env[m[1]])
+        process.env[m[1]] = m[2];
+    }
+  } catch {}
+}
 var TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-var CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+var CHAT_ID = process.env.TELEGRAM_CHAT_ID ?? process.env.GROUP_CHAT_ID;
 var THREAD_ID = process.env.TELEGRAM_THREAD_ID ? parseInt(process.env.TELEGRAM_THREAD_ID) : undefined;
 if (!TOKEN || !CHAT_ID || !THREAD_ID) {
   process.stderr.write(`telegram channel: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_THREAD_ID required
-` + `  set in ${ENV_FILE} or as environment variables
+` + `  set in ${ENV_FILES[0]} or as environment variables
 `);
   process.exit(1);
 }
@@ -13708,6 +14546,23 @@ function autoCode(html) {
     return seg;
   }).join("");
 }
+async function forwardToDiscord(threadId, text) {
+  if (!threadId)
+    return;
+  const DISCORD_BRIDGE = process.env.DISCORD_BRIDGE_URL || "http://discord-bridge:9102";
+  try {
+    const ctxFile = `/tmp/discord-ctx-${threadId}`;
+    const { existsSync } = await import("fs");
+    if (!existsSync(ctxFile))
+      return;
+    await fetch(`${DISCORD_BRIDGE}/send`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ thread_id: threadId, text }),
+      signal: AbortSignal.timeout(5000)
+    });
+  } catch (_) {}
+}
 async function logToPeersTopic(from, to, text) {
   try {
     const peerTopicPath = new URL("../peers-topic.json", import.meta.url).pathname;
@@ -13742,9 +14597,9 @@ async function sendMessage(text, replyTo, buttons) {
     const chunk = chunks[i];
     const body = {
       chat_id: CHAT_ID,
-      message_thread_id: THREAD_ID,
       text: chunk,
-      parse_mode: "HTML"
+      parse_mode: "HTML",
+      ...buildMessageThreadParams(THREAD_ID)
     };
     if (replyTo) {
       body.reply_to_message_id = replyTo;
@@ -13776,8 +14631,8 @@ async function editMessage(messageId, text) {
 async function sendTyping() {
   await tg("sendChatAction", {
     chat_id: CHAT_ID,
-    message_thread_id: THREAD_ID,
-    action: "typing"
+    action: "typing",
+    ...buildTypingThreadParams(THREAD_ID)
   });
 }
 async function sendReaction(messageId, emoji2) {
@@ -13795,7 +14650,7 @@ var mcp = new Server({ name: "telegram-channel", version: "0.1.0" }, {
     experimental: { "claude/channel": {} }
   }
 });
-mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
+mcp.setRequestHandler(ListToolsRequestSchema2, async () => ({
   tools: [
     {
       name: "send_message",
@@ -13885,11 +14740,103 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           emoji: { type: "string", description: 'Emoji to react with, e.g. "\uD83D\uDC40", "\u2705", "\u274C"' }
         }
       }
+    },
+    {
+      name: "send_task",
+      description: "Send a task to another Claude session and get back a task_id. The target session will receive the prompt and should call complete_task when done. Results are automatically routed back to you via your notification channel. Use depends_on for milestone gating \u2014 the task will only be sent after all dependency tasks complete.",
+      inputSchema: {
+        type: "object",
+        required: ["to", "prompt"],
+        properties: {
+          to: { type: "string", description: "Target session name (from list_peers)" },
+          prompt: { type: "string", description: "Task description / prompt for the target agent" },
+          ttl: { type: "integer", description: "Seconds before task expires (default: 600)", default: 600 },
+          depends_on: { type: "array", items: { type: "string" }, description: "Array of task_ids that must complete before this task is dispatched" }
+        }
+      }
+    },
+    {
+      name: "complete_task",
+      description: "Mark a received task as complete and send the result back to the requesting session. Call this when you finish a task you received via send_task.",
+      inputSchema: {
+        type: "object",
+        required: ["task_id", "output"],
+        properties: {
+          task_id: { type: "string", description: "The task_id from the task notification you received" },
+          output: { type: "string", description: "The result / output to send back to the requester" },
+          status: { type: "string", description: '"ok" (default) or "error"', enum: ["ok", "error"] }
+        }
+      }
+    },
+    {
+      name: "get_session_context",
+      description: "Read what another session is currently working on. Returns the session's memory/session_context.md if available, plus its project path and type.",
+      inputSchema: {
+        type: "object",
+        required: ["session"],
+        properties: {
+          session: { type: "string", description: "Target session name (from list_peers)" }
+        }
+      }
+    },
+    {
+      name: "broadcast",
+      description: "Send a message to ALL other active sessions at once. Useful for announcements, status updates, or requesting help from any available agent.",
+      inputSchema: {
+        type: "object",
+        required: ["text"],
+        properties: {
+          text: { type: "string", description: "Message to broadcast to all sessions" }
+        }
+      }
+    },
+    {
+      name: "knowledge_write",
+      description: 'Write a finding, decision, or learning to the shared Knowledge Library. All sessions can read from this library. Use tags to categorize entries (e.g. "docker", "auth", "bug-fix"). Entries persist across restarts.',
+      inputSchema: {
+        type: "object",
+        required: ["title", "content"],
+        properties: {
+          title: { type: "string", description: "Short title for the knowledge entry" },
+          content: { type: "string", description: "The finding, decision, or learning to store" },
+          tags: { type: "array", items: { type: "string" }, description: 'Tags for categorization (e.g. ["docker", "relay", "bug-fix"])' }
+        }
+      }
+    },
+    {
+      name: "knowledge_read",
+      description: "Search the shared Knowledge Library for relevant entries. Returns entries matching the query or tag. All sessions contribute to this library.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search term to find relevant entries (searches title, content, tags)" },
+          tag: { type: "string", description: "Filter by specific tag" },
+          limit: { type: "integer", description: "Max entries to return (default: 10)", default: 10 }
+        }
+      }
+    },
+    {
+      name: "auto_dispatch",
+      description: "Automatically find the best session to handle a task based on project path, session type, and recent activity. Then sends the task to that session. Like send_task but with automatic routing.",
+      inputSchema: {
+        type: "object",
+        required: ["prompt"],
+        properties: {
+          prompt: { type: "string", description: "Task description" },
+          prefer_type: { type: "string", description: 'Preferred session type: "claude", "codex", or "copilot"', enum: ["claude", "codex", "copilot"] },
+          prefer_project: { type: "string", description: 'Preferred project path substring (e.g. "relay", "openclaw")' },
+          prefer_skills: { type: "array", items: { type: "string" }, description: 'Preferred skills (e.g. ["docker", "python"]). If omitted, skills are auto-detected from prompt.' },
+          ttl: { type: "integer", description: "Seconds before task expires (default: 600)", default: 600 }
+        }
+      }
     }
   ]
 }));
-mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
+var _updateActivity = null;
+mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
   const { name, arguments: args } = req.params;
+  if (_updateActivity && ["fetch_messages", "send_message", "typing", "react", "send_file", "message_peer", "complete_task"].includes(name))
+    _updateActivity();
   if (name === "send_message") {
     const text = String(args?.text ?? args?.message ?? "");
     const rawButtons = args?.buttons;
@@ -13949,6 +14896,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     if (ids.length === 0) {
       return { content: [{ type: "text", text: `ERROR: message failed to send. text param was: "${text.slice(0, 100)}". Call send_message again with correct params (use 'text' not 'message').` }], isError: true };
     }
+    forwardToDiscord(THREAD_ID, text);
     return { content: [{ type: "text", text: `Sent. message_ids: ${ids.join(", ")}` }] };
   }
   if (name === "send_file") {
@@ -13963,7 +14911,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const fileName = filePath.split("/").pop() ?? "file";
       const form = new FormData;
       form.append("chat_id", String(CHAT_ID));
-      form.append("message_thread_id", String(THREAD_ID));
+      const threadParams = buildMessageThreadParams(THREAD_ID);
+      if (threadParams?.message_thread_id != null) {
+        form.append("message_thread_id", String(threadParams.message_thread_id));
+      }
       form.append("document", new File([blob], fileName));
       if (caption)
         form.append("caption", caption);
@@ -14026,7 +14977,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           }
         } catch {}
         const host = s.host ?? "local";
-        lines.push(`${s.session} (${host}) \u2014 last active: ${lastActive}`);
+        const type = s.type ?? "claude";
+        const path = s.path ?? "";
+        const group = s.group ?? "";
+        const skills = s.skills?.join(",") ?? "";
+        lines.push(`${s.session} [${type}] (${host}) ${path} \u2014 group:${group} skills:[${skills}] \u2014 last active: ${lastActive}`);
       }
       return { content: [{ type: "text", text: lines.join(`
 `) || "No other sessions." }] };
@@ -14081,19 +15036,456 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     const ok = await sendReaction(Number(args?.message_id), String(args?.emoji ?? "\uD83D\uDC4D"));
     return { content: [{ type: "text", text: ok ? "Reaction sent." : "Failed to send reaction." }] };
   }
+  if (name === "send_task") {
+    const targetSession = String(args?.to ?? "");
+    const prompt = String(args?.prompt ?? "");
+    const ttl = Number(args?.ttl ?? 600);
+    const dependsOn = args?.depends_on ?? [];
+    try {
+      const sessionsPath = new URL("../sessions.json", import.meta.url).pathname;
+      const sessions = JSON.parse(readFileSync(sessionsPath, "utf8"));
+      const target = sessions.find((s) => s.session === targetSession);
+      if (!target)
+        return { content: [{ type: "text", text: `Session '${targetSession}' not found. Use list_peers to see available sessions.` }] };
+      const selfName = process.env.SESSION_NAME ?? `session-${THREAD_ID}`;
+      const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const TASKS_FILE = "/tmp/agent-tasks.json";
+      let tasks = {};
+      try {
+        const f = Bun.file(TASKS_FILE);
+        if (await f.exists())
+          tasks = JSON.parse(await f.text());
+      } catch {}
+      const pendingDeps = dependsOn.filter((depId) => {
+        const dep = tasks[depId];
+        return !dep || dep.status !== "complete";
+      });
+      const isBlocked = pendingDeps.length > 0;
+      tasks[taskId] = {
+        from: selfName,
+        from_thread: THREAD_ID,
+        from_host: null,
+        to: targetSession,
+        to_thread: target.thread_id,
+        created: Date.now() / 1000,
+        ttl,
+        status: isBlocked ? "waiting" : "pending",
+        depends_on: dependsOn.length > 0 ? dependsOn : undefined,
+        prompt
+      };
+      await Bun.write(TASKS_FILE, JSON.stringify(tasks, null, 2));
+      if (isBlocked) {
+        return { content: [{ type: "text", text: `Task ${taskId} created but WAITING on dependencies: ${pendingDeps.join(", ")}. It will be dispatched when they complete.` }] };
+      }
+      const queueFile = `/tmp/tg-queue-${target.thread_id}.jsonl`;
+      const entry = JSON.stringify({
+        text: `[Task from ${selfName} | task_id:${taskId}]
+${prompt}`,
+        user: `agent:${selfName}`,
+        message_id: -Date.now(),
+        ts: Date.now() / 1000,
+        force: true,
+        bus: { type: "task", id: taskId, from: selfName, from_thread: THREAD_ID, to: targetSession, prompt, ttl }
+      });
+      if (target.host) {
+        const proc = Bun.spawn([
+          "ssh",
+          "-o",
+          "StrictHostKeyChecking=no",
+          "-o",
+          "ConnectTimeout=5",
+          target.host,
+          `cat >> ${queueFile}`
+        ], { stdin: new TextEncoder().encode(entry + `
+`) });
+        await proc.exited;
+        if (proc.exitCode !== 0)
+          throw new Error(`SSH exit code ${proc.exitCode}`);
+      } else {
+        await Bun.write(queueFile, entry + `
+`, { append: true });
+      }
+      logToPeersTopic(selfName, targetSession, `[task:${taskId}] ${prompt}`);
+      return { content: [{ type: "text", text: `Task sent to '${targetSession}'. task_id: ${taskId}` }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error sending task: ${e}` }] };
+    }
+  }
+  if (name === "complete_task") {
+    const taskId = String(args?.task_id ?? "");
+    const output = String(args?.output ?? "");
+    const status = String(args?.status ?? "ok");
+    try {
+      const TASKS_FILE = "/tmp/agent-tasks.json";
+      const f = Bun.file(TASKS_FILE);
+      if (!await f.exists())
+        return { content: [{ type: "text", text: `No pending tasks found.` }] };
+      const tasks = JSON.parse(await f.text());
+      const task = tasks[taskId];
+      if (!task)
+        return { content: [{ type: "text", text: `Task '${taskId}' not found.` }] };
+      if (task.status !== "pending")
+        return { content: [{ type: "text", text: `Task '${taskId}' is already ${task.status}.` }] };
+      const selfName = process.env.SESSION_NAME ?? `session-${THREAD_ID}`;
+      const queueFile = `/tmp/tg-queue-${task.from_thread}.jsonl`;
+      const entry = JSON.stringify({
+        text: `[Result from ${selfName} | task_id:${taskId} | status:${status}]
+${output}`,
+        user: `agent:${selfName}`,
+        message_id: -Date.now(),
+        ts: Date.now() / 1000,
+        force: true,
+        bus: { type: "result", id: `result-${Date.now()}`, from: selfName, to: task.from, reply_to: taskId, status, output }
+      });
+      await Bun.write(queueFile, entry + `
+`, { append: true });
+      tasks[taskId].status = status === "error" ? "error" : "complete";
+      await Bun.write(TASKS_FILE, JSON.stringify(tasks, null, 2));
+      const dispatched = [];
+      for (const [tid, t] of Object.entries(tasks)) {
+        if (t.status !== "waiting" || !t.depends_on)
+          continue;
+        const stillWaiting = t.depends_on.filter((depId) => {
+          const dep = tasks[depId];
+          return !dep || dep.status !== "complete";
+        });
+        if (stillWaiting.length === 0) {
+          tasks[tid].status = "pending";
+          const sessionsPath = new URL("../sessions.json", import.meta.url).pathname;
+          const allSessions = JSON.parse(readFileSync(sessionsPath, "utf8"));
+          const targetSess = allSessions.find((s) => s.session === t.to);
+          if (targetSess) {
+            const dispatchEntry = JSON.stringify({
+              text: `[Task from ${t.from} | task_id:${tid}]
+${t.prompt}`,
+              user: `agent:${t.from}`,
+              message_id: -Date.now(),
+              ts: Date.now() / 1000,
+              force: true,
+              bus: { type: "task", id: tid, from: t.from, from_thread: t.from_thread, to: t.to, prompt: t.prompt, ttl: t.ttl }
+            });
+            const dispatchQueueFile = `/tmp/tg-queue-${targetSess.thread_id}.jsonl`;
+            await Bun.write(dispatchQueueFile, dispatchEntry + `
+`, { append: true });
+            dispatched.push(tid);
+          }
+        }
+      }
+      if (dispatched.length > 0)
+        await Bun.write(TASKS_FILE, JSON.stringify(tasks, null, 2));
+      logToPeersTopic(selfName, task.from, `[result:${taskId}] ${status}: ${output.slice(0, 200)}`);
+      const dispatchMsg = dispatched.length > 0 ? ` Unblocked tasks: ${dispatched.join(", ")}` : "";
+      return { content: [{ type: "text", text: `Result sent back to '${task.from}'. Task ${taskId} marked complete.${dispatchMsg}` }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error completing task: ${e}` }] };
+    }
+  }
+  if (name === "get_session_context") {
+    const targetSession = String(args?.session ?? "");
+    try {
+      const sessionsPath = new URL("../sessions.json", import.meta.url).pathname;
+      const sessions = JSON.parse(readFileSync(sessionsPath, "utf8"));
+      const target = sessions.find((s) => s.session === targetSession);
+      if (!target)
+        return { content: [{ type: "text", text: `Session '${targetSession}' not found. Use list_peers to see available sessions.` }] };
+      const info = [
+        `Session: ${target.session}`,
+        `Type: ${target.type ?? "claude"}`,
+        `Path: ${target.path ?? "unknown"}`,
+        `Host: ${target.host ?? "local"}`
+      ];
+      const contextPaths = [
+        `${target.path ?? "/root"}/.claude/memory/session_context.md`,
+        `/root/.claude/projects/-${(target.path ?? "/root").replace(/\//g, "-")}/memory/session_context.md`
+      ];
+      let context = "";
+      for (const cp of contextPaths) {
+        try {
+          if (target.host) {
+            const proc = Bun.spawn([
+              "ssh",
+              "-o",
+              "StrictHostKeyChecking=no",
+              "-o",
+              "ConnectTimeout=3",
+              target.host,
+              `cat ${cp} 2>/dev/null`
+            ]);
+            const out = await new Response(proc.stdout).text();
+            if (out.trim()) {
+              context = out.trim();
+              break;
+            }
+          } else {
+            const f = Bun.file(cp);
+            if (await f.exists()) {
+              context = (await f.text()).trim();
+              break;
+            }
+          }
+        } catch {}
+      }
+      if (!context) {
+        const autoMemoryPath = `/root/.claude/projects/-${(target.path ?? "/root").replace(/\//g, "-")}/memory/session_context.md`;
+        try {
+          const f = Bun.file(autoMemoryPath);
+          if (await f.exists())
+            context = (await f.text()).trim();
+        } catch {}
+      }
+      if (context) {
+        info.push("", "--- Session Context ---", context);
+      } else {
+        info.push("", "No session context available.");
+      }
+      return { content: [{ type: "text", text: info.join(`
+`) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error reading session context: ${e}` }] };
+    }
+  }
+  if (name === "broadcast") {
+    const text = String(args?.text ?? "");
+    try {
+      const sessionsPath = new URL("../sessions.json", import.meta.url).pathname;
+      const sessions = JSON.parse(readFileSync(sessionsPath, "utf8"));
+      const selfName = process.env.SESSION_NAME ?? `session-${THREAD_ID}`;
+      const sent = [];
+      const failed = [];
+      for (const target of sessions) {
+        if (target.thread_id === THREAD_ID)
+          continue;
+        const queueFile = `/tmp/tg-queue-${target.thread_id}.jsonl`;
+        const entry = JSON.stringify({
+          text: `[Broadcast from ${selfName}]
+${text}`,
+          user: `peer:${selfName}`,
+          message_id: -Date.now(),
+          thread_id: target.thread_id,
+          ts: Date.now() / 1000,
+          force: true
+        });
+        try {
+          if (target.host) {
+            const proc = Bun.spawn([
+              "ssh",
+              "-o",
+              "StrictHostKeyChecking=no",
+              "-o",
+              "ConnectTimeout=5",
+              target.host,
+              `cat >> ${queueFile}`
+            ], { stdin: new TextEncoder().encode(entry + `
+`) });
+            await proc.exited;
+            if (proc.exitCode !== 0)
+              throw new Error(`SSH exit ${proc.exitCode}`);
+          } else {
+            await Bun.write(queueFile, entry + `
+`, { append: true });
+          }
+          sent.push(target.session);
+        } catch {
+          failed.push(target.session);
+        }
+      }
+      logToPeersTopic(selfName, "broadcast", text.slice(0, 200));
+      const result = `Broadcast sent to ${sent.length} sessions: ${sent.join(", ")}`;
+      return { content: [{ type: "text", text: failed.length ? `${result}
+Failed: ${failed.join(", ")}` : result }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error broadcasting: ${e}` }] };
+    }
+  }
+  const KNOWLEDGE_FILE = "/tmp/relay-knowledge.json";
+  if (name === "knowledge_write") {
+    const title = String(args?.title ?? "");
+    const content = String(args?.content ?? "");
+    const tags = args?.tags ?? [];
+    try {
+      let entries = [];
+      try {
+        const f = Bun.file(KNOWLEDGE_FILE);
+        if (await f.exists())
+          entries = JSON.parse(await f.text());
+      } catch {}
+      const selfName = process.env.SESSION_NAME ?? `session-${THREAD_ID}`;
+      const entry = {
+        id: `k-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        title,
+        content,
+        tags,
+        author: selfName,
+        ts: Date.now() / 1000
+      };
+      entries.push(entry);
+      if (entries.length > 200)
+        entries = entries.slice(-200);
+      await Bun.write(KNOWLEDGE_FILE, JSON.stringify(entries, null, 2));
+      return { content: [{ type: "text", text: `Knowledge saved: "${title}" (${tags.join(", ") || "no tags"})` }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error writing knowledge: ${e}` }] };
+    }
+  }
+  if (name === "knowledge_read") {
+    const query = String(args?.query ?? "").toLowerCase();
+    const tag = String(args?.tag ?? "").toLowerCase();
+    const limit = Number(args?.limit ?? 10);
+    try {
+      let entries = [];
+      try {
+        const f = Bun.file(KNOWLEDGE_FILE);
+        if (await f.exists())
+          entries = JSON.parse(await f.text());
+      } catch {}
+      let filtered = entries;
+      if (tag) {
+        filtered = filtered.filter((e) => e.tags.some((t) => t.toLowerCase().includes(tag)));
+      }
+      if (query) {
+        filtered = filtered.filter((e) => e.title.toLowerCase().includes(query) || e.content.toLowerCase().includes(query) || e.tags.some((t) => t.toLowerCase().includes(query)));
+      }
+      filtered = filtered.reverse().slice(0, limit);
+      if (filtered.length === 0) {
+        return { content: [{ type: "text", text: "No matching knowledge entries found." }] };
+      }
+      const lines = filtered.map((e) => {
+        const ago = Math.round((Date.now() / 1000 - e.ts) / 60);
+        const timeStr = ago < 60 ? `${ago}m ago` : `${Math.round(ago / 60)}h ago`;
+        return `[${e.author} ${timeStr}] ${e.title}
+Tags: ${e.tags.join(", ") || "none"}
+${e.content}`;
+      });
+      return { content: [{ type: "text", text: lines.join(`
+---
+`) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error reading knowledge: ${e}` }] };
+    }
+  }
+  if (name === "auto_dispatch") {
+    const prompt = String(args?.prompt ?? "");
+    const preferType = args?.prefer_type;
+    const preferProject = args?.prefer_project;
+    const preferSkills = args?.prefer_skills ?? [];
+    const ttl = Number(args?.ttl ?? 600);
+    try {
+      const sessionsPath = new URL("../sessions.json", import.meta.url).pathname;
+      const sessions = JSON.parse(readFileSync(sessionsPath, "utf8"));
+      const selfName = process.env.SESSION_NAME ?? `session-${THREAD_ID}`;
+      const candidates = sessions.filter((s) => s.thread_id !== THREAD_ID);
+      const scored = candidates.map((s) => {
+        let score = 0;
+        const type2 = s.type ?? "claude";
+        if (preferType && type2 === preferType)
+          score += 10;
+        if (preferProject && s.path?.toLowerCase().includes(preferProject.toLowerCase()))
+          score += 20;
+        try {
+          const raw = readFileSync(`/tmp/tg-last-sent-${s.thread_id}`, "utf8").trim();
+          const ts = parseFloat(raw);
+          if (!isNaN(ts)) {
+            const agoMin = (Date.now() / 1000 - ts) / 60;
+            if (agoMin < 5)
+              score += 5;
+            else if (agoMin < 30)
+              score += 3;
+            else if (agoMin < 120)
+              score += 1;
+          }
+        } catch {}
+        if (preferSkills.length > 0 && s.skills) {
+          const matched = preferSkills.filter((sk) => s.skills.includes(sk.toLowerCase()));
+          score += matched.length * 8;
+        }
+        if (preferSkills.length === 0 && s.skills) {
+          const promptLower = prompt.toLowerCase();
+          const matched = s.skills.filter((sk) => promptLower.includes(sk));
+          score += matched.length * 5;
+        }
+        if (!s.host)
+          score += 2;
+        return { session: s, score };
+      });
+      scored.sort((a, b) => b.score - a.score);
+      if (scored.length === 0) {
+        return { content: [{ type: "text", text: "No available sessions to dispatch to." }] };
+      }
+      const best = scored[0];
+      const target = best.session;
+      const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const TASKS_FILE = "/tmp/agent-tasks.json";
+      let tasks = {};
+      try {
+        const f = Bun.file(TASKS_FILE);
+        if (await f.exists())
+          tasks = JSON.parse(await f.text());
+      } catch {}
+      tasks[taskId] = {
+        from: selfName,
+        from_thread: THREAD_ID,
+        to: target.session,
+        to_thread: target.thread_id,
+        created: Date.now() / 1000,
+        ttl,
+        status: "pending"
+      };
+      await Bun.write(TASKS_FILE, JSON.stringify(tasks, null, 2));
+      const queueFile = `/tmp/tg-queue-${target.thread_id}.jsonl`;
+      const entry = JSON.stringify({
+        text: `[Task from ${selfName} | task_id:${taskId}]
+${prompt}`,
+        user: `agent:${selfName}`,
+        message_id: -Date.now(),
+        ts: Date.now() / 1000,
+        force: true,
+        bus: { type: "task", id: taskId, from: selfName, from_thread: THREAD_ID, to: target.session, prompt, ttl }
+      });
+      if (target.host) {
+        const proc = Bun.spawn([
+          "ssh",
+          "-o",
+          "StrictHostKeyChecking=no",
+          "-o",
+          "ConnectTimeout=5",
+          target.host,
+          `cat >> ${queueFile}`
+        ], { stdin: new TextEncoder().encode(entry + `
+`) });
+        await proc.exited;
+        if (proc.exitCode !== 0)
+          throw new Error(`SSH exit ${proc.exitCode}`);
+      } else {
+        await Bun.write(queueFile, entry + `
+`, { append: true });
+      }
+      const type = target.type ?? "claude";
+      const reasons = [
+        preferType && type === preferType ? `type=${type}` : null,
+        preferProject && target.path?.toLowerCase().includes(preferProject.toLowerCase()) ? `project match` : null,
+        !target.host ? "local" : null
+      ].filter(Boolean).join(", ");
+      logToPeersTopic(selfName, target.session, `[auto-dispatch:${taskId}] ${prompt.slice(0, 200)}`);
+      return { content: [{ type: "text", text: `Auto-dispatched to '${target.session}' [${type}] (score: ${best.score}${reasons ? ", " + reasons : ""}). task_id: ${taskId}` }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error auto-dispatching: ${e}` }] };
+    }
+  }
   return { content: [{ type: "text", text: `Unknown tool: ${name}` }] };
 });
 var db = new Database(`/tmp/tg-history-${THREAD_ID}.db`);
+db.run("PRAGMA busy_timeout = 10000");
+db.run("PRAGMA journal_mode = WAL");
 db.run(`CREATE TABLE IF NOT EXISTS messages (
   rowid    INTEGER PRIMARY KEY AUTOINCREMENT,
-  message_id INTEGER,
+  message_id INTEGER UNIQUE,
   user     TEXT,
   text     TEXT,
   ts       TEXT
 )`);
 db.run(`CREATE INDEX IF NOT EXISTS idx_ts ON messages(ts)`);
 function dbInsert(msg) {
-  db.run("INSERT INTO messages (message_id, user, text, ts) VALUES (?, ?, ?, ?)", [msg.message_id, msg.user, msg.text, msg.ts]);
+  db.run("INSERT OR IGNORE INTO messages (message_id, user, text, ts) VALUES (?, ?, ?, ?)", [msg.message_id, msg.user, msg.text, msg.ts]);
   db.run("DELETE FROM messages WHERE rowid NOT IN (SELECT rowid FROM messages ORDER BY rowid DESC LIMIT 500)");
 }
 function dbRecent(limit) {
@@ -14172,7 +15564,7 @@ async function trimQueue(lastId) {
     const file = Bun.file(QUEUE_FILE);
     if (!await file.exists())
       return;
-    const cutoff = Date.now() / 1000 - 24 * 60 * 60;
+    const cutoff = Date.now() / 1000 - 86400;
     const lines = (await file.text()).split(`
 `).filter((line) => {
       if (!line.trim())
@@ -14237,7 +15629,7 @@ async function poll() {
           const e = JSON.parse(line);
           if (e.force && !deliveredForce.has(e.message_id)) {
             const ageMs = Date.now() - e.ts * 1000;
-            if (ageMs > 10 * 60 * 1000) {
+            if (ageMs > 600000) {
               deliveredForce.set(e.message_id, Infinity);
               ackedForceIds.add(e.message_id);
             }
@@ -14257,17 +15649,82 @@ async function poll() {
         method: "notifications/message",
         params: {
           level: "info",
-          data: `[relay] You are session "${selfName}". Available peer sessions: ${peers.join(", ")}. ` + `Use message_peer(session, text) to contact them, or include @session-name in send_message to auto-route.`
+          data: `[relay] You are session "${selfName}". Available peer sessions: ${peers.join(", ")}. Use message_peer(session, text) to contact them, or include @session-name in send_message to auto-route.`
         }
       });
     }
   } catch {}
+  let lastActivityTs = 0;
+  let pendingDelivery = null;
+  _updateActivity = () => {
+    lastActivityTs = Date.now();
+  };
   let pollCount = 0;
   while (true) {
     pollCount++;
     if (pollCount % 600 === 0)
       trimQueue(lastId);
+    if (pollCount % 20 === 0) {
+      try {
+        const sf = Bun.file(STATE_FILE);
+        if (await sf.exists()) {
+          const s = JSON.parse(await sf.text());
+          if (s.lastId && s.lastId > lastId) {
+            process.stderr.write(`[telegram] state file advanced lastId ${lastId} \u2192 ${s.lastId}
+`);
+            lastId = s.lastId;
+            pendingDelivery = null;
+          }
+        }
+      } catch {}
+    }
     try {
+      if (pendingDelivery && lastActivityTs > pendingDelivery.sentAt) {
+        lastId = pendingDelivery.message_id;
+        await saveState(lastId, [...ackedForceIds]);
+        process.stderr.write(`[telegram] delivery confirmed for msg ${pendingDelivery.message_id}
+`);
+        pendingDelivery = null;
+      }
+      if (pendingDelivery && Date.now() - pendingDelivery.sentAt > 3000) {
+        const totalAge = Date.now() - pendingDelivery.firstSentAt;
+        if (totalAge > 30000) {
+          process.stderr.write(`[telegram] giving up on msg ${pendingDelivery.message_id} after 30s \u2014 advancing lastId
+`);
+          lastId = pendingDelivery.message_id;
+          await saveState(lastId, [...ackedForceIds]);
+          pendingDelivery = null;
+          await Bun.sleep(500);
+          continue;
+        }
+        process.stderr.write(`[telegram] no activity after 3s \u2014 retrying notification for msg ${pendingDelivery.message_id}
+`);
+        pendingDelivery.sentAt = Date.now();
+        try {
+          const retryFile = Bun.file(QUEUE_FILE);
+          if (await retryFile.exists()) {
+            for (const line of (await retryFile.text()).split(`
+`)) {
+              if (!line.trim())
+                continue;
+              try {
+                const e = JSON.parse(line);
+                if (e.message_id === pendingDelivery.message_id) {
+                  const isoTs = new Date(e.ts * 1000).toISOString();
+                  mcp.notification({
+                    method: "notifications/claude/channel",
+                    params: {
+                      content: e.text,
+                      meta: { chat_id: String(CHAT_ID), thread_id: String(THREAD_ID), message_id: e.message_id, user: e.user, ts: isoTs }
+                    }
+                  });
+                  break;
+                }
+              } catch {}
+            }
+          }
+        } catch {}
+      }
       const file = Bun.file(QUEUE_FILE);
       if (!await file.exists()) {
         await Bun.sleep(500);
@@ -14283,12 +15740,14 @@ async function poll() {
           const entry = JSON.parse(line);
           const { text: msgText, user, message_id, ts, photo_path, force } = entry;
           const ageMs = Date.now() - ts * 1000;
-          const isRecent = ageMs < 10 * 60 * 1000;
-          if (message_id <= lastId && !force && !isRecent)
+          const isRecent = ageMs < 600000;
+          if (message_id <= lastId && !force && !pendingDelivery)
             continue;
-          if (message_id <= lastId && !force && isRecent && deliveredForce.has(-message_id))
+          if (pendingDelivery && message_id === pendingDelivery.message_id)
             continue;
           if (force && deliveredForce.has(message_id) && Date.now() - deliveredForce.get(message_id) < 15000)
+            continue;
+          if (message_id <= lastId && !force && !isRecent)
             continue;
           const isoTs = new Date(ts * 1000).toISOString();
           dbInsert({ message_id, user, text: msgText, ts: isoTs });
@@ -14313,11 +15772,8 @@ async function poll() {
             ackedForceIds.add(message_id);
             const trimmed = [...ackedForceIds].slice(-200);
             await saveState(lastId, trimmed);
-          } else if (message_id <= lastId && isRecent) {
-            deliveredForce.set(-message_id, Date.now());
           } else if (message_id > lastId) {
-            lastId = message_id;
-            await saveState(lastId, [...ackedForceIds]);
+            pendingDelivery = { message_id, sentAt: Date.now(), firstSentAt: Date.now() };
           }
           sentOne = true;
           process.stderr.write(`[telegram] notification sent: ${user}: ${msgText}

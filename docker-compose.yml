@@ -104,6 +104,28 @@ services:
         max-size: "5m"
         max-file: "2"
 
+  discord-bridge:
+    build: ./discord-bridge
+    container_name: discord-bridge
+    restart: always
+    profiles:
+      - discord
+    environment:
+      DISCORD_BOT_TOKEN: "${DISCORD_BOT_TOKEN:-}"
+      DISCORD_BRIDGE_PORT: "9102"
+      SESSIONS_FILE: "/relay/sessions.json"
+      QUEUE_DIR: "/tmp"
+    expose:
+      - "9102"
+    volumes:
+      - /root/relay/sessions.json:/relay/sessions.json:ro
+      - relay-queue:/tmp
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
 networks:
   relay_default:
     external: true
