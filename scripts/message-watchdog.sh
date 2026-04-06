@@ -16,11 +16,14 @@ INTERVAL=5
 IDLE_GRACE=60          # 60 seconds between tmux nudges
 MCP_CHECK_INTERVAL=30  # seconds between MCP health checks
 TOOL_NOTIFY_COOLDOWN=3 # min seconds between tool-use notifications
+CRASH_ALERT_MINUTES=${CRASH_ALERT_MINUTES:-30}  # alert if no response for N minutes
+TOOL_MONITOR=${TOOL_MONITOR:-1}  # set to 0 to disable per-session tool notifications
 
 last_nudge=0
 last_mcp_check=0
 last_tool_hash=""
 last_tool_notify=0
+last_crash_check=0
 
 # Helper: run tmux with this session's socket
 tmux_s() { tmux -S "$TMUX_SOCKET" "$@"; }
@@ -45,15 +48,32 @@ while true; do
     fi
   fi
 
+  # Crash alert — notify if session hasn't sent any message in CRASH_ALERT_MINUTES
+  now=$(date +%s)
+  if [ $((now - last_crash_check)) -ge 300 ]; then  # check every 5 minutes
+    last_crash_check=$now
+    last_sent_file="/tmp/tg-last-sent-${THREAD_ID}"
+    if [ -f "$last_sent_file" ]; then
+      last_sent=$(cat "$last_sent_file" 2>/dev/null | tr -d '[:space:]' || echo "0")
+      silence_secs=$((now - ${last_sent%.*}))
+      threshold=$((CRASH_ALERT_MINUTES * 60))
+      if [ "$silence_secs" -gt "$threshold" ]; then
+        mins=$((silence_secs / 60))
+        tg-send "⚠️ Session <b>${SESSION}</b> has not sent any message in ${mins} minutes — may be stuck or crashed." 2>/dev/null || true
+        # Reset timer so we don't spam — alert again after another CRASH_ALERT_MINUTES
+        echo "$now" > "$last_sent_file"
+      fi
+    fi
+  fi
+
   # Tool monitoring — detect active tool calls and notify Telegram in real time
-  if [ "$SESSION_TYPE" = "claude" ] && tmux_s has-session -t "$SESSION" 2>/dev/null; then
+  if [ "$TOOL_MONITOR" = "1" ] && [ "$SESSION_TYPE" = "claude" ] && tmux_s has-session -t "$SESSION" 2>/dev/null; then
     raw_pane=$(tmux_s capture-pane -t "$SESSION" -p 2>/dev/null || echo "")
     # Strip ANSI escape codes, find the most recent tool call line
     tool_line=$(echo "$raw_pane" | sed 's/\x1b\[[0-9;]*m//g' | \
       grep -oE '[●⬤] (Bash|Read|Edit|Write|Glob|Grep|WebFetch|Agent|TodoWrite|TodoRead|mcp__[A-Za-z_]+)\([^)]{0,120}\)' | \
       tail -1 || echo "")
     if [ -n "$tool_line" ]; then
-      now=$(date +%s)
       tool_hash=$(echo "$tool_line" | cksum | cut -d' ' -f1)
       if [ "$tool_hash" != "$last_tool_hash" ] && [ $((now - last_tool_notify)) -ge "$TOOL_NOTIFY_COOLDOWN" ]; then
         short=$(echo "$tool_line" | cut -c1-100)

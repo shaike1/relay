@@ -1,8 +1,11 @@
 # Claude Telegram Relay
 
-> Control Claude Code, OpenAI Codex, and GitHub Copilot sessions via Telegram — one forum topic per project, fully webhook-driven.
+> Run Claude Code, Codex, and Copilot as **persistent, containerized agents** — controlled entirely from Telegram. One topic per project. No polling. No babysitting.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/shaike1/relay)](https://github.com/shaike1/relay/releases)
+
+**Step away from your computer. Your AI agents keep working — and you stay in control from your phone.**
 
 ## What is this?
 
@@ -182,13 +185,18 @@ relay/
 
 | Feature | This project | ccbot |
 |---------|-------------|-------|
-| Delivery mode | Webhook (instant) | Polling |
-| Inline buttons | ✓ with visual feedback | ✗ |
-| Multi-agent | Claude + Codex + Copilot | Claude only |
-| Peer messaging | ✓ | ✗ |
-| Token optimizer | ✓ | ✗ |
-| Web dashboard | ✓ | ✗ |
-| Remote sessions | ✓ (SSH) | ✗ |
+| Delivery mode | **Webhook** (instant) | Polling |
+| Inline buttons | ✓ with visual `✓` feedback | ✗ |
+| Multi-agent providers | Claude + Codex + Copilot | Claude only |
+| Real-time tool monitoring | ✓ (Bash/Read/Edit/… in Telegram) | ✓ |
+| Session crash alerts | ✓ auto-alert after silence | ✗ |
+| Peer messaging | ✓ sessions talk to each other | ✗ |
+| Task delegation | ✓ async queue + skill routing | ✗ |
+| Token optimizer | ✓ waste detection + compaction | ✗ |
+| Web dashboard | ✓ metrics + web terminal | ✗ |
+| Remote sessions | ✓ SSH to any host | ✗ |
+| MCP integration | ✓ full MCP tool suite | ✗ |
+| Startup token savings | ✓ skip idle restarts | ✗ |
 
 ## License
 
