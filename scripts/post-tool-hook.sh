@@ -23,15 +23,15 @@ INPUT="$(cat)"
 TOOL_NAME="$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('tool_name','?'))" 2>/dev/null || echo '?')"
 TOOL_INPUT="$(echo "$INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get('tool_input',{})))" 2>/dev/null || echo '{}')"
 
-# Format a short, readable summary per tool type
+# Only report action tools — skip noisy read-only file ops
 case "$TOOL_NAME" in
-  Bash)
-    CMD="$(echo "$TOOL_INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('command','')[:120])" 2>/dev/null || echo '')"
-    MSG="🔧 <b>Bash</b> <code>${CMD}</code>"
+  mcp__telegram__*|Read|Glob|Grep)
+    # Silent — too noisy, low signal
+    exit 0
     ;;
-  Read)
-    FILE="$(echo "$TOOL_INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('file_path',''))" 2>/dev/null || echo '')"
-    MSG="📖 <b>Read</b> <code>${FILE}</code>"
+  Bash)
+    CMD="$(echo "$TOOL_INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('command','')[:150])" 2>/dev/null || echo '')"
+    MSG="🔧 <b>Bash</b> <code>${CMD}</code>"
     ;;
   Edit)
     FILE="$(echo "$TOOL_INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('file_path',''))" 2>/dev/null || echo '')"
@@ -41,21 +41,9 @@ case "$TOOL_NAME" in
     FILE="$(echo "$TOOL_INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('file_path',''))" 2>/dev/null || echo '')"
     MSG="💾 <b>Write</b> <code>${FILE}</code>"
     ;;
-  Glob)
-    PAT="$(echo "$TOOL_INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('pattern',''))" 2>/dev/null || echo '')"
-    MSG="🔍 <b>Glob</b> <code>${PAT}</code>"
-    ;;
-  Grep)
-    PAT="$(echo "$TOOL_INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('pattern',''))" 2>/dev/null || echo '')"
-    MSG="🔍 <b>Grep</b> <code>${PAT}</code>"
-    ;;
   WebFetch|WebSearch)
-    URL="$(echo "$TOOL_INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('url',d.get('query',''))[:80])" 2>/dev/null || echo '')"
+    URL="$(echo "$TOOL_INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('url',d.get('query',''))[:100])" 2>/dev/null || echo '')"
     MSG="🌐 <b>${TOOL_NAME}</b> <code>${URL}</code>"
-    ;;
-  mcp__telegram__*)
-    # Don't echo our own MCP calls back to Telegram — too noisy
-    exit 0
     ;;
   *)
     MSG="⚙️ <b>${TOOL_NAME}</b>"
