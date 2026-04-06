@@ -1991,6 +1991,29 @@ app.get('/pipeline', (req, res) => {
   } catch (e) { res.status(500).send('Pipeline dashboard not found'); }
 });
 
+// --- Audit log endpoint ---
+// GET /api/audit/:session — returns last 50 audit log entries for a session
+app.get('/api/audit/:session', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const session = sessions.find(s => s.session === req.params.session);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    const threadId = session.thread_id;
+    const auditFile = `/tmp/relay-audit-${threadId}.jsonl`;
+    if (!fs.existsSync(auditFile)) return res.json([]);
+    const lines = fs.readFileSync(auditFile, 'utf8')
+      .split('\n')
+      .filter(l => l.trim());
+    const last50 = lines.slice(-50);
+    const entries = last50.map(l => { try { return JSON.parse(l); } catch (_) { return null; } }).filter(Boolean);
+    res.json(entries);
+  } catch (e) {
+    console.error('[audit] Failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // --- Health check ---
 app.get('/health', (req, res) => {
   res.json({ ok: true, uptime: process.uptime() });
