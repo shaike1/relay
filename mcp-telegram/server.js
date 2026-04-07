@@ -16523,6 +16523,8 @@ async function poll() {
             const trimmed = [...ackedForceIds].slice(-200);
             await saveState(lastId, trimmed);
           } else if (message_id > lastId) {
+            lastId = message_id;
+            await saveState(lastId, [...ackedForceIds]);
             pendingDelivery = { message_id, sentAt: Date.now(), firstSentAt: Date.now() };
           }
           sentOne = true;

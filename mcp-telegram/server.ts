@@ -2199,7 +2199,10 @@ async function poll(): Promise<void> {
             const trimmed = [...ackedForceIds].slice(-200)
             await saveState(lastId, trimmed)
           } else if (message_id > lastId) {
-            // Don't advance lastId yet — wait for Claude to show activity (call a tool)
+            // Advance lastId immediately so restarts don't re-deliver this message.
+            // pendingDelivery still tracks activity confirmation for logging purposes.
+            lastId = message_id
+            await saveState(lastId, [...ackedForceIds])
             pendingDelivery = { message_id, sentAt: Date.now(), firstSentAt: Date.now() }
           }
           sentOne = true
