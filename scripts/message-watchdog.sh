@@ -18,7 +18,7 @@ OVERRIDE_ENV="/tmp/relay-session-env-${THREAD_ID}"
 [ -f "$OVERRIDE_ENV" ] && source "$OVERRIDE_ENV" 2>/dev/null || true
 
 INTERVAL=5
-IDLE_GRACE=0           # 0 = disabled — MCP notifications handle delivery; nudge only if explicitly set per-session
+IDLE_GRACE=30          # seconds between nudge retries (fallback if MCP notification missed)
 MCP_CHECK_INTERVAL=30  # seconds between MCP health checks
 TOOL_NOTIFY_COOLDOWN=3 # min seconds between tool-use notifications
 CRASH_ALERT_MINUTES=${CRASH_ALERT_MINUTES:-30}  # alert if no response for N minutes
@@ -26,6 +26,7 @@ TOOL_MONITOR=${TOOL_MONITOR:-1}  # set to 0 to disable per-session tool notifica
 STREAM_MONITOR=${STREAM_MONITOR:-1}  # live pane streaming when new message arrives
 
 last_nudge=0
+last_nudged_id=0   # track highest message_id nudged — only nudge new messages once
 last_mcp_check=0
 last_tool_hash=""
 last_tool_notify=0
@@ -130,11 +131,12 @@ while true; do
     last_id=$(python3 -c "import json; d=json.load(open('$STATE')); print(d.get('lastId',0))" 2>/dev/null || echo 0)
   fi
 
-  pending=$(python3 -c "
+  pending_info=$(python3 -c "
 import json, time
 last_id = $last_id
 last_nudge_ts = $last_nudge
 count = 0
+max_id = 0
 seen = set()
 now = time.time()
 with open('$QUEUE') as f:
@@ -150,14 +152,17 @@ with open('$QUEUE') as f:
             if mid > 0 and mid > last_id and mid not in seen:
                 seen.add(mid)
                 count += 1
+                if mid > max_id: max_id = mid
             # Forced/peer messages: check if arrived after last nudge
             elif mid < 0 and ts > last_nudge_ts and mid not in seen:
                 seen.add(mid)
                 count += 1
         except Exception:
             pass
-print(count)
-" 2>/dev/null || echo 0)
+print(count, max_id)
+" 2>/dev/null || echo "0 0")
+  pending=$(echo "$pending_info" | awk '{print $1}')
+  highest_pending_id=$(echo "$pending_info" | awk '{print $2}')
 
   # Streaming — trigger on queue file change regardless of pending count.
   # MCP delivers instantly so pending=0 by the time watchdog checks, but we still
@@ -178,12 +183,17 @@ print(count)
   # Check if tmux session is alive in this container's socket
   tmux_s has-session -t "$SESSION" 2>/dev/null || continue
 
-  # Nudge via tmux — only when IDLE_GRACE > 0 (0 = disabled, rely on MCP notifications)
+  # Nudge via tmux — only when IDLE_GRACE > 0
   [ "$IDLE_GRACE" -gt 0 ] || continue
 
   now=$(date +%s)
+  # Only nudge if there's a NEW message (id > last_nudged_id) OR enough time passed since last nudge
+  is_new_msg=0
+  [ "$highest_pending_id" -gt "$last_nudged_id" ] && is_new_msg=1
   elapsed=$((now - last_nudge))
-  [ "$elapsed" -ge "$IDLE_GRACE" ] || continue
+  if [ "$is_new_msg" -eq 0 ] && [ "$elapsed" -lt "$IDLE_GRACE" ]; then
+    continue
+  fi
 
   # Skip if Claude is actively working — check last 3 non-empty lines for active indicators
   pane=$(tmux_s capture-pane -t "$SESSION" -p 2>/dev/null || echo "")
@@ -197,4 +207,5 @@ print(count)
   sleep 0.3
   tmux_s send-keys -t "$SESSION" "" Enter
   last_nudge=$now
+  [ "$highest_pending_id" -gt "$last_nudged_id" ] && last_nudged_id=$highest_pending_id
 done
