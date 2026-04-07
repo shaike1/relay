@@ -93,6 +93,7 @@
     "path": "/root/relay",
     "host": null,
     "group": "infra",
+    "protected": true,
     "env": {
       "STREAM_MONITOR": "0"
     },

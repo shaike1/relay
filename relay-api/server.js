@@ -3482,6 +3482,13 @@ app.delete('/miniapp/sessions/:session', (req, res) => {
   if (!sessionName) return res.status(400).json({ error: 'Invalid session name' });
 
   try {
+    // Check protected flag
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const target = sessions.find(s => s.session === sessionName);
+    if (target && target.protected) {
+      return res.status(403).json({ error: `Session "${sessionName}" is protected and cannot be deleted.` });
+    }
+
     // Stop and remove container
     try {
       execSync(`docker stop relay-session-${sessionName} 2>/dev/null || true`, { timeout: 15000 });
@@ -3489,7 +3496,6 @@ app.delete('/miniapp/sessions/:session', (req, res) => {
     } catch (_) {}
 
     // Remove from sessions.json
-    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
     const filtered = sessions.filter(s => s.session !== sessionName);
     fs.writeFileSync(SESSIONS_FILE, JSON.stringify(filtered, null, 2));
 
