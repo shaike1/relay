@@ -12,20 +12,20 @@ STATE="/tmp/tg-queue-${THREAD_ID}.state"
 TMUX_SOCKET="/tmp/tmux-${SESSION}.sock"
 NUDGE="You have a pending Telegram message. Call fetch_messages and respond."
 
-# Per-session env overrides — survives watchdog restarts without container recreation
-# e.g. echo "STREAM_MONITOR=0" > /tmp/relay-session-env-${THREAD_ID}
-OVERRIDE_ENV="/tmp/relay-session-env-${THREAD_ID}"
-[ -f "$OVERRIDE_ENV" ] && source "$OVERRIDE_ENV" 2>/dev/null || true
-
 INTERVAL=5
 IDLE_GRACE=0           # 0 = disabled — rely on MCP notifications only (no token waste)
-RELAY_API_URL="${RELAY_API_URL:-}"  # if set, pull queue from remote relay-api (for remote sessions)
-RELAY_API_TOKEN="${RELAY_API_TOKEN:-}"
+RELAY_API_URL=""       # if set, pull queue from remote relay-api (for remote sessions)
+RELAY_API_TOKEN=""
 MCP_CHECK_INTERVAL=30  # seconds between MCP health checks
 TOOL_NOTIFY_COOLDOWN=3 # min seconds between tool-use notifications
 CRASH_ALERT_MINUTES=${CRASH_ALERT_MINUTES:-30}  # alert if no response for N minutes
-TOOL_MONITOR=${TOOL_MONITOR:-1}  # set to 0 to disable per-session tool notifications
-STREAM_MONITOR=${STREAM_MONITOR:-1}  # live pane streaming when new message arrives
+TOOL_MONITOR=1         # set to 0 to disable per-session tool notifications
+STREAM_MONITOR=1       # live pane streaming when new message arrives
+
+# Per-session env overrides — sourced AFTER defaults so they take effect
+# e.g. echo "RELAY_API_URL=https://relay.right-api.com" > /tmp/relay-session-env-${THREAD_ID}
+OVERRIDE_ENV="/tmp/relay-session-env-${THREAD_ID}"
+[ -f "$OVERRIDE_ENV" ] && source "$OVERRIDE_ENV" 2>/dev/null || true
 
 last_nudge=0
 last_nudged_id=0   # track highest message_id nudged — only nudge new messages once
@@ -128,22 +128,21 @@ while true; do
 
   # Remote session pull: fetch new messages from relay-api and append to local queue
   if [ -n "$RELAY_API_URL" ]; then
-    local_last_id=0
-    [ -f "$STATE" ] && local_last_id=$(python3 -c "import json; d=json.load(open('$STATE')); print(d.get('lastId',0))" 2>/dev/null || echo 0)
-    auth_header=""
-    [ -n "$RELAY_API_TOKEN" ] && auth_header="-H \"Authorization: Bearer $RELAY_API_TOKEN\""
-    new_entries=$(curl -sf --connect-timeout 5 $auth_header \
-      "${RELAY_API_URL}/api/queue/${THREAD_ID}/messages?since=${local_last_id}" 2>/dev/null || echo "[]")
-    if [ "$new_entries" != "[]" ] && [ -n "$new_entries" ]; then
-      echo "$new_entries" | python3 -c "
+    _pull_last_id=0
+    [ -f "$STATE" ] && _pull_last_id=$(python3 -c "import json; d=json.load(open('$STATE')); print(d.get('lastId',0))" 2>/dev/null || echo 0)
+    _pull_url="${RELAY_API_URL}/api/queue/${THREAD_ID}/messages?since=${_pull_last_id}"
+    _pull_tmp="/tmp/relay-pull-${THREAD_ID}.json"
+    curl -sf --connect-timeout 5 "$_pull_url" > "$_pull_tmp" 2>/dev/null || true
+    if [ -s "$_pull_tmp" ]; then
+      python3 - "$_pull_tmp" "$QUEUE" <<'PYEOF' 2>/dev/null
 import json, sys
-entries = json.load(sys.stdin)
-if isinstance(entries, list):
-    with open('$QUEUE', 'a') as f:
-        for e in entries:
+data = json.load(open(sys.argv[1]))
+if isinstance(data, list) and data:
+    with open(sys.argv[2], 'a') as f:
+        for e in data:
             f.write(json.dumps(e) + '\n')
-    print(len(entries))
-" 2>/dev/null | read count && [ "${count:-0}" -gt 0 ] && echo "[watchdog] pulled $count new messages from relay-api" >&2 || true
+    print(len(data))
+PYEOF
     fi
   fi
 

@@ -16540,6 +16540,35 @@ async function poll() {
     await Bun.sleep(500);
   }
 }
+var PUSH_PORT = process.env.PUSH_PORT ? parseInt(process.env.PUSH_PORT) : process.env.REMOTE_SESSION === "1" ? 7099 : 0;
+if (PUSH_PORT > 0) {
+  const pushSecret = process.env.PUSH_SECRET || "";
+  Bun.serve({
+    port: PUSH_PORT,
+    hostname: "0.0.0.0",
+    async fetch(req) {
+      if (req.method !== "POST" || new URL(req.url).pathname !== "/push") {
+        return new Response("not found", { status: 404 });
+      }
+      if (pushSecret && req.headers.get("x-push-secret") !== pushSecret) {
+        return new Response("unauthorized", { status: 401 });
+      }
+      try {
+        const entry = await req.json();
+        const line = JSON.stringify(entry) + `
+`;
+        await Bun.write(Bun.file(QUEUE_FILE), await Bun.file(QUEUE_FILE).text().catch(() => "") + line);
+        process.stderr.write(`[telegram] push received: msg ${entry.message_id} from ${entry.user}
+`);
+        return new Response("ok");
+      } catch (e) {
+        return new Response("bad request", { status: 400 });
+      }
+    }
+  });
+  process.stderr.write(`[telegram] HTTP push endpoint listening on :${PUSH_PORT}
+`);
+}
 var transport = new StdioServerTransport;
 await mcp.connect(transport);
 poll();
