@@ -18,7 +18,7 @@ OVERRIDE_ENV="/tmp/relay-session-env-${THREAD_ID}"
 [ -f "$OVERRIDE_ENV" ] && source "$OVERRIDE_ENV" 2>/dev/null || true
 
 INTERVAL=5
-IDLE_GRACE=30          # seconds between nudge retries (fallback if MCP notification missed)
+IDLE_GRACE=0           # 0 = disabled — rely on MCP notifications only (no token waste)
 RELAY_API_URL="${RELAY_API_URL:-}"  # if set, pull queue from remote relay-api (for remote sessions)
 RELAY_API_TOKEN="${RELAY_API_TOKEN:-}"
 MCP_CHECK_INTERVAL=30  # seconds between MCP health checks
