@@ -17,6 +17,9 @@ fi
 BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
 CHAT_ID="${GROUP_CHAT_ID:-}"
 
+# Files & Config topic for sending backup files (thread 11351)
+FILES_THREAD_ID="${FILES_THREAD_ID:-11351}"
+
 # Get ALERT_THREAD_ID or first session thread_id
 THREAD_ID="${ALERT_THREAD_ID:-}"
 if [[ -z "$THREAD_ID" ]] && [[ -f "${RELAY_DIR}/sessions.json" ]]; then
@@ -99,6 +102,16 @@ echo "[backup] Done. Size: $SIZE"
 
 # Telegram notification
 BACKUP_NAME="relay-backup-${TIMESTAMP}.tar.gz"
-tg_notify "✅ גיבוי הושלם — ${BACKUP_NAME} (${SIZE})"
+tg_notify "✅ גיבוי הושלם — ${BACKUP_NAME} (${SIZE}) — נשלח לטופיק Files &amp; Config"
+
+# Send backup file to Files & Config topic
+if [[ -n "$BOT_TOKEN" && -n "$CHAT_ID" && -n "$FILES_THREAD_ID" ]]; then
+  curl -sS "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument" \
+    -F chat_id="${CHAT_ID}" \
+    -F message_thread_id="${FILES_THREAD_ID}" \
+    -F document="@${BACKUP_FILE}" \
+    -F caption="📦 ${BACKUP_NAME} (${SIZE}) — $(date '+%Y-%m-%d %H:%M')" \
+    --max-time 30 > /dev/null 2>&1 || echo "[backup] Warning: failed to send file to Files topic"
+fi
 
 echo "[backup] Backup complete: $BACKUP_FILE"

@@ -18,17 +18,20 @@ OVERRIDE_ENV="/tmp/relay-session-env-${THREAD_ID}"
 [ -f "$OVERRIDE_ENV" ] && source "$OVERRIDE_ENV" 2>/dev/null || true
 
 INTERVAL=5
-IDLE_GRACE=60          # 60 seconds between tmux nudges
+IDLE_GRACE=0           # 0 = disabled — MCP notifications handle delivery; nudge only if explicitly set per-session
 MCP_CHECK_INTERVAL=30  # seconds between MCP health checks
 TOOL_NOTIFY_COOLDOWN=3 # min seconds between tool-use notifications
 CRASH_ALERT_MINUTES=${CRASH_ALERT_MINUTES:-30}  # alert if no response for N minutes
 TOOL_MONITOR=${TOOL_MONITOR:-1}  # set to 0 to disable per-session tool notifications
+STREAM_MONITOR=${STREAM_MONITOR:-1}  # live pane streaming when new message arrives
 
 last_nudge=0
 last_mcp_check=0
 last_tool_hash=""
 last_tool_notify=0
 last_crash_check=0
+last_stream_trigger=0   # last time streaming was started
+last_queue_mtime=0      # track queue file mtime to detect new messages
 
 # Helper: run tmux with this session's socket
 tmux_s() { tmux -S "$TMUX_SOCKET" "$@"; }
@@ -82,6 +85,23 @@ while true; do
         # Set alerted flag — don't repeat until Claude sends a real message (flag cleared by mcp-telegram on send)
         touch "$alerted_file"
       fi
+    fi
+  fi
+
+  # Rate-limit detection — check pane for API rate limit / overload errors every 30s
+  now=$(date +%s)
+  if [ "${last_ratelimit_check:-0}" -eq 0 ] || [ $((now - last_ratelimit_check)) -ge 30 ]; then
+    last_ratelimit_check=$now
+    rl_pane=$(tmux_s capture-pane -t "$SESSION" -p 2>/dev/null || echo "")
+    rl_flag="/tmp/tg-ratelimit-alerted-${THREAD_ID}"
+    if echo "$rl_pane" | grep -qiE "rate.?limit|overloaded|529|too many requests|usage limit|slowdown|capacity"; then
+      if [ ! -f "$rl_flag" ]; then
+        touch "$rl_flag"
+        tg-send "⏳ Session <b>${SESSION}</b> hit a rate limit / API overload — paused until it clears automatically." 2>/dev/null || true
+      fi
+    else
+      # Clear flag once pane no longer shows rate limit
+      rm -f "$rl_flag" 2>/dev/null || true
     fi
   fi
 
@@ -139,10 +159,27 @@ with open('$QUEUE') as f:
 print(count)
 " 2>/dev/null || echo 0)
 
+  # Streaming — trigger on queue file change regardless of pending count.
+  # MCP delivers instantly so pending=0 by the time watchdog checks, but we still
+  # want to stream Claude's response as it's being generated.
+  if [ "${STREAM_MONITOR:-0}" = "1" ] && [ "$SESSION_TYPE" = "claude" ] && [ -f "$QUEUE" ]; then
+    cur_mtime=$(stat -c %Y "$QUEUE" 2>/dev/null || echo 0)
+    now=$(date +%s)
+    stream_running=$(pgrep -f "stream-jsonl.sh.*${THREAD_ID}" > /dev/null 2>&1 && echo 1 || echo 0)
+    if [ "$cur_mtime" -gt "$last_queue_mtime" ] && [ $((now - last_stream_trigger)) -ge 30 ] && [ "$stream_running" = "0" ]; then
+      last_queue_mtime=$cur_mtime
+      last_stream_trigger=$now
+      bash /relay/scripts/stream-jsonl.sh "${WORKDIR:-/relay}" "$THREAD_ID" &
+    fi
+  fi
+
   [ "$pending" -gt 0 ] || continue
 
   # Check if tmux session is alive in this container's socket
   tmux_s has-session -t "$SESSION" 2>/dev/null || continue
+
+  # Nudge via tmux — only when IDLE_GRACE > 0 (0 = disabled, rely on MCP notifications)
+  [ "$IDLE_GRACE" -gt 0 ] || continue
 
   now=$(date +%s)
   elapsed=$((now - last_nudge))
@@ -160,9 +197,4 @@ print(count)
   sleep 0.3
   tmux_s send-keys -t "$SESSION" "" Enter
   last_nudge=$now
-
-  # Streaming — launch background pane streamer so user sees live progress
-  if [ "${STREAM_MONITOR:-0}" = "1" ] && [ "$SESSION_TYPE" = "claude" ]; then
-    bash /relay/scripts/stream-pane.sh "$TMUX_SOCKET" "$SESSION" "$THREAD_ID" &
-  fi
 done

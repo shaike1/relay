@@ -83,6 +83,38 @@ except Exception:
 if [ -n "$THREAD_ID" ]; then
   export TELEGRAM_THREAD_ID="$THREAD_ID"
   export SESSION_NAME="$SESSION"
+
+  # Auto-generate .mcp.json in the session workdir if missing or has wrong thread.
+  # Prevents the codex-session-loop from clobbering /root/.mcp.json and routing
+  # this session's MCP to the wrong Telegram topic.
+  MCP_JSON_PATH="${WORKDIR}/.mcp.json"
+  if [ ! -f "$MCP_JSON_PATH" ] || ! python3 -c "
+import json, sys
+d = json.load(open('$MCP_JSON_PATH'))
+tid = d.get('mcpServers',{}).get('telegram',{}).get('env',{}).get('TELEGRAM_THREAD_ID','')
+sys.exit(0 if tid == '$THREAD_ID' else 1)
+" 2>/dev/null; then
+    python3 -c "
+import json
+config = {
+  'mcpServers': {
+    'telegram': {
+      'command': '/root/.bun/bin/bun',
+      'args': ['run', '--cwd', '/root/relay/mcp-telegram', 'server.ts'],
+      'env': {'TELEGRAM_THREAD_ID': '$THREAD_ID', 'SESSION_NAME': '$SESSION'}
+    },
+    'copilot': {
+      'command': '/root/.bun/bin/bun',
+      'args': ['run', '--cwd', '/root/relay/mcp-copilot', 'server.ts']
+    }
+  }
+}
+with open('$MCP_JSON_PATH', 'w') as f:
+    json.dump(config, f, indent=2)
+" 2>/dev/null || true
+    echo "[session-loop:${SESSION}] wrote .mcp.json (thread=${THREAD_ID})" >&2
+  fi
+
   if [ "${S6_SUPERVISED:-0}" != "1" ]; then
     /root/relay/scripts/mcp-server-wrapper.sh &
     MCP_WRAPPER_PID=$!
@@ -232,6 +264,9 @@ export IS_SANDBOX=1
 export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 export TELEGRAM_THREAD_ID="${TELEGRAM_THREAD_ID:-}"
 export SESSION_NAME="${SESSION}"
+# Load OAuth token from .env for persistent auth (valid 1 year)
+OAUTH_TOKEN=\$(grep '^CLAUDE_CODE_OAUTH_TOKEN=' /root/relay/.env 2>/dev/null | cut -d= -f2)
+[ -n "\$OAUTH_TOKEN" ] && export CLAUDE_CODE_OAUTH_TOKEN="\$OAUTH_TOKEN"
 cd "$WORKDIR"
 $(declare -f scrub_telegram_plugin_settings)
 $(declare -f prepare_claude_env)

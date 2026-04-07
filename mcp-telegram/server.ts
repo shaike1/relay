@@ -231,6 +231,62 @@ async function editMessage(messageId: number, text: string): Promise<boolean> {
   return res.ok
 }
 
+async function sendMessageStreaming(text: string, replyTo?: number, buttons?: string[][]): Promise<number[]> {
+  text = autoCode(text)
+  // Send initial placeholder
+  const body: Record<string, unknown> = {
+    chat_id: CHAT_ID,
+    text: '▍',
+    parse_mode: 'HTML',
+    ...buildMessageThreadParams(THREAD_ID),
+  }
+  if (replyTo) body.reply_to_message_id = replyTo
+  const initRes = await tg('sendMessage', body) as { ok: boolean; result: { message_id: number } }
+  if (!initRes.ok) return []
+  const msgId = initRes.result.message_id
+
+  // Stream word by word
+  const words = text.split(/(\s+)/)
+  let accumulated = ''
+  let lastEditLen = 0
+  const CHUNK_SIZE = 8  // edit every N words for smoothness
+  let wordCount = 0
+
+  for (const word of words) {
+    accumulated += word
+    if (/\S/.test(word)) wordCount++
+    // Edit periodically, not every single word (to avoid rate limits)
+    if (wordCount % CHUNK_SIZE === 0 && accumulated.length > lastEditLen) {
+      await editMessage(msgId, accumulated + ' ▍')
+      lastEditLen = accumulated.length
+      await Bun.sleep(80)
+    }
+  }
+
+  // Final edit with full text (no cursor) + buttons
+  if (buttons) {
+    const finalBody: Record<string, unknown> = {
+      chat_id: CHAT_ID,
+      message_id: msgId,
+      text: accumulated,
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: buttons.map(row =>
+          row.map(label => ({
+            text: label,
+            callback_data: `btn:${THREAD_ID}:${label}`,
+          }))
+        ),
+      },
+    }
+    await tg('editMessageText', finalBody)
+  } else {
+    await editMessage(msgId, accumulated)
+  }
+
+  return [msgId]
+}
+
 async function sendTyping(): Promise<void> {
   await tg('sendChatAction', {
     chat_id: CHAT_ID,
@@ -281,6 +337,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
               items: { type: 'string' },
             },
           },
+          streaming: { type: 'boolean', description: 'If true, message appears word-by-word with a typing cursor effect. Default: true.' },
         },
       },
     },
@@ -645,11 +702,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     const buttons: string[][] | undefined = typeof rawButtons === 'string'
       ? (() => { try { return JSON.parse(rawButtons) } catch { return undefined } })()
       : rawButtons as string[][] | undefined
-    const ids = await sendMessage(
-      text,
-      args?.reply_to as number | undefined,
-      buttons,
-    )
+    const streaming = args?.streaming !== undefined ? Boolean(args.streaming) : true  // default: streaming ON
+    const ids = streaming
+      ? await sendMessageStreaming(text, args?.reply_to as number | undefined, buttons)
+      : await sendMessage(text, args?.reply_to as number | undefined, buttons)
     // Write response timestamp so the relay bot knows Claude replied
     void Bun.write(`/tmp/tg-last-sent-${THREAD_ID}`, String(Date.now() / 1000))
     // Clear crash-alert flag so the watchdog can send a fresh alert after the next silence period

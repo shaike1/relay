@@ -191,15 +191,21 @@ run_codex_forever() {
         # we need 8542 (codex). Claude Code reads .mcp.json from workdir /root.
         write_session_mcp_config
         python3 -c "
-import json
+import json, sys
 p = '/root/.mcp.json'
+thread_id = '${THREAD_ID}'
+session = '${SESSION}'
+bot_token = '${BOT_TOKEN_OVERRIDE}'
 try:
     d = json.load(open(p))
 except: d = {'mcpServers': {}}
+env = {'TELEGRAM_THREAD_ID': thread_id, 'SESSION_NAME': session}
+if bot_token:
+    env['TELEGRAM_BOT_TOKEN'] = bot_token
 d.setdefault('mcpServers', {})['telegram'] = {
     'command': '/root/.bun/bin/bun',
     'args': ['run', '--cwd', '/root/relay/mcp-telegram', 'server.ts'],
-    'env': {'TELEGRAM_THREAD_ID': '${THREAD_ID}', 'SESSION_NAME': '${SESSION}'}
+    'env': env
 }
 json.dump(d, open(p, 'w'), indent=2)
 " 2>/dev/null || true

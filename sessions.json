@@ -1,5 +1,22 @@
 [
   {
+    "thread_id": 11394,
+    "session": "ha",
+    "path": "/root/ha-skill",
+    "host": null,
+    "group": "iot",
+    "skills": ["homeassistant", "automation", "iot", "yaml", "lovelace"]
+  },
+  {
+    "thread_id": 11351,
+    "session": "files-config",
+    "path": "/root/relay",
+    "host": null,
+    "group": "infra",
+    "description": "Files & Config topic — backups, exports, markdown reports auto-sent here",
+    "skills": ["files", "backup", "config", "export"]
+  },
+  {
     "thread_id": 202,
     "session": "openclaw",
     "path": "/root/.openclaw/workspace",
@@ -43,7 +60,7 @@
     "thread_id": 12,
     "session": "edushare",
     "path": "/root/.openclaw/workspace/edushare",
-    "host": "root@your-remote-host",
+    "host": "root@100.64.0.12",
     "group": "openclaw",
     "skills": [
       "education",
@@ -55,7 +72,7 @@
     "thread_id": 14,
     "session": "teamy",
     "path": "/root/teamy",
-    "host": "root@your-remote-host",
+    "host": "root@100.64.0.12",
     "group": "tools",
     "skills": [
       "teams",
@@ -79,7 +96,7 @@
     "thread_id": 138,
     "session": "right-api-web",
     "path": "/root/right-api-com",
-    "host": "root@your-remote-host",
+    "host": "root@100.64.0.12",
     "group": "web",
     "skills": [
       "web",
@@ -146,7 +163,7 @@
     "thread_id": 210,
     "session": "headscale",
     "path": "/root/headscale",
-    "host": "root@your-remote-host",
+    "host": "root@100.64.0.12",
     "group": "infra",
     "skills": [
       "networking",
@@ -159,7 +176,7 @@
     "thread_id": 236,
     "session": "duplicacy",
     "path": "/root/duplicacy",
-    "host": "root@your-remote-host",
+    "host": "root@100.64.0.12",
     "group": "infra",
     "skills": [
       "backup",
