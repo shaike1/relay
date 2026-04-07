@@ -541,6 +541,13 @@ function webhookQueueWrite(update) {
     return;
   }
 
+  // /search <query> — search message history and knowledge base
+  const searchCmd = msg.text && msg.text.trim().match(/^\/search(@\S+)?\s+([\s\S]+)$/i);
+  if (searchCmd) {
+    handleSearchCommand(threadId, searchCmd[2] || null, msg.message_id).catch(e => console.error('[search] error:', e.message));
+    return;
+  }
+
   // /report — daily summary
   if (msg.text && /^\/report(@\S+)?$/i.test(msg.text.trim())) {
     handleReportCommand(threadId, msg.message_id).catch(e => console.error('[report] error:', e.message));
@@ -1697,6 +1704,40 @@ app.post('/webhooks/github', express.raw({ type: 'application/json' }), (req, re
       `<b>#${pr.number}</b> ${pr.title}\n` +
       `by ${pr.user && pr.user.login} — <code>${pr.head && pr.head.ref}</code> → <code>${pr.base && pr.base.ref}</code>\n` +
       (pr.html_url ? `<code>${pr.html_url}</code>` : '');
+
+    // AI Code Review: fetch changed files for opened/synchronize events
+    if ((action === 'opened' || action === 'synchronize') && pr.number && repo) {
+      const ghToken = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+      const apiBase = `https://api.github.com/repos/${repo}/pulls/${pr.number}/files`;
+      const headers = { 'User-Agent': 'relay-api/1.0', 'Accept': 'application/vnd.github+json' };
+      if (ghToken) headers['Authorization'] = `Bearer ${ghToken}`;
+      fetch(apiBase, { headers, signal: AbortSignal.timeout(10000) })
+        .then(r => r.json())
+        .then(files => {
+          if (!Array.isArray(files)) return;
+          const fileList = files.slice(0, 10).map(f => {
+            const additions = f.additions || 0;
+            const deletions = f.deletions || 0;
+            return `• ${f.filename} (+${additions}/-${deletions})`;
+          }).join('\n');
+          const reviewText = `📋 PR #${pr.number} by ${pr.user && pr.user.login}: ${pr.title}\n\nChanged files:\n${fileList}\n\nPlease review this PR and provide feedback.\nURL: ${pr.html_url || ''}`;
+          const reviewEntry = {
+            message_id: -(Math.floor(Date.now() / 1000) % 2147483647),
+            user: `github:pr-review`,
+            text: reviewText,
+            ts: Math.floor(Date.now() / 1000),
+            via: 'github',
+            force: true,
+          };
+          try {
+            fs.appendFileSync(path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`), JSON.stringify(reviewEntry) + '\n');
+            console.log(`[github-webhook] Queued PR review request for PR #${pr.number} to thread ${threadId}`);
+          } catch (e) {
+            console.error('[github-webhook] PR review queue error:', e.message);
+          }
+        })
+        .catch(e => console.warn('[github-webhook] PR diff fetch failed:', e.message));
+    }
   } else if (event === 'push') {
     const commits = payload.commits || [];
     const branch = (payload.ref || '').replace('refs/heads/', '');
@@ -3326,6 +3367,283 @@ app.post('/miniapp/send', (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Feature: New Session Wizard (Mini App) ────────────────────────────────────
+
+// POST /miniapp/sessions/create — create forum topic + session from Mini App
+app.post('/miniapp/sessions/create', async (req, res) => {
+  const { init_data, name, type, skills, template, workdir } = req.body || {};
+
+  // Validate name
+  if (!name || !/^[a-zA-Z0-9_-]+$/.test(name)) {
+    return res.status(400).json({ error: 'Invalid session name' });
+  }
+
+  // Validate Telegram initData
+  if (TG_BOT_TOKEN) {
+    if (!init_data || !validateInitData(init_data, TG_BOT_TOKEN)) {
+      return res.status(403).json({ error: 'Invalid or missing Telegram initData' });
+    }
+  }
+
+  try {
+    // Pick icon color based on type
+    const TYPE_COLORS = {
+      claude:  7322096,  // blue
+      codex:   16478047, // orange
+      copilot: 6929650,  // purple
+    };
+    const iconColor = TYPE_COLORS[(type || 'claude').toLowerCase()] || TYPE_COLORS.claude;
+
+    // Create Telegram forum topic
+    const tgRes = await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/createForumTopic`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: TG_CHAT_ID, name, icon_color: iconColor }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const tgData = await tgRes.json();
+    if (!tgData.ok) {
+      return res.status(500).json({ error: 'Failed to create Telegram topic: ' + JSON.stringify(tgData) });
+    }
+    const thread_id = tgData.result.message_thread_id;
+
+    // Build session entry
+    const sessionPath = workdir || `/root/${name}`;
+    const entry = {
+      thread_id,
+      session: name,
+      path: sessionPath,
+      type: type || 'claude',
+      skills: skills || [],
+      host: null,
+    };
+
+    // Append to sessions.json
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    if (sessions.find(s => s.session === name)) {
+      return res.status(409).json({ error: 'Session already exists' });
+    }
+    sessions.push(entry);
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2));
+
+    // Apply template if specified
+    if (template && template !== 'none') {
+      try {
+        const safeName = template.replace(/[^a-zA-Z0-9_-]/g, '');
+        const safePath = sessionPath.replace(/[`$;|&<>]/g, '');
+        execSync(`bash /relay/scripts/apply-template.sh ${safeName} ${safePath}`, { timeout: 15000 });
+        console.log(`[session-create] Applied template ${template} to ${sessionPath}`);
+      } catch (e) {
+        console.warn(`[session-create] Template apply failed: ${e.message}`);
+      }
+    }
+
+    // Regenerate docker-compose.sessions.yml
+    try {
+      execSync('python3 /relay/scripts/generate-compose.py', { timeout: 15000 });
+      console.log('[session-create] Regenerated docker-compose.sessions.yml');
+    } catch (e) {
+      console.warn('[session-create] generate-compose failed:', e.message);
+    }
+
+    // Start the session container
+    const containerName = `relay-session-${name}`;
+    try {
+      // Try docker compose first
+      execSync(
+        `docker compose -f /relay/docker-compose.sessions.yml up -d ${containerName} 2>/dev/null || ` +
+        `docker run -d --name ${containerName} --restart always ` +
+        `-v /root:/root -v /var/run/docker.sock:/var/run/docker.sock -v relay-queue:/tmp ` +
+        `-e THREAD_ID=${thread_id} -e SESSION_NAME=${name} topix-relay:latest`,
+        { timeout: 30000 }
+      );
+      console.log(`[session-create] Started container ${containerName}`);
+    } catch (e) {
+      console.warn('[session-create] Container start failed:', e.message);
+    }
+
+    // Send welcome message to the new topic
+    const typeLabel = (type || 'claude').charAt(0).toUpperCase() + (type || 'claude').slice(1);
+    await tgSendMessage(thread_id, `🎉 סשן ${name} מוכן! אני ${typeLabel} ומוכן לעבוד.`, null, null).catch(() => {});
+
+    res.json({ ok: true, thread_id, session: name });
+    console.log(`[session-create] Created session "${name}" thread ${thread_id}`);
+  } catch (e) {
+    console.error('[session-create] Error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /miniapp/sessions/:session — stop/remove container and remove from config
+app.delete('/miniapp/sessions/:session', (req, res) => {
+  const sessionName = (req.params.session || '').replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!sessionName) return res.status(400).json({ error: 'Invalid session name' });
+
+  try {
+    // Stop and remove container
+    try {
+      execSync(`docker stop relay-session-${sessionName} 2>/dev/null || true`, { timeout: 15000 });
+      execSync(`docker rm relay-session-${sessionName} 2>/dev/null || true`, { timeout: 10000 });
+    } catch (_) {}
+
+    // Remove from sessions.json
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const filtered = sessions.filter(s => s.session !== sessionName);
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(filtered, null, 2));
+
+    console.log(`[session-delete] Deleted session "${sessionName}"`);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[session-delete] Error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /miniapp/sessions/:session/clone — clone session with new name + topic
+app.post('/miniapp/sessions/:session/clone', async (req, res) => {
+  const srcName = (req.params.session || '').replace(/[^a-zA-Z0-9_-]/g, '');
+  const { init_data, new_name } = req.body || {};
+
+  if (!srcName) return res.status(400).json({ error: 'Invalid session name' });
+  if (!new_name || !/^[a-zA-Z0-9_-]+$/.test(new_name)) {
+    return res.status(400).json({ error: 'Invalid new_name' });
+  }
+
+  // Validate Telegram initData
+  if (TG_BOT_TOKEN) {
+    if (!init_data || !validateInitData(init_data, TG_BOT_TOKEN)) {
+      return res.status(403).json({ error: 'Invalid or missing Telegram initData' });
+    }
+  }
+
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const src = sessions.find(s => s.session === srcName);
+    if (!src) return res.status(404).json({ error: 'Source session not found' });
+    if (sessions.find(s => s.session === new_name)) {
+      return res.status(409).json({ error: 'Session already exists' });
+    }
+
+    // Create new Telegram forum topic
+    const TYPE_COLORS = { claude: 7322096, codex: 16478047, copilot: 6929650 };
+    const iconColor = TYPE_COLORS[(src.type || 'claude').toLowerCase()] || TYPE_COLORS.claude;
+
+    const tgRes = await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/createForumTopic`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: TG_CHAT_ID, name: new_name, icon_color: iconColor }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const tgData = await tgRes.json();
+    if (!tgData.ok) {
+      return res.status(500).json({ error: 'Failed to create Telegram topic: ' + JSON.stringify(tgData) });
+    }
+    const thread_id = tgData.result.message_thread_id;
+
+    // Add new session entry (copy config from source)
+    const newEntry = {
+      ...src,
+      session: new_name,
+      thread_id,
+      path: `/root/${new_name}`,
+      host: null,
+    };
+    sessions.push(newEntry);
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2));
+
+    // Regenerate and start container
+    try {
+      execSync('python3 /relay/scripts/generate-compose.py', { timeout: 15000 });
+    } catch (_) {}
+
+    const containerName = `relay-session-${new_name}`;
+    try {
+      execSync(
+        `docker compose -f /relay/docker-compose.sessions.yml up -d ${containerName} 2>/dev/null || ` +
+        `docker run -d --name ${containerName} --restart always ` +
+        `-v /root:/root -v /var/run/docker.sock:/var/run/docker.sock -v relay-queue:/tmp ` +
+        `-e THREAD_ID=${thread_id} -e SESSION_NAME=${new_name} topix-relay:latest`,
+        { timeout: 30000 }
+      );
+    } catch (e) {
+      console.warn('[session-clone] Container start failed:', e.message);
+    }
+
+    await tgSendMessage(thread_id, `🎉 סשן ${new_name} נוצר (שכפול מ-${srcName})!`, null, null).catch(() => {});
+
+    res.json({ ok: true, thread_id, session: new_name });
+    console.log(`[session-clone] Cloned "${srcName}" → "${new_name}" thread ${thread_id}`);
+  } catch (e) {
+    console.error('[session-clone] Error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Feature 2b: /search command ───────────────────────────────────────────────
+// Add handler for /search <query> in webhook
+async function handleSearchCommand(threadId, args, replyTo) {
+  if (!args || !args.trim()) {
+    await tgSendMessage(threadId, '🔍 שימוש: <code>/search &lt;query&gt;</code>', replyTo, null);
+    return;
+  }
+  const query = args.trim().toLowerCase();
+  try {
+    const results = [];
+
+    // Search queue JSONL
+    const queueFile = path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`);
+    if (fs.existsSync(queueFile)) {
+      const lines = fs.readFileSync(queueFile, 'utf8').split('\n').filter(l => l.trim());
+      for (const line of lines) {
+        try {
+          const m = JSON.parse(line);
+          if (m.text && m.text.toLowerCase().includes(query)) {
+            results.push({ ts: m.ts, text: m.text, source: 'queue', user: m.user || '' });
+          }
+        } catch (_) {}
+      }
+    }
+
+    // Search knowledge base
+    const knowledgeFile = path.join(QUEUE_DIR, `relay-knowledge-${threadId}.jsonl`);
+    if (fs.existsSync(knowledgeFile)) {
+      const lines = fs.readFileSync(knowledgeFile, 'utf8').split('\n').filter(l => l.trim());
+      for (const line of lines) {
+        try {
+          const m = JSON.parse(line);
+          if (m.text && m.text.toLowerCase().includes(query)) {
+            results.push({ ts: m.ts, text: m.text, source: 'knowledge', user: m.user || '' });
+          }
+        } catch (_) {}
+      }
+    }
+
+    if (!results.length) {
+      await tgSendMessage(threadId, `🔍 לא נמצאו תוצאות עבור: <code>${query.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</code>`, replyTo, null);
+      return;
+    }
+
+    // Sort by most recent and take top 5
+    results.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    const top5 = results.slice(0, 5);
+
+    const lines = [`🔍 <b>תוצאות חיפוש</b> "${query.replace(/</g,'&lt;').replace(/>/g,'&gt;')}" (${results.length} נמצאו)`, ''];
+    for (const r of top5) {
+      const d = r.ts ? new Date(r.ts * 1000) : new Date();
+      const time = `${d.toLocaleDateString('he-IL')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+      const snippet = (r.text || '').slice(0, 100).replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const src = r.source === 'knowledge' ? '📌' : '💬';
+      lines.push(`${src} <code>${time}</code> <b>${(r.user || '').replace(/</g,'&lt;')}</b>: ${snippet}…`);
+    }
+    await tgSendMessage(threadId, lines.join('\n'), replyTo, null);
+    console.log(`[search] thread ${threadId}: "${query}" → ${results.length} results`);
+  } catch (e) {
+    await tgSendMessage(threadId, `❌ שגיאה בחיפוש: ${e.message}`, replyTo, null);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 // --- Proxy everything else to nomacode (web terminal) ---

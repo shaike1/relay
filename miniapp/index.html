@@ -663,6 +663,95 @@
       font-size: 15px;
       cursor: pointer;
     }
+
+    /* ── New Session Modal specific ── */
+    .modal-sheet.tall { max-height: 92vh; overflow-y: auto; }
+    .modal-input {
+      width: 100%;
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 15px;
+      outline: none;
+      font-family: inherit;
+      margin-bottom: 12px;
+    }
+    .modal-input:focus { border-color: var(--accent); }
+    .form-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; display: block; text-transform: uppercase; letter-spacing: 0.5px; }
+    .radio-group { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+    .radio-opt { display: none; }
+    .radio-lbl {
+      padding: 6px 14px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .radio-opt:checked + .radio-lbl { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    .chk-opt { display: none; }
+    .chk-lbl {
+      padding: 5px 12px;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .chk-opt:checked + .chk-lbl { border-color: var(--accent); color: var(--accent); }
+
+    /* ── Session card menu ── */
+    .session-menu-btn {
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 20px;
+      cursor: pointer;
+      padding: 4px 8px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    .ctx-menu {
+      display: none;
+      position: fixed;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 4px 0;
+      z-index: 500;
+      min-width: 140px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.45);
+    }
+    .ctx-menu.active { display: block; }
+    .ctx-menu-item {
+      padding: 11px 16px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .ctx-menu-item:active { background: var(--card); }
+    .ctx-menu-item.danger { color: var(--red); }
+
+    /* ── Activity Heatmap ── */
+    .heatmap-wrap { margin-top: 10px; }
+    .heatmap-labels { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; margin-bottom: 3px; }
+    .heatmap-day-label { font-size: 9px; color: var(--muted); text-align: center; }
+    .heatmap-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+    .heatmap-cell {
+      aspect-ratio: 1;
+      border-radius: 2px;
+      background: var(--border);
+    }
+    .heatmap-cell[data-level="1"] { background: #1565C0; opacity: 0.4; }
+    .heatmap-cell[data-level="2"] { background: #1976D2; opacity: 0.65; }
+    .heatmap-cell[data-level="3"] { background: #2196F3; opacity: 0.85; }
+    .heatmap-cell[data-level="4"] { background: #42A5F5; }
+    .heatmap-legend { display: flex; align-items: center; gap: 4px; margin-top: 6px; font-size: 10px; color: var(--muted); }
+    .heatmap-legend-cell { width: 12px; height: 12px; border-radius: 2px; }
   </style>
 </head>
 <body>
@@ -730,6 +819,10 @@
   <!-- FAB: compose new message -->
   <button class="fab" onclick="openNewMessageModal()" id="fab-compose" title="New message" aria-label="New message">＋</button>
 
+  <!-- FAB: new session (shown only on sessions tab) -->
+  <button class="fab" onclick="openNewSessionModal()" id="fab-new-session" title="New session" aria-label="New session"
+    style="bottom: 140px; background: var(--green); box-shadow: 0 4px 12px rgba(76,175,80,0.4);">🤖</button>
+
 </div><!-- /#app -->
 
 <!-- Session Detail Screen (full-screen overlay) -->
@@ -777,6 +870,68 @@
   </div>
 </div>
 
+<!-- New Session Modal -->
+<div class="modal-overlay" id="modal-new-session" onclick="newSessionOverlayClick(event)">
+  <div class="modal-sheet tall">
+    <div class="modal-handle"></div>
+    <div class="modal-title">🤖 New Session</div>
+
+    <label class="form-label">Session Name</label>
+    <input class="modal-input" id="ns-name" type="text" placeholder="my-project" maxlength="40"
+      pattern="[a-zA-Z0-9_-]+" oninput="this.value=this.value.replace(/[^a-zA-Z0-9_-]/g,'')">
+
+    <label class="form-label">Type</label>
+    <div class="radio-group">
+      <input class="radio-opt" type="radio" name="ns-type" id="ns-type-claude" value="claude" checked>
+      <label class="radio-lbl" for="ns-type-claude">🤖 Claude</label>
+      <input class="radio-opt" type="radio" name="ns-type" id="ns-type-codex" value="codex">
+      <label class="radio-lbl" for="ns-type-codex">📝 Codex</label>
+      <input class="radio-opt" type="radio" name="ns-type" id="ns-type-copilot" value="copilot">
+      <label class="radio-lbl" for="ns-type-copilot">🛠 Copilot</label>
+    </div>
+
+    <label class="form-label">Template</label>
+    <div class="radio-group">
+      <input class="radio-opt" type="radio" name="ns-template" id="ns-tpl-none" value="none" checked>
+      <label class="radio-lbl" for="ns-tpl-none">None</label>
+      <input class="radio-opt" type="radio" name="ns-template" id="ns-tpl-devops" value="devops">
+      <label class="radio-lbl" for="ns-tpl-devops">DevOps</label>
+      <input class="radio-opt" type="radio" name="ns-template" id="ns-tpl-fullstack" value="fullstack">
+      <label class="radio-lbl" for="ns-tpl-fullstack">Fullstack</label>
+    </div>
+
+    <label class="form-label">Skills</label>
+    <div class="checkbox-group">
+      <input class="chk-opt" type="checkbox" id="sk-python" value="python">
+      <label class="chk-lbl" for="sk-python">Python</label>
+      <input class="chk-opt" type="checkbox" id="sk-js" value="javascript">
+      <label class="chk-lbl" for="sk-js">JavaScript</label>
+      <input class="chk-opt" type="checkbox" id="sk-devops" value="devops">
+      <label class="chk-lbl" for="sk-devops">DevOps</label>
+      <input class="chk-opt" type="checkbox" id="sk-git" value="git">
+      <label class="chk-lbl" for="sk-git">Git</label>
+      <input class="chk-opt" type="checkbox" id="sk-docker" value="docker">
+      <label class="chk-lbl" for="sk-docker">Docker</label>
+      <input class="chk-opt" type="checkbox" id="sk-sql" value="sql">
+      <label class="chk-lbl" for="sk-sql">SQL</label>
+    </div>
+
+    <label class="form-label">Work Directory (optional)</label>
+    <input class="modal-input" id="ns-workdir" type="text" placeholder="/root/my-project">
+
+    <div class="modal-btn-row">
+      <button class="btn-secondary" onclick="closeNewSessionModal()">Cancel</button>
+      <button class="btn-primary" id="ns-submit-btn" onclick="submitNewSession()">Create Session</button>
+    </div>
+  </div>
+</div>
+
+<!-- Context menu for session cards -->
+<div class="ctx-menu" id="ctx-menu">
+  <div class="ctx-menu-item" onclick="ctxClone()">📋 Clone</div>
+  <div class="ctx-menu-item danger" onclick="ctxDelete()">🗑 Delete</div>
+</div>
+
 <script>
 // ── Telegram Web App init ────────────────────────────────────────────────────
 const tg = window.Telegram.WebApp;
@@ -802,6 +957,8 @@ function showTab(name) {
 
   const fab = document.getElementById('fab-compose');
   fab.style.display = name === 'sessions' ? 'flex' : 'none';
+  const fabNew = document.getElementById('fab-new-session');
+  fabNew.style.display = name === 'sessions' ? 'flex' : 'none';
 
   if (name === 'stats') loadStats();
   if (name === 'settings') renderSettings();
@@ -893,6 +1050,7 @@ function renderSessions() {
         <span class="session-time">${lastActive}</span>
         <span class="status-dot ${dotClass}"></span>
       </div>
+      <button class="session-menu-btn" onclick="event.stopPropagation(); openSessionMenu(event, '${escAttr(s.session)}')" aria-label="Options">⋮</button>
     </div>`;
   }).join('');
 
@@ -1091,6 +1249,121 @@ function closeModal() {
 function modalOverlayClick(e) {
   if (e.target === document.getElementById('modal-new')) closeModal();
 }
+
+// ── New Session Modal ─────────────────────────────────────────────────────────
+function openNewSessionModal() {
+  closeCtxMenu();
+  document.getElementById('modal-new-session').classList.add('active');
+  setTimeout(() => document.getElementById('ns-name').focus(), 150);
+}
+function closeNewSessionModal() {
+  document.getElementById('modal-new-session').classList.remove('active');
+  document.getElementById('ns-name').value = '';
+  document.getElementById('ns-workdir').value = '';
+  // Reset radios/checkboxes
+  document.getElementById('ns-type-claude').checked = true;
+  document.getElementById('ns-tpl-none').checked = true;
+  ['sk-python','sk-js','sk-devops','sk-git','sk-docker','sk-sql'].forEach(id => {
+    document.getElementById(id).checked = false;
+  });
+}
+function newSessionOverlayClick(e) {
+  if (e.target === document.getElementById('modal-new-session')) closeNewSessionModal();
+}
+
+async function submitNewSession() {
+  const name = document.getElementById('ns-name').value.trim();
+  if (!name) { tg.showAlert('Please enter a session name'); return; }
+
+  const type = document.querySelector('input[name="ns-type"]:checked')?.value || 'claude';
+  const template = document.querySelector('input[name="ns-template"]:checked')?.value || 'none';
+  const workdir = document.getElementById('ns-workdir').value.trim() || null;
+  const skills = ['sk-python','sk-js','sk-devops','sk-git','sk-docker','sk-sql']
+    .filter(id => document.getElementById(id).checked)
+    .map(id => document.getElementById(id).value);
+
+  const btn = document.getElementById('ns-submit-btn');
+  btn.disabled = true;
+  btn.textContent = 'Creating…';
+
+  try {
+    const r = await fetch('/miniapp/sessions/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ init_data: INIT_DATA, name, type, skills, template, workdir }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
+    closeNewSessionModal();
+    tg.showAlert('🎉 Session "' + name + '" created!');
+    await loadSessions();
+  } catch (e) {
+    tg.showAlert('Failed: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Create Session';
+  }
+}
+
+// ── Session Card Context Menu ─────────────────────────────────────────────────
+let _ctxSession = null;
+
+function openSessionMenu(event, sessionName) {
+  _ctxSession = sessionName;
+  const menu = document.getElementById('ctx-menu');
+  const rect = event.target.getBoundingClientRect();
+  menu.style.top = (rect.bottom + 4) + 'px';
+  menu.style.right = (window.innerWidth - rect.right) + 'px';
+  menu.classList.add('active');
+  // Close on outside click
+  setTimeout(() => document.addEventListener('click', closeCtxMenu, { once: true }), 50);
+}
+
+function closeCtxMenu() {
+  document.getElementById('ctx-menu').classList.remove('active');
+  _ctxSession = null;
+}
+
+async function ctxClone() {
+  closeCtxMenu();
+  if (!_ctxSession) return;
+  const src = _ctxSession;
+  // Use showPrompt-like approach via alert + prompt fallback
+  const newName = prompt(`Clone "${src}" — enter new session name:`, src + '-clone');
+  if (!newName || !/^[a-zA-Z0-9_-]+$/.test(newName)) {
+    if (newName !== null) tg.showAlert('Invalid name — use letters, numbers, _ or -');
+    return;
+  }
+  try {
+    const r = await fetch(`/miniapp/sessions/${encodeURIComponent(src)}/clone`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ init_data: INIT_DATA, new_name: newName }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
+    tg.showAlert('✅ Cloned to "' + newName + '"');
+    await loadSessions();
+  } catch (e) {
+    tg.showAlert('Clone failed: ' + e.message);
+  }
+}
+
+async function ctxDelete() {
+  closeCtxMenu();
+  if (!_ctxSession) return;
+  const name = _ctxSession;
+  if (!confirm(`Delete session "${name}"? This will stop and remove the container.`)) return;
+  try {
+    const r = await fetch(`/miniapp/sessions/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
+    tg.showAlert('🗑 Session "' + name + '" deleted');
+    await loadSessions();
+  } catch (e) {
+    tg.showAlert('Delete failed: ' + e.message);
+  }
+}
 async function sendModalMessage() {
   const sel = document.getElementById('modal-session-select');
   const text = document.getElementById('modal-text').value.trim();
@@ -1146,9 +1419,54 @@ async function loadStats() {
       <div class="stat-row"><span>Input tokens</span><span class="stat-val">${totalIn.toLocaleString()}</span></div>
       <div class="stat-row"><span>Output tokens</span><span class="stat-val">${totalOut.toLocaleString()}</span></div>
       <div class="stat-row"><span>Est. cost</span><span class="stat-val">$${totalCost.toFixed(4)}</span></div>
+      <div class="heatmap-wrap">${buildHeatmap(d.daily)}</div>
     </div>`;
   }
   el.innerHTML = html || `<div class="empty-state"><span class="empty-icon">📊</span><span class="empty-text">No token data available</span></div>`;
+}
+
+// ── Activity Heatmap ──────────────────────────────────────────────────────────
+function buildHeatmap(daily) {
+  // Build a map of date → message count (using total tokens as proxy for activity)
+  const byDate = {};
+  for (const row of daily) {
+    if (row.date) byDate[row.date] = (row.input_tokens || 0) + (row.output_tokens || 0);
+  }
+
+  // Build a 7-column grid covering the last N weeks (ending today)
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  // Go back to the most recent Sunday
+  const startDate = new Date(today);
+  startDate.setDate(today.getDate() - today.getDay() - 7 * 11); // 12 weeks
+
+  const cells = [];
+  const d = new Date(startDate);
+  while (d <= today) {
+    const key = d.toISOString().slice(0, 10);
+    const val = byDate[key] || 0;
+    let level = 0;
+    if (val > 0 && val <= 5000)   level = 1;
+    else if (val <= 20000)        level = 2;
+    else if (val <= 60000)        level = 3;
+    else if (val > 60000)         level = 4;
+    cells.push(`<div class="heatmap-cell" data-level="${level}" title="${key}: ${val.toLocaleString()} tokens"></div>`);
+    d.setDate(d.getDate() + 1);
+  }
+
+  const dayLabels = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+  const labelsHtml = dayLabels.map(l => `<div class="heatmap-day-label">${l}</div>`).join('');
+  const legendHtml = `
+    <div class="heatmap-legend">
+      <span>Less</span>
+      <div class="heatmap-legend-cell" style="background:var(--border)"></div>
+      <div class="heatmap-legend-cell" data-level="1" style="background:#1565C0;opacity:0.4"></div>
+      <div class="heatmap-legend-cell" data-level="2" style="background:#1976D2;opacity:0.65"></div>
+      <div class="heatmap-legend-cell" data-level="3" style="background:#2196F3;opacity:0.85"></div>
+      <div class="heatmap-legend-cell" data-level="4" style="background:#42A5F5"></div>
+      <span>More</span>
+    </div>`;
+  return `<div class="heatmap-labels">${labelsHtml}</div><div class="heatmap-grid">${cells.join('')}</div>${legendHtml}`;
 }
 
 // ── Settings ─────────────────────────────────────────────────────────────────
