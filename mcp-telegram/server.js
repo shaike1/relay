@@ -1,32 +1,51 @@
 #!/usr/bin/env bun
 // @bun
+import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+function __accessProp(key) {
+  return this[key];
+}
+var __toESMCache_node;
+var __toESMCache_esm;
 var __toESM = (mod, isNodeMode, target) => {
+  var canCache = mod != null && typeof mod === "object";
+  if (canCache) {
+    var cache = isNodeMode ? __toESMCache_node ??= new WeakMap : __toESMCache_esm ??= new WeakMap;
+    var cached = cache.get(mod);
+    if (cached)
+      return cached;
+  }
   target = mod != null ? __create(__getProtoOf(mod)) : {};
   const to = isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
   for (let key of __getOwnPropNames(mod))
     if (!__hasOwnProp.call(to, key))
       __defProp(to, key, {
-        get: () => mod[key],
+        get: __accessProp.bind(mod, key),
         enumerable: true
       });
+  if (canCache)
+    cache.set(mod, to);
   return to;
 };
 var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+var __returnValue = (v) => v;
+function __exportSetter(name, newValue) {
+  this[name] = __returnValue.bind(null, newValue);
+}
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, {
       get: all[name],
       enumerable: true,
       configurable: true,
-      set: (newValue) => all[name] = () => newValue
+      set: __exportSetter.bind(all, name)
     });
 };
-var __require = import.meta.require;
+var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // node_modules/ajv/dist/compile/codegen/code.js
 var require_code = __commonJS((exports) => {
@@ -6287,7 +6306,7 @@ var require_formats = __commonJS((exports) => {
   }
   var TIME = /^(\d\d):(\d\d):(\d\d(?:\.\d+)?)(z|([+-])(\d\d)(?::?(\d\d))?)?$/i;
   function getTime(strictTimeZone) {
-    return function time(str) {
+    return function time3(str) {
       const matches = TIME.exec(str);
       if (!matches)
         return false;
@@ -13549,7 +13568,7 @@ class Server extends Protocol {
 }
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
-import process3 from "process";
+import process3 from "node:process";
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
 class ReadBuffer {
@@ -13638,6 +13657,802 @@ class StdioServerTransport {
     });
   }
 }
+
+// node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
+var RELATED_TASK_META_KEY2 = "io.modelcontextprotocol/related-task";
+var JSONRPC_VERSION2 = "2.0";
+var AssertObjectSchema2 = custom((v) => v !== null && (typeof v === "object" || typeof v === "function"));
+var ProgressTokenSchema2 = union([string2(), number2().int()]);
+var CursorSchema2 = string2();
+var TaskCreationParamsSchema2 = looseObject({
+  ttl: union([number2(), _null3()]).optional(),
+  pollInterval: number2().optional()
+});
+var TaskMetadataSchema2 = object2({
+  ttl: number2().optional()
+});
+var RelatedTaskMetadataSchema2 = object2({
+  taskId: string2()
+});
+var RequestMetaSchema2 = looseObject({
+  progressToken: ProgressTokenSchema2.optional(),
+  [RELATED_TASK_META_KEY2]: RelatedTaskMetadataSchema2.optional()
+});
+var BaseRequestParamsSchema2 = object2({
+  _meta: RequestMetaSchema2.optional()
+});
+var TaskAugmentedRequestParamsSchema2 = BaseRequestParamsSchema2.extend({
+  task: TaskMetadataSchema2.optional()
+});
+var RequestSchema2 = object2({
+  method: string2(),
+  params: BaseRequestParamsSchema2.loose().optional()
+});
+var NotificationsParamsSchema2 = object2({
+  _meta: RequestMetaSchema2.optional()
+});
+var NotificationSchema2 = object2({
+  method: string2(),
+  params: NotificationsParamsSchema2.loose().optional()
+});
+var ResultSchema2 = looseObject({
+  _meta: RequestMetaSchema2.optional()
+});
+var RequestIdSchema2 = union([string2(), number2().int()]);
+var JSONRPCRequestSchema2 = object2({
+  jsonrpc: literal(JSONRPC_VERSION2),
+  id: RequestIdSchema2,
+  ...RequestSchema2.shape
+}).strict();
+var JSONRPCNotificationSchema2 = object2({
+  jsonrpc: literal(JSONRPC_VERSION2),
+  ...NotificationSchema2.shape
+}).strict();
+var JSONRPCResultResponseSchema2 = object2({
+  jsonrpc: literal(JSONRPC_VERSION2),
+  id: RequestIdSchema2,
+  result: ResultSchema2
+}).strict();
+var ErrorCode2;
+(function(ErrorCode3) {
+  ErrorCode3[ErrorCode3["ConnectionClosed"] = -32000] = "ConnectionClosed";
+  ErrorCode3[ErrorCode3["RequestTimeout"] = -32001] = "RequestTimeout";
+  ErrorCode3[ErrorCode3["ParseError"] = -32700] = "ParseError";
+  ErrorCode3[ErrorCode3["InvalidRequest"] = -32600] = "InvalidRequest";
+  ErrorCode3[ErrorCode3["MethodNotFound"] = -32601] = "MethodNotFound";
+  ErrorCode3[ErrorCode3["InvalidParams"] = -32602] = "InvalidParams";
+  ErrorCode3[ErrorCode3["InternalError"] = -32603] = "InternalError";
+  ErrorCode3[ErrorCode3["UrlElicitationRequired"] = -32042] = "UrlElicitationRequired";
+})(ErrorCode2 || (ErrorCode2 = {}));
+var JSONRPCErrorResponseSchema2 = object2({
+  jsonrpc: literal(JSONRPC_VERSION2),
+  id: RequestIdSchema2.optional(),
+  error: object2({
+    code: number2().int(),
+    message: string2(),
+    data: unknown().optional()
+  })
+}).strict();
+var JSONRPCMessageSchema2 = union([
+  JSONRPCRequestSchema2,
+  JSONRPCNotificationSchema2,
+  JSONRPCResultResponseSchema2,
+  JSONRPCErrorResponseSchema2
+]);
+var JSONRPCResponseSchema2 = union([JSONRPCResultResponseSchema2, JSONRPCErrorResponseSchema2]);
+var EmptyResultSchema2 = ResultSchema2.strict();
+var CancelledNotificationParamsSchema2 = NotificationsParamsSchema2.extend({
+  requestId: RequestIdSchema2.optional(),
+  reason: string2().optional()
+});
+var CancelledNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/cancelled"),
+  params: CancelledNotificationParamsSchema2
+});
+var IconSchema2 = object2({
+  src: string2(),
+  mimeType: string2().optional(),
+  sizes: array(string2()).optional(),
+  theme: _enum(["light", "dark"]).optional()
+});
+var IconsSchema2 = object2({
+  icons: array(IconSchema2).optional()
+});
+var BaseMetadataSchema2 = object2({
+  name: string2(),
+  title: string2().optional()
+});
+var ImplementationSchema2 = BaseMetadataSchema2.extend({
+  ...BaseMetadataSchema2.shape,
+  ...IconsSchema2.shape,
+  version: string2(),
+  websiteUrl: string2().optional(),
+  description: string2().optional()
+});
+var FormElicitationCapabilitySchema2 = intersection(object2({
+  applyDefaults: boolean2().optional()
+}), record(string2(), unknown()));
+var ElicitationCapabilitySchema2 = preprocess((value) => {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    if (Object.keys(value).length === 0) {
+      return { form: {} };
+    }
+  }
+  return value;
+}, intersection(object2({
+  form: FormElicitationCapabilitySchema2.optional(),
+  url: AssertObjectSchema2.optional()
+}), record(string2(), unknown()).optional()));
+var ClientTasksCapabilitySchema2 = looseObject({
+  list: AssertObjectSchema2.optional(),
+  cancel: AssertObjectSchema2.optional(),
+  requests: looseObject({
+    sampling: looseObject({
+      createMessage: AssertObjectSchema2.optional()
+    }).optional(),
+    elicitation: looseObject({
+      create: AssertObjectSchema2.optional()
+    }).optional()
+  }).optional()
+});
+var ServerTasksCapabilitySchema2 = looseObject({
+  list: AssertObjectSchema2.optional(),
+  cancel: AssertObjectSchema2.optional(),
+  requests: looseObject({
+    tools: looseObject({
+      call: AssertObjectSchema2.optional()
+    }).optional()
+  }).optional()
+});
+var ClientCapabilitiesSchema2 = object2({
+  experimental: record(string2(), AssertObjectSchema2).optional(),
+  sampling: object2({
+    context: AssertObjectSchema2.optional(),
+    tools: AssertObjectSchema2.optional()
+  }).optional(),
+  elicitation: ElicitationCapabilitySchema2.optional(),
+  roots: object2({
+    listChanged: boolean2().optional()
+  }).optional(),
+  tasks: ClientTasksCapabilitySchema2.optional()
+});
+var InitializeRequestParamsSchema2 = BaseRequestParamsSchema2.extend({
+  protocolVersion: string2(),
+  capabilities: ClientCapabilitiesSchema2,
+  clientInfo: ImplementationSchema2
+});
+var InitializeRequestSchema2 = RequestSchema2.extend({
+  method: literal("initialize"),
+  params: InitializeRequestParamsSchema2
+});
+var ServerCapabilitiesSchema2 = object2({
+  experimental: record(string2(), AssertObjectSchema2).optional(),
+  logging: AssertObjectSchema2.optional(),
+  completions: AssertObjectSchema2.optional(),
+  prompts: object2({
+    listChanged: boolean2().optional()
+  }).optional(),
+  resources: object2({
+    subscribe: boolean2().optional(),
+    listChanged: boolean2().optional()
+  }).optional(),
+  tools: object2({
+    listChanged: boolean2().optional()
+  }).optional(),
+  tasks: ServerTasksCapabilitySchema2.optional()
+});
+var InitializeResultSchema2 = ResultSchema2.extend({
+  protocolVersion: string2(),
+  capabilities: ServerCapabilitiesSchema2,
+  serverInfo: ImplementationSchema2,
+  instructions: string2().optional()
+});
+var InitializedNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/initialized"),
+  params: NotificationsParamsSchema2.optional()
+});
+var PingRequestSchema2 = RequestSchema2.extend({
+  method: literal("ping"),
+  params: BaseRequestParamsSchema2.optional()
+});
+var ProgressSchema2 = object2({
+  progress: number2(),
+  total: optional(number2()),
+  message: optional(string2())
+});
+var ProgressNotificationParamsSchema2 = object2({
+  ...NotificationsParamsSchema2.shape,
+  ...ProgressSchema2.shape,
+  progressToken: ProgressTokenSchema2
+});
+var ProgressNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/progress"),
+  params: ProgressNotificationParamsSchema2
+});
+var PaginatedRequestParamsSchema2 = BaseRequestParamsSchema2.extend({
+  cursor: CursorSchema2.optional()
+});
+var PaginatedRequestSchema2 = RequestSchema2.extend({
+  params: PaginatedRequestParamsSchema2.optional()
+});
+var PaginatedResultSchema2 = ResultSchema2.extend({
+  nextCursor: CursorSchema2.optional()
+});
+var TaskStatusSchema2 = _enum(["working", "input_required", "completed", "failed", "cancelled"]);
+var TaskSchema2 = object2({
+  taskId: string2(),
+  status: TaskStatusSchema2,
+  ttl: union([number2(), _null3()]),
+  createdAt: string2(),
+  lastUpdatedAt: string2(),
+  pollInterval: optional(number2()),
+  statusMessage: optional(string2())
+});
+var CreateTaskResultSchema2 = ResultSchema2.extend({
+  task: TaskSchema2
+});
+var TaskStatusNotificationParamsSchema2 = NotificationsParamsSchema2.merge(TaskSchema2);
+var TaskStatusNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/tasks/status"),
+  params: TaskStatusNotificationParamsSchema2
+});
+var GetTaskRequestSchema2 = RequestSchema2.extend({
+  method: literal("tasks/get"),
+  params: BaseRequestParamsSchema2.extend({
+    taskId: string2()
+  })
+});
+var GetTaskResultSchema2 = ResultSchema2.merge(TaskSchema2);
+var GetTaskPayloadRequestSchema2 = RequestSchema2.extend({
+  method: literal("tasks/result"),
+  params: BaseRequestParamsSchema2.extend({
+    taskId: string2()
+  })
+});
+var GetTaskPayloadResultSchema2 = ResultSchema2.loose();
+var ListTasksRequestSchema2 = PaginatedRequestSchema2.extend({
+  method: literal("tasks/list")
+});
+var ListTasksResultSchema2 = PaginatedResultSchema2.extend({
+  tasks: array(TaskSchema2)
+});
+var CancelTaskRequestSchema2 = RequestSchema2.extend({
+  method: literal("tasks/cancel"),
+  params: BaseRequestParamsSchema2.extend({
+    taskId: string2()
+  })
+});
+var CancelTaskResultSchema2 = ResultSchema2.merge(TaskSchema2);
+var ResourceContentsSchema2 = object2({
+  uri: string2(),
+  mimeType: optional(string2()),
+  _meta: record(string2(), unknown()).optional()
+});
+var TextResourceContentsSchema2 = ResourceContentsSchema2.extend({
+  text: string2()
+});
+var Base64Schema2 = string2().refine((val) => {
+  try {
+    atob(val);
+    return true;
+  } catch {
+    return false;
+  }
+}, { message: "Invalid Base64 string" });
+var BlobResourceContentsSchema2 = ResourceContentsSchema2.extend({
+  blob: Base64Schema2
+});
+var RoleSchema2 = _enum(["user", "assistant"]);
+var AnnotationsSchema2 = object2({
+  audience: array(RoleSchema2).optional(),
+  priority: number2().min(0).max(1).optional(),
+  lastModified: exports_iso.datetime({ offset: true }).optional()
+});
+var ResourceSchema2 = object2({
+  ...BaseMetadataSchema2.shape,
+  ...IconsSchema2.shape,
+  uri: string2(),
+  description: optional(string2()),
+  mimeType: optional(string2()),
+  annotations: AnnotationsSchema2.optional(),
+  _meta: optional(looseObject({}))
+});
+var ResourceTemplateSchema2 = object2({
+  ...BaseMetadataSchema2.shape,
+  ...IconsSchema2.shape,
+  uriTemplate: string2(),
+  description: optional(string2()),
+  mimeType: optional(string2()),
+  annotations: AnnotationsSchema2.optional(),
+  _meta: optional(looseObject({}))
+});
+var ListResourcesRequestSchema2 = PaginatedRequestSchema2.extend({
+  method: literal("resources/list")
+});
+var ListResourcesResultSchema2 = PaginatedResultSchema2.extend({
+  resources: array(ResourceSchema2)
+});
+var ListResourceTemplatesRequestSchema2 = PaginatedRequestSchema2.extend({
+  method: literal("resources/templates/list")
+});
+var ListResourceTemplatesResultSchema2 = PaginatedResultSchema2.extend({
+  resourceTemplates: array(ResourceTemplateSchema2)
+});
+var ResourceRequestParamsSchema2 = BaseRequestParamsSchema2.extend({
+  uri: string2()
+});
+var ReadResourceRequestParamsSchema2 = ResourceRequestParamsSchema2;
+var ReadResourceRequestSchema2 = RequestSchema2.extend({
+  method: literal("resources/read"),
+  params: ReadResourceRequestParamsSchema2
+});
+var ReadResourceResultSchema2 = ResultSchema2.extend({
+  contents: array(union([TextResourceContentsSchema2, BlobResourceContentsSchema2]))
+});
+var ResourceListChangedNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/resources/list_changed"),
+  params: NotificationsParamsSchema2.optional()
+});
+var SubscribeRequestParamsSchema2 = ResourceRequestParamsSchema2;
+var SubscribeRequestSchema2 = RequestSchema2.extend({
+  method: literal("resources/subscribe"),
+  params: SubscribeRequestParamsSchema2
+});
+var UnsubscribeRequestParamsSchema2 = ResourceRequestParamsSchema2;
+var UnsubscribeRequestSchema2 = RequestSchema2.extend({
+  method: literal("resources/unsubscribe"),
+  params: UnsubscribeRequestParamsSchema2
+});
+var ResourceUpdatedNotificationParamsSchema2 = NotificationsParamsSchema2.extend({
+  uri: string2()
+});
+var ResourceUpdatedNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/resources/updated"),
+  params: ResourceUpdatedNotificationParamsSchema2
+});
+var PromptArgumentSchema2 = object2({
+  name: string2(),
+  description: optional(string2()),
+  required: optional(boolean2())
+});
+var PromptSchema2 = object2({
+  ...BaseMetadataSchema2.shape,
+  ...IconsSchema2.shape,
+  description: optional(string2()),
+  arguments: optional(array(PromptArgumentSchema2)),
+  _meta: optional(looseObject({}))
+});
+var ListPromptsRequestSchema2 = PaginatedRequestSchema2.extend({
+  method: literal("prompts/list")
+});
+var ListPromptsResultSchema2 = PaginatedResultSchema2.extend({
+  prompts: array(PromptSchema2)
+});
+var GetPromptRequestParamsSchema2 = BaseRequestParamsSchema2.extend({
+  name: string2(),
+  arguments: record(string2(), string2()).optional()
+});
+var GetPromptRequestSchema2 = RequestSchema2.extend({
+  method: literal("prompts/get"),
+  params: GetPromptRequestParamsSchema2
+});
+var TextContentSchema2 = object2({
+  type: literal("text"),
+  text: string2(),
+  annotations: AnnotationsSchema2.optional(),
+  _meta: record(string2(), unknown()).optional()
+});
+var ImageContentSchema2 = object2({
+  type: literal("image"),
+  data: Base64Schema2,
+  mimeType: string2(),
+  annotations: AnnotationsSchema2.optional(),
+  _meta: record(string2(), unknown()).optional()
+});
+var AudioContentSchema2 = object2({
+  type: literal("audio"),
+  data: Base64Schema2,
+  mimeType: string2(),
+  annotations: AnnotationsSchema2.optional(),
+  _meta: record(string2(), unknown()).optional()
+});
+var ToolUseContentSchema2 = object2({
+  type: literal("tool_use"),
+  name: string2(),
+  id: string2(),
+  input: record(string2(), unknown()),
+  _meta: record(string2(), unknown()).optional()
+});
+var EmbeddedResourceSchema2 = object2({
+  type: literal("resource"),
+  resource: union([TextResourceContentsSchema2, BlobResourceContentsSchema2]),
+  annotations: AnnotationsSchema2.optional(),
+  _meta: record(string2(), unknown()).optional()
+});
+var ResourceLinkSchema2 = ResourceSchema2.extend({
+  type: literal("resource_link")
+});
+var ContentBlockSchema2 = union([
+  TextContentSchema2,
+  ImageContentSchema2,
+  AudioContentSchema2,
+  ResourceLinkSchema2,
+  EmbeddedResourceSchema2
+]);
+var PromptMessageSchema2 = object2({
+  role: RoleSchema2,
+  content: ContentBlockSchema2
+});
+var GetPromptResultSchema2 = ResultSchema2.extend({
+  description: string2().optional(),
+  messages: array(PromptMessageSchema2)
+});
+var PromptListChangedNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/prompts/list_changed"),
+  params: NotificationsParamsSchema2.optional()
+});
+var ToolAnnotationsSchema2 = object2({
+  title: string2().optional(),
+  readOnlyHint: boolean2().optional(),
+  destructiveHint: boolean2().optional(),
+  idempotentHint: boolean2().optional(),
+  openWorldHint: boolean2().optional()
+});
+var ToolExecutionSchema2 = object2({
+  taskSupport: _enum(["required", "optional", "forbidden"]).optional()
+});
+var ToolSchema2 = object2({
+  ...BaseMetadataSchema2.shape,
+  ...IconsSchema2.shape,
+  description: string2().optional(),
+  inputSchema: object2({
+    type: literal("object"),
+    properties: record(string2(), AssertObjectSchema2).optional(),
+    required: array(string2()).optional()
+  }).catchall(unknown()),
+  outputSchema: object2({
+    type: literal("object"),
+    properties: record(string2(), AssertObjectSchema2).optional(),
+    required: array(string2()).optional()
+  }).catchall(unknown()).optional(),
+  annotations: ToolAnnotationsSchema2.optional(),
+  execution: ToolExecutionSchema2.optional(),
+  _meta: record(string2(), unknown()).optional()
+});
+var ListToolsRequestSchema2 = PaginatedRequestSchema2.extend({
+  method: literal("tools/list")
+});
+var ListToolsResultSchema2 = PaginatedResultSchema2.extend({
+  tools: array(ToolSchema2)
+});
+var CallToolResultSchema2 = ResultSchema2.extend({
+  content: array(ContentBlockSchema2).default([]),
+  structuredContent: record(string2(), unknown()).optional(),
+  isError: boolean2().optional()
+});
+var CompatibilityCallToolResultSchema2 = CallToolResultSchema2.or(ResultSchema2.extend({
+  toolResult: unknown()
+}));
+var CallToolRequestParamsSchema2 = TaskAugmentedRequestParamsSchema2.extend({
+  name: string2(),
+  arguments: record(string2(), unknown()).optional()
+});
+var CallToolRequestSchema2 = RequestSchema2.extend({
+  method: literal("tools/call"),
+  params: CallToolRequestParamsSchema2
+});
+var ToolListChangedNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/tools/list_changed"),
+  params: NotificationsParamsSchema2.optional()
+});
+var ListChangedOptionsBaseSchema2 = object2({
+  autoRefresh: boolean2().default(true),
+  debounceMs: number2().int().nonnegative().default(300)
+});
+var LoggingLevelSchema2 = _enum(["debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"]);
+var SetLevelRequestParamsSchema2 = BaseRequestParamsSchema2.extend({
+  level: LoggingLevelSchema2
+});
+var SetLevelRequestSchema2 = RequestSchema2.extend({
+  method: literal("logging/setLevel"),
+  params: SetLevelRequestParamsSchema2
+});
+var LoggingMessageNotificationParamsSchema2 = NotificationsParamsSchema2.extend({
+  level: LoggingLevelSchema2,
+  logger: string2().optional(),
+  data: unknown()
+});
+var LoggingMessageNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/message"),
+  params: LoggingMessageNotificationParamsSchema2
+});
+var ModelHintSchema2 = object2({
+  name: string2().optional()
+});
+var ModelPreferencesSchema2 = object2({
+  hints: array(ModelHintSchema2).optional(),
+  costPriority: number2().min(0).max(1).optional(),
+  speedPriority: number2().min(0).max(1).optional(),
+  intelligencePriority: number2().min(0).max(1).optional()
+});
+var ToolChoiceSchema2 = object2({
+  mode: _enum(["auto", "required", "none"]).optional()
+});
+var ToolResultContentSchema2 = object2({
+  type: literal("tool_result"),
+  toolUseId: string2().describe("The unique identifier for the corresponding tool call."),
+  content: array(ContentBlockSchema2).default([]),
+  structuredContent: object2({}).loose().optional(),
+  isError: boolean2().optional(),
+  _meta: record(string2(), unknown()).optional()
+});
+var SamplingContentSchema2 = discriminatedUnion("type", [TextContentSchema2, ImageContentSchema2, AudioContentSchema2]);
+var SamplingMessageContentBlockSchema2 = discriminatedUnion("type", [
+  TextContentSchema2,
+  ImageContentSchema2,
+  AudioContentSchema2,
+  ToolUseContentSchema2,
+  ToolResultContentSchema2
+]);
+var SamplingMessageSchema2 = object2({
+  role: RoleSchema2,
+  content: union([SamplingMessageContentBlockSchema2, array(SamplingMessageContentBlockSchema2)]),
+  _meta: record(string2(), unknown()).optional()
+});
+var CreateMessageRequestParamsSchema2 = TaskAugmentedRequestParamsSchema2.extend({
+  messages: array(SamplingMessageSchema2),
+  modelPreferences: ModelPreferencesSchema2.optional(),
+  systemPrompt: string2().optional(),
+  includeContext: _enum(["none", "thisServer", "allServers"]).optional(),
+  temperature: number2().optional(),
+  maxTokens: number2().int(),
+  stopSequences: array(string2()).optional(),
+  metadata: AssertObjectSchema2.optional(),
+  tools: array(ToolSchema2).optional(),
+  toolChoice: ToolChoiceSchema2.optional()
+});
+var CreateMessageRequestSchema2 = RequestSchema2.extend({
+  method: literal("sampling/createMessage"),
+  params: CreateMessageRequestParamsSchema2
+});
+var CreateMessageResultSchema2 = ResultSchema2.extend({
+  model: string2(),
+  stopReason: optional(_enum(["endTurn", "stopSequence", "maxTokens"]).or(string2())),
+  role: RoleSchema2,
+  content: SamplingContentSchema2
+});
+var CreateMessageResultWithToolsSchema2 = ResultSchema2.extend({
+  model: string2(),
+  stopReason: optional(_enum(["endTurn", "stopSequence", "maxTokens", "toolUse"]).or(string2())),
+  role: RoleSchema2,
+  content: union([SamplingMessageContentBlockSchema2, array(SamplingMessageContentBlockSchema2)])
+});
+var BooleanSchemaSchema2 = object2({
+  type: literal("boolean"),
+  title: string2().optional(),
+  description: string2().optional(),
+  default: boolean2().optional()
+});
+var StringSchemaSchema2 = object2({
+  type: literal("string"),
+  title: string2().optional(),
+  description: string2().optional(),
+  minLength: number2().optional(),
+  maxLength: number2().optional(),
+  format: _enum(["email", "uri", "date", "date-time"]).optional(),
+  default: string2().optional()
+});
+var NumberSchemaSchema2 = object2({
+  type: _enum(["number", "integer"]),
+  title: string2().optional(),
+  description: string2().optional(),
+  minimum: number2().optional(),
+  maximum: number2().optional(),
+  default: number2().optional()
+});
+var UntitledSingleSelectEnumSchemaSchema2 = object2({
+  type: literal("string"),
+  title: string2().optional(),
+  description: string2().optional(),
+  enum: array(string2()),
+  default: string2().optional()
+});
+var TitledSingleSelectEnumSchemaSchema2 = object2({
+  type: literal("string"),
+  title: string2().optional(),
+  description: string2().optional(),
+  oneOf: array(object2({
+    const: string2(),
+    title: string2()
+  })),
+  default: string2().optional()
+});
+var LegacyTitledEnumSchemaSchema2 = object2({
+  type: literal("string"),
+  title: string2().optional(),
+  description: string2().optional(),
+  enum: array(string2()),
+  enumNames: array(string2()).optional(),
+  default: string2().optional()
+});
+var SingleSelectEnumSchemaSchema2 = union([UntitledSingleSelectEnumSchemaSchema2, TitledSingleSelectEnumSchemaSchema2]);
+var UntitledMultiSelectEnumSchemaSchema2 = object2({
+  type: literal("array"),
+  title: string2().optional(),
+  description: string2().optional(),
+  minItems: number2().optional(),
+  maxItems: number2().optional(),
+  items: object2({
+    type: literal("string"),
+    enum: array(string2())
+  }),
+  default: array(string2()).optional()
+});
+var TitledMultiSelectEnumSchemaSchema2 = object2({
+  type: literal("array"),
+  title: string2().optional(),
+  description: string2().optional(),
+  minItems: number2().optional(),
+  maxItems: number2().optional(),
+  items: object2({
+    anyOf: array(object2({
+      const: string2(),
+      title: string2()
+    }))
+  }),
+  default: array(string2()).optional()
+});
+var MultiSelectEnumSchemaSchema2 = union([UntitledMultiSelectEnumSchemaSchema2, TitledMultiSelectEnumSchemaSchema2]);
+var EnumSchemaSchema2 = union([LegacyTitledEnumSchemaSchema2, SingleSelectEnumSchemaSchema2, MultiSelectEnumSchemaSchema2]);
+var PrimitiveSchemaDefinitionSchema2 = union([EnumSchemaSchema2, BooleanSchemaSchema2, StringSchemaSchema2, NumberSchemaSchema2]);
+var ElicitRequestFormParamsSchema2 = TaskAugmentedRequestParamsSchema2.extend({
+  mode: literal("form").optional(),
+  message: string2(),
+  requestedSchema: object2({
+    type: literal("object"),
+    properties: record(string2(), PrimitiveSchemaDefinitionSchema2),
+    required: array(string2()).optional()
+  })
+});
+var ElicitRequestURLParamsSchema2 = TaskAugmentedRequestParamsSchema2.extend({
+  mode: literal("url"),
+  message: string2(),
+  elicitationId: string2(),
+  url: string2().url()
+});
+var ElicitRequestParamsSchema2 = union([ElicitRequestFormParamsSchema2, ElicitRequestURLParamsSchema2]);
+var ElicitRequestSchema2 = RequestSchema2.extend({
+  method: literal("elicitation/create"),
+  params: ElicitRequestParamsSchema2
+});
+var ElicitationCompleteNotificationParamsSchema2 = NotificationsParamsSchema2.extend({
+  elicitationId: string2()
+});
+var ElicitationCompleteNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/elicitation/complete"),
+  params: ElicitationCompleteNotificationParamsSchema2
+});
+var ElicitResultSchema2 = ResultSchema2.extend({
+  action: _enum(["accept", "decline", "cancel"]),
+  content: preprocess((val) => val === null ? undefined : val, record(string2(), union([string2(), number2(), boolean2(), array(string2())])).optional())
+});
+var ResourceTemplateReferenceSchema2 = object2({
+  type: literal("ref/resource"),
+  uri: string2()
+});
+var PromptReferenceSchema2 = object2({
+  type: literal("ref/prompt"),
+  name: string2()
+});
+var CompleteRequestParamsSchema2 = BaseRequestParamsSchema2.extend({
+  ref: union([PromptReferenceSchema2, ResourceTemplateReferenceSchema2]),
+  argument: object2({
+    name: string2(),
+    value: string2()
+  }),
+  context: object2({
+    arguments: record(string2(), string2()).optional()
+  }).optional()
+});
+var CompleteRequestSchema2 = RequestSchema2.extend({
+  method: literal("completion/complete"),
+  params: CompleteRequestParamsSchema2
+});
+var CompleteResultSchema2 = ResultSchema2.extend({
+  completion: looseObject({
+    values: array(string2()).max(100),
+    total: optional(number2().int()),
+    hasMore: optional(boolean2())
+  })
+});
+var RootSchema2 = object2({
+  uri: string2().startsWith("file://"),
+  name: string2().optional(),
+  _meta: record(string2(), unknown()).optional()
+});
+var ListRootsRequestSchema2 = RequestSchema2.extend({
+  method: literal("roots/list"),
+  params: BaseRequestParamsSchema2.optional()
+});
+var ListRootsResultSchema2 = ResultSchema2.extend({
+  roots: array(RootSchema2)
+});
+var RootsListChangedNotificationSchema2 = NotificationSchema2.extend({
+  method: literal("notifications/roots/list_changed"),
+  params: NotificationsParamsSchema2.optional()
+});
+var ClientRequestSchema2 = union([
+  PingRequestSchema2,
+  InitializeRequestSchema2,
+  CompleteRequestSchema2,
+  SetLevelRequestSchema2,
+  GetPromptRequestSchema2,
+  ListPromptsRequestSchema2,
+  ListResourcesRequestSchema2,
+  ListResourceTemplatesRequestSchema2,
+  ReadResourceRequestSchema2,
+  SubscribeRequestSchema2,
+  UnsubscribeRequestSchema2,
+  CallToolRequestSchema2,
+  ListToolsRequestSchema2,
+  GetTaskRequestSchema2,
+  GetTaskPayloadRequestSchema2,
+  ListTasksRequestSchema2,
+  CancelTaskRequestSchema2
+]);
+var ClientNotificationSchema2 = union([
+  CancelledNotificationSchema2,
+  ProgressNotificationSchema2,
+  InitializedNotificationSchema2,
+  RootsListChangedNotificationSchema2,
+  TaskStatusNotificationSchema2
+]);
+var ClientResultSchema2 = union([
+  EmptyResultSchema2,
+  CreateMessageResultSchema2,
+  CreateMessageResultWithToolsSchema2,
+  ElicitResultSchema2,
+  ListRootsResultSchema2,
+  GetTaskResultSchema2,
+  ListTasksResultSchema2,
+  CreateTaskResultSchema2
+]);
+var ServerRequestSchema2 = union([
+  PingRequestSchema2,
+  CreateMessageRequestSchema2,
+  ElicitRequestSchema2,
+  ListRootsRequestSchema2,
+  GetTaskRequestSchema2,
+  GetTaskPayloadRequestSchema2,
+  ListTasksRequestSchema2,
+  CancelTaskRequestSchema2
+]);
+var ServerNotificationSchema2 = union([
+  CancelledNotificationSchema2,
+  ProgressNotificationSchema2,
+  LoggingMessageNotificationSchema2,
+  ResourceUpdatedNotificationSchema2,
+  ResourceListChangedNotificationSchema2,
+  ToolListChangedNotificationSchema2,
+  PromptListChangedNotificationSchema2,
+  TaskStatusNotificationSchema2,
+  ElicitationCompleteNotificationSchema2
+]);
+var ServerResultSchema2 = union([
+  EmptyResultSchema2,
+  InitializeResultSchema2,
+  CompleteResultSchema2,
+  GetPromptResultSchema2,
+  ListPromptsResultSchema2,
+  ListResourcesResultSchema2,
+  ListResourceTemplatesResultSchema2,
+  ReadResourceResultSchema2,
+  CallToolResultSchema2,
+  ListToolsResultSchema2,
+  GetTaskResultSchema2,
+  ListTasksResultSchema2,
+  CreateTaskResultSchema2
+]);
 
 // server.ts
 import { readFileSync } from "fs";
@@ -13917,7 +14732,7 @@ var mcp = new Server({ name: "telegram-channel", version: "0.1.0" }, {
     experimental: { "claude/channel": {} }
   }
 });
-mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
+mcp.setRequestHandler(ListToolsRequestSchema2, async () => ({
   tools: [
     {
       name: "send_message",
@@ -14267,7 +15082,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
   ]
 }));
 var _updateActivity = null;
-mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
+mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
   const { name, arguments: args } = req.params;
   if (_updateActivity && ["fetch_messages", "send_message", "typing", "react", "send_file", "message_peer", "complete_task"].includes(name))
     _updateActivity();
@@ -15623,8 +16438,8 @@ async function poll() {
       }
       if (pendingDelivery && Date.now() - pendingDelivery.sentAt > 3000) {
         const totalAge = Date.now() - pendingDelivery.firstSentAt;
-        if (totalAge > 30000) {
-          process.stderr.write(`[telegram] giving up on msg ${pendingDelivery.message_id} after 30s \u2014 advancing lastId
+        if (totalAge > 300000) {
+          process.stderr.write(`[telegram] giving up on msg ${pendingDelivery.message_id} after 5min \u2014 advancing lastId
 `);
           lastId = pendingDelivery.message_id;
           await saveState(lastId, [...ackedForceIds]);

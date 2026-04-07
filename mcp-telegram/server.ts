@@ -2109,10 +2109,11 @@ async function poll(): Promise<void> {
 
       // Re-send pending notification if Claude hasn't responded within 3s
       if (pendingDelivery && Date.now() - pendingDelivery.sentAt > 3000) {
-        // Give up after 30s of retries — assume Claude saw it but responded without MCP tools
+        // Give up after 5 minutes — Claude may be busy with long-running tools (Bash, file ops)
+        // which don't trigger lastActivityTs. Only skip if truly unresponsive for a long time.
         const totalAge = Date.now() - pendingDelivery.firstSentAt
-        if (totalAge > 30_000) {
-          process.stderr.write(`[telegram] giving up on msg ${pendingDelivery.message_id} after 30s — advancing lastId\n`)
+        if (totalAge > 300_000) {
+          process.stderr.write(`[telegram] giving up on msg ${pendingDelivery.message_id} after 5min — advancing lastId\n`)
           lastId = pendingDelivery.message_id
           await saveState(lastId, [...ackedForceIds])
           pendingDelivery = null
