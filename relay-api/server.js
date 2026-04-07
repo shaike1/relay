@@ -240,6 +240,11 @@ function checkRateLimit(userId) {
   return true; // allowed
 }
 
+// Merge buffer: coalesces rapid sequential messages from the same user
+// Map<userId, {timer, messages[], threadId, firstEntry}>
+const _mergeBuffer = new Map();
+const MERGE_DELAY_MS = 1500;
+
 // Webhook endpoints — receive Telegram updates from both bots,
 // write to per-topic queues, and forward to bot.py for processing.
 // Main bot webhook
@@ -495,6 +500,13 @@ function webhookQueueWrite(update) {
     return;
   }
 
+  // /screenshot [session] — capture tmux pane as text
+  const screenshotCmd = msg.text && msg.text.trim().match(/^\/screenshot(@\S+)?(\s+(\S+))?$/i);
+  if (screenshotCmd) {
+    handleScreenshotCommand(threadId, screenshotCmd[3] || null, msg.message_id).catch(e => console.error('[screenshot] error:', e.message));
+    return;
+  }
+
   // Voice messages — transcribe via Whisper then queue
   if (msg.voice || msg.audio) {
     handleVoiceMessage(msg, threadId).catch(e => console.error('[voice] error:', e.message));
@@ -520,22 +532,61 @@ function webhookQueueWrite(update) {
   // Multi-tenant: if session has multi_tenant=true, route per user_id to isolated thread
   const effectiveThreadId = resolveMultiTenantThread(threadId, msg.from.id, msg.from.first_name || msg.from.username || 'user');
 
-  const queueFile = path.join(QUEUE_DIR, `tg-queue-${effectiveThreadId}.jsonl`);
-  const entry = {
+  const userId = msg.from && msg.from.id ? String(msg.from.id) : null;
+  const userName = (msg.from && (msg.from.first_name || msg.from.username)) || 'unknown';
+  const baseEntry = {
     message_id: msg.message_id,
-    user: (msg.from.first_name || msg.from.username || 'unknown'),
-    user_id: msg.from.id,
+    user: userName,
+    user_id: msg.from ? msg.from.id : 0,
     text: msg.text,
     ts: Math.floor(Date.now() / 1000),
     via: 'webhook'
   };
-  try {
-    fs.appendFileSync(queueFile, JSON.stringify(entry) + '\n');
-    // Write start timestamp for response-time tracking (read by MCP send_message)
-    fs.writeFileSync(path.join(QUEUE_DIR, `relay-msg-start-${effectiveThreadId}`), String(Date.now()));
-    console.log(`[webhook] ${effectiveThreadId}: ${msg.from.first_name}: ${msg.text.substring(0, 60)}`);
-  } catch (err) {
-    console.error(`[webhook] Queue write error:`, err.message);
+
+  // Merge buffer: coalesce rapid sequential messages from same user (flood control)
+  // Waits MERGE_DELAY_MS for silence before writing to queue, merging any interim messages.
+  function flushMergeBuffer(uid) {
+    const buf = _mergeBuffer.get(uid);
+    if (!buf) return;
+    _mergeBuffer.delete(uid);
+    const merged = { ...buf.firstEntry, text: buf.messages.join('\n') };
+    const queueFile = path.join(QUEUE_DIR, `tg-queue-${buf.effectiveThreadId}.jsonl`);
+    try {
+      fs.appendFileSync(queueFile, JSON.stringify(merged) + '\n');
+      fs.writeFileSync(path.join(QUEUE_DIR, `relay-msg-start-${buf.effectiveThreadId}`), String(Date.now()));
+      const label = buf.messages.length > 1 ? `[merged ${buf.messages.length} msgs] ` : '';
+      console.log(`[webhook] ${buf.effectiveThreadId}: ${buf.firstEntry.user}: ${label}${merged.text.substring(0, 60)}`);
+    } catch (err) { console.error(`[webhook] Queue write error:`, err.message); }
+  }
+
+  if (userId) {
+    const existing = _mergeBuffer.get(userId);
+    if (existing) {
+      // Cancel previous timer, append text, restart timer
+      clearTimeout(existing.timer);
+      existing.messages.push(msg.text);
+      existing.timer = setTimeout(() => flushMergeBuffer(userId), MERGE_DELAY_MS);
+    } else {
+      // Start new buffer entry for this user
+      const bufEntry = {
+        timer: null,
+        messages: [msg.text],
+        firstEntry: baseEntry,
+        effectiveThreadId,
+      };
+      bufEntry.timer = setTimeout(() => flushMergeBuffer(userId), MERGE_DELAY_MS);
+      _mergeBuffer.set(userId, bufEntry);
+    }
+  } else {
+    // No userId — write directly (shouldn't normally happen)
+    const queueFile = path.join(QUEUE_DIR, `tg-queue-${effectiveThreadId}.jsonl`);
+    try {
+      fs.appendFileSync(queueFile, JSON.stringify(baseEntry) + '\n');
+      fs.writeFileSync(path.join(QUEUE_DIR, `relay-msg-start-${effectiveThreadId}`), String(Date.now()));
+      console.log(`[webhook] ${effectiveThreadId}: ${userName}: ${msg.text.substring(0, 60)}`);
+    } catch (err) {
+      console.error(`[webhook] Queue write error:`, err.message);
+    }
   }
 
   // Mention routing: if message contains @session_name, copy to that session's queue
@@ -551,7 +602,7 @@ function webhookQueueWrite(update) {
         if (!targetSession || String(targetSession.thread_id) === String(effectiveThreadId)) continue;
         const targetQueue = path.join(QUEUE_DIR, `tg-queue-${targetSession.thread_id}.jsonl`);
         const mentionEntry = {
-          ...entry,
+          ...baseEntry,
           message_id: -(Math.floor(Date.now() / 1000) % 2147483647),
           via: 'mention',
           force: true,
@@ -937,6 +988,73 @@ async function handleCatCommand(threadId, filePath, replyTo) {
     await tgSendMessage(threadId, `<pre>${truncated.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`, replyTo, null);
   } catch (e) {
     await tgSendMessage(threadId, `❌ שגיאה ב-/cat: ${e.message.substring(0, 200)}`, replyTo, null);
+  }
+}
+
+// /screenshot [session] — capture tmux pane as text and send to Telegram
+async function handleScreenshotCommand(threadId, args, replyTo) {
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    let session;
+    if (args && args.trim()) {
+      // Find by name/session arg
+      const name = args.trim();
+      session = sessions.find(s => s.session === name || s.name === name);
+      if (!session) {
+        await tgSendMessage(threadId, `❌ Session לא נמצא: <code>${name}</code>`, replyTo, null);
+        return;
+      }
+    } else {
+      // Find by thread_id
+      session = sessions.find(s => String(s.thread_id) === String(threadId));
+      if (!session) {
+        await tgSendMessage(threadId, `❌ לא נמצא session ל-thread ${threadId}`, replyTo, null);
+        return;
+      }
+    }
+    const name = session.session || session.name;
+    const containerName = `relay-session-${name}`;
+    const socketPath = `/tmp/tmux-relay-${name}.sock`;
+    const destFile = `/tmp/relay-pane-${threadId}.txt`;
+
+    // Capture pane inside container, then docker cp out
+    try {
+      execSync(
+        `docker exec ${containerName} bash -c "tmux -S ${socketPath} capture-pane -p -t ${name} > /tmp/pane.txt 2>/dev/null; cat /tmp/pane.txt"`,
+        { timeout: 8000 }
+      );
+      execSync(`docker cp ${containerName}:/tmp/pane.txt ${destFile}`, { timeout: 5000 });
+    } catch (e) {
+      // Fallback: try running tmux capture directly on host socket if mounted
+      await tgSendMessage(threadId, `❌ שגיאה בלכידת pane: ${e.message.substring(0, 200)}`, replyTo, null);
+      return;
+    }
+
+    let paneText = '';
+    try {
+      paneText = fs.readFileSync(destFile, 'utf8');
+    } catch (_) {
+      await tgSendMessage(threadId, '❌ לא ניתן לקרוא את תוצאת ה-capture', replyTo, null);
+      return;
+    }
+
+    // Clean ANSI escape codes
+    paneText = paneText
+      .replace(/\x1b\[[0-9;]*[mGKHFABCDJP]/g, '')
+      .replace(/\r/g, '')
+      .trimEnd();
+
+    if (!paneText.trim()) {
+      await tgSendMessage(threadId, `📸 Pane ריק (session: <code>${name}</code>)`, replyTo, null);
+      return;
+    }
+
+    // Truncate to safe Telegram message size
+    const truncated = paneText.length > 3500 ? paneText.slice(-3500) + '\n… (truncated)' : paneText;
+    const escaped = truncated.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    await tgSendMessage(threadId, `📸 <b>${name}</b>\n<pre>${escaped}</pre>`, replyTo, null);
+  } catch (e) {
+    await tgSendMessage(threadId, `❌ שגיאה ב-/screenshot: ${e.message.substring(0, 200)}`, replyTo, null);
   }
 }
 
