@@ -609,6 +609,32 @@ function webhookQueueWrite(update) {
     return;
   }
 
+  // /digest — daily digest for this session
+  if (msg.text && /^\/digest(@\S+)?$/i.test(msg.text.trim())) {
+    handleDigestCommand(threadId, msg.message_id).catch(e => console.error('[digest] error:', e.message));
+    return;
+  }
+
+  // /cost — cross-session cost summary
+  if (msg.text && /^\/cost(@\S+)?$/i.test(msg.text.trim())) {
+    handleCostCommand(threadId, msg.message_id).catch(e => console.error('[cost] error:', e.message));
+    return;
+  }
+
+  // /route <message> — smart session routing suggestion
+  const routeCmd = msg.text && msg.text.trim().match(/^\/route(@\S+)?\s+([\s\S]+)$/i);
+  if (routeCmd) {
+    handleRouteCommand(threadId, routeCmd[2] || '', msg.message_id).catch(e => console.error('[route] error:', e.message));
+    return;
+  }
+
+  // /live [session] — show live tmux pane snapshot
+  const liveCmd = msg.text && msg.text.trim().match(/^\/live(@\S+)?(\s+(\S+))?$/i);
+  if (liveCmd) {
+    handleLiveCommand(threadId, liveCmd[3] || null, msg.message_id).catch(e => console.error('[live] error:', e.message));
+    return;
+  }
+
   // Voice messages — transcribe via Whisper then queue
   if (msg.voice || msg.audio) {
     handleVoiceMessage(msg, threadId).catch(e => console.error('[voice] error:', e.message));
@@ -3651,6 +3677,275 @@ async function handleSearchCommand(threadId, args, replyTo) {
   }
 }
 
+// ── v1.8.0: Smart Routing ─────────────────────────────────────────────────────
+// Keyword → session skill mapping for routing suggestions
+const SKILL_KEYWORDS = {
+  typescript: ['typescript','ts','tsx','react','frontend','vite','nextjs','next.js'],
+  python: ['python','py','django','flask','fastapi','pip','pandas','numpy'],
+  docker: ['docker','container','image','compose','dockerfile'],
+  devops: ['deploy','deployment','ci','cd','github actions','pipeline','k8s','kubernetes'],
+  networking: ['vpn','tailscale','headscale','mikrotik','firewall','network','dns'],
+  backup: ['backup','restore','duplicacy','storage'],
+  billing: ['billing','invoice','payment','cost','mybill'],
+  bot: ['telegram','bot','webhook','mcp'],
+  relay: ['relay','session','watchdog','mcp-telegram'],
+};
+
+function smartRoute(text) {
+  const lower = (text || '').toLowerCase();
+  const scores = {};
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    for (const session of sessions) {
+      const skills = session.skills || [];
+      let score = 0;
+      for (const skill of skills) {
+        const keywords = SKILL_KEYWORDS[skill] || [skill];
+        for (const kw of keywords) {
+          if (lower.includes(kw)) score += 2;
+        }
+        if (lower.includes(skill)) score += 1;
+      }
+      if (score > 0) scores[session.session] = { score, session };
+    }
+  } catch (_) {}
+  return Object.values(scores).sort((a, b) => b.score - a.score).slice(0, 3);
+}
+
+async function handleRouteCommand(threadId, text, replyTo) {
+  const matches = smartRoute(text);
+  if (!matches.length) {
+    await tgSendMessage(threadId, '🔀 לא נמצא session מתאים לבקשה זו', replyTo, null);
+    return;
+  }
+  const lines = ['🔀 <b>Smart Routing — מיפוי מוצע:</b>', ''];
+  for (const m of matches) {
+    const skills = (m.session.skills || []).join(', ');
+    lines.push(`• <b>${m.session.session}</b> (score: ${m.score}) — <i>${skills}</i>`);
+  }
+  const buttons = [matches.map(m => m.session.session)];
+  await tgSendMessage(threadId, lines.join('\n'), replyTo, { inline_keyboard: buttons.map(row => row.map(label => ({ text: label, callback_data: `btn:${threadId}:${label}` }))) });
+}
+
+// POST /api/route — smart route an arbitrary text to best session
+app.post('/api/route', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  const { text } = req.body || {};
+  if (!text) return res.status(400).json({ error: 'text required' });
+  const matches = smartRoute(text);
+  res.json({ matches: matches.map(m => ({ session: m.session.session, score: m.score, skills: m.session.skills })) });
+});
+
+// ── v1.8.0: Cost Dashboard ─────────────────────────────────────────────────────
+// GET /api/costs — aggregate token costs across all sessions
+app.get('/api/costs', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const today = new Date().toISOString().slice(0, 10);
+    const results = [];
+    let grandTotal = 0;
+    for (const session of sessions) {
+      const statsFile = path.join(QUEUE_DIR, `token-stats-${session.thread_id}.jsonl`);
+      if (!fs.existsSync(statsFile)) continue;
+      const lines = fs.readFileSync(statsFile, 'utf8').split('\n').filter(l => l.trim());
+      let total = 0, todayCost = 0, totalInput = 0, totalOutput = 0;
+      for (const line of lines) {
+        try {
+          const e = JSON.parse(line);
+          total += e.cost_usd || 0;
+          totalInput += e.input || 0;
+          totalOutput += e.output || 0;
+          if ((e.ts || '').startsWith(today)) todayCost += e.cost_usd || 0;
+        } catch (_) {}
+      }
+      if (total > 0) {
+        results.push({ session: session.session, thread_id: session.thread_id, total_cost: total, today_cost: todayCost, total_input: totalInput, total_output: totalOutput, calls: lines.length });
+        grandTotal += total;
+      }
+    }
+    results.sort((a, b) => b.total_cost - a.total_cost);
+    res.json({ sessions: results, grand_total: grandTotal, date: today });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+async function handleCostCommand(threadId, replyTo) {
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const today = new Date().toISOString().slice(0, 10);
+    const lines = ['💰 <b>עלות טוקנים לפי session</b>', ''];
+    let grand = 0;
+    for (const session of sessions) {
+      const statsFile = path.join(QUEUE_DIR, `token-stats-${session.thread_id}.jsonl`);
+      if (!fs.existsSync(statsFile)) continue;
+      const data = fs.readFileSync(statsFile, 'utf8').split('\n').filter(l => l.trim());
+      let total = 0, todayCost = 0;
+      for (const line of data) {
+        try { const e = JSON.parse(line); total += e.cost_usd || 0; if ((e.ts||'').startsWith(today)) todayCost += e.cost_usd||0; } catch(_) {}
+      }
+      if (total > 0.0001) {
+        lines.push(`• <b>${session.session}</b>: $${total.toFixed(4)} (היום: $${todayCost.toFixed(4)})`);
+        grand += total;
+      }
+    }
+    if (lines.length === 2) { await tgSendMessage(threadId, '💰 אין נתוני עלות עדיין', replyTo, null); return; }
+    lines.push('', `<b>סה"כ: $${grand.toFixed(4)}</b>`);
+    await tgSendMessage(threadId, lines.join('\n'), replyTo, null);
+  } catch (e) {
+    await tgSendMessage(threadId, `❌ שגיאה: ${e.message}`, replyTo, null);
+  }
+}
+
+// ── v1.8.0: Daily Digest ──────────────────────────────────────────────────────
+// /digest command — send a digest for this session (or all sessions)
+async function handleDigestCommand(threadId, replyTo) {
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const session = sessions.find(s => String(s.thread_id) === String(threadId));
+    const today = new Date().toISOString().slice(0, 10);
+
+    const targets = session ? [session] : sessions;
+    for (const s of targets) {
+      const queueFile = path.join(QUEUE_DIR, `tg-queue-${s.thread_id}.jsonl`);
+      const statsFile = path.join(QUEUE_DIR, `token-stats-${s.thread_id}.jsonl`);
+      let msgs = 0, cost = 0, topTools = {};
+
+      if (fs.existsSync(queueFile)) {
+        const lines = fs.readFileSync(queueFile, 'utf8').split('\n').filter(l => l.trim());
+        for (const line of lines) {
+          try { const m = JSON.parse(line); if (m.ts && new Date(m.ts*1000).toISOString().startsWith(today) && m.via === 'webhook') msgs++; } catch(_) {}
+        }
+      }
+      if (fs.existsSync(statsFile)) {
+        const lines = fs.readFileSync(statsFile, 'utf8').split('\n').filter(l => l.trim());
+        for (const line of lines) {
+          try { const e = JSON.parse(line); if ((e.ts||'').startsWith(today)) cost += e.cost_usd||0; } catch(_) {}
+        }
+      }
+      // Top tools from audit log
+      const auditFile = path.join(QUEUE_DIR, `relay-audit-${s.thread_id}.jsonl`);
+      if (fs.existsSync(auditFile)) {
+        const lines = fs.readFileSync(auditFile, 'utf8').split('\n').filter(l => l.trim());
+        for (const line of lines) {
+          try {
+            const e = JSON.parse(line);
+            const eDate = e.ts ? new Date(e.ts*1000).toISOString().slice(0,10) : (e.timestamp||'').slice(0,10);
+            if (eDate !== today) continue;
+            if (e.type === 'tool_use' || e.event === 'tool_use') {
+              const t = e.tool || e.name || 'unknown';
+              topTools[t] = (topTools[t] || 0) + 1;
+            }
+          } catch(_) {}
+        }
+      }
+      const toolSummary = Object.entries(topTools).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([t,c])=>`${t}×${c}`).join(', ') || 'אין';
+      const text = [
+        `📋 <b>Daily Digest — ${s.session}</b> (${today})`,
+        `💬 הודעות: ${msgs} | 💰 עלות: $${cost.toFixed(4)}`,
+        `🔧 כלים: ${toolSummary}`,
+      ].join('\n');
+      await tgSendMessage(s.thread_id, text, s.thread_id === threadId ? replyTo : null, null);
+    }
+  } catch (e) {
+    await tgSendMessage(threadId, `❌ שגיאה: ${e.message}`, replyTo, null);
+  }
+}
+
+// GET /api/digest — trigger digest via API
+app.post('/api/digest', async (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    await handleDigestCommand(sessions[0]?.thread_id, null);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── v1.8.0: Live Pane Snapshot ───────────────────────────────────────────────
+// GET /api/pane/:session — SSE stream of live tmux pane output
+app.get('/api/pane/:session', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  const sessionName = req.params.session.replace(/[^a-zA-Z0-9_-]/g, '');
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const { execSync } = require('child_process');
+  let lastHash = '';
+  const interval = setInterval(() => {
+    try {
+      const socket = `/tmp/tmux-${sessionName}.sock`;
+      const pane = execSync(`tmux -S ${socket} capture-pane -t ${sessionName} -p 2>/dev/null | tail -30`, { timeout: 3000 }).toString();
+      const hash = require('crypto').createHash('md5').update(pane).digest('hex');
+      if (hash !== lastHash) {
+        lastHash = hash;
+        const escaped = pane.replace(/\n/g, '\\n').replace(/\r/g, '').replace(/\x1b\[[0-9;]*m/g, '');
+        res.write(`data: ${JSON.stringify({ pane: escaped, ts: Date.now() })}\n\n`);
+      }
+    } catch (_) {
+      res.write(`data: ${JSON.stringify({ pane: '[session offline]', ts: Date.now() })}\n\n`);
+    }
+  }, 2000);
+
+  req.on('close', () => clearInterval(interval));
+});
+
+// GET /api/pane-snapshot/:session — single pane snapshot (non-streaming)
+app.get('/api/pane-snapshot/:session', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  const sessionName = req.params.session.replace(/[^a-zA-Z0-9_-]/g, '');
+  try {
+    const socket = `/tmp/tmux-${sessionName}.sock`;
+    const pane = execSync(`tmux -S ${socket} capture-pane -t ${sessionName} -p 2>/dev/null | tail -40`, { timeout: 3000 }).toString();
+    const clean = pane.replace(/\x1b\[[0-9;]*m/g, '');
+    res.json({ session: sessionName, pane: clean, ts: Date.now() });
+  } catch (e) {
+    res.json({ session: sessionName, pane: '[offline or no tmux socket]', ts: Date.now() });
+  }
+});
+
+async function handleLiveCommand(threadId, sessionArg, replyTo) {
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    let session = sessionArg
+      ? sessions.find(s => s.session === sessionArg)
+      : sessions.find(s => String(s.thread_id) === String(threadId));
+    if (!session) { await tgSendMessage(threadId, '❌ session לא נמצא', replyTo, null); return; }
+    const socket = `/tmp/tmux-${session.session}.sock`;
+    let pane = '[offline]';
+    try { pane = execSync(`tmux -S ${socket} capture-pane -t ${session.session} -p 2>/dev/null | tail -20`, { timeout: 3000 }).toString().replace(/\x1b\[[0-9;]*m/g, '').trim(); } catch (_) {}
+    await tgSendMessage(threadId, `📺 <b>${session.session}</b> — live:\n<pre>${(pane || '[empty]').substring(0, 800).replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`, replyTo, null);
+  } catch (e) {
+    await tgSendMessage(threadId, `❌ שגיאה: ${e.message}`, replyTo, null);
+  }
+}
+
+// ── v1.8.0: Enhanced CI/CD status ────────────────────────────────────────────
+// GET /api/cicd/status — last 5 CI/CD events from audit log
+app.get('/api/cicd/status', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const events = [];
+    for (const session of sessions) {
+      const auditFile = path.join(QUEUE_DIR, `relay-audit-${session.thread_id}.jsonl`);
+      if (!fs.existsSync(auditFile)) continue;
+      const lines = fs.readFileSync(auditFile, 'utf8').split('\n').filter(l => l.trim());
+      for (const line of lines.slice(-100)) {
+        try {
+          const e = JSON.parse(line);
+          if (e.source === 'github' || e.type === 'deploy' || e.event === 'ci') {
+            events.push({ ...e, session: session.session });
+          }
+        } catch (_) {}
+      }
+    }
+    events.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    res.json(events.slice(0, 20));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 // --- Proxy everything else to nomacode (web terminal) ---
@@ -3771,12 +4066,26 @@ function tickScheduler() {
   }
 }
 
+// Daily digest — fire at 22:00 every day to all sessions
+function tickDailyDigest(now) {
+  if (now.getHours() === 22 && now.getMinutes() === 0) {
+    try {
+      const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+      for (const session of sessions) {
+        handleDigestCommand(session.thread_id, null).catch(() => {});
+      }
+      console.log('[digest] Daily digest fired for all sessions');
+    } catch (e) { console.error('[digest] Error:', e.message); }
+  }
+}
+
 // Tick every minute, aligned to the minute boundary
 function startScheduler() {
   const msToNextMinute = (60 - new Date().getSeconds()) * 1000 - new Date().getMilliseconds();
   setTimeout(() => {
     tickScheduler();
-    setInterval(tickScheduler, 60000);
+    tickDailyDigest(new Date());
+    setInterval(() => { tickScheduler(); tickDailyDigest(new Date()); }, 60000);
   }, msToNextMinute);
   console.log('[scheduler] Started — first tick in', Math.round(msToNextMinute / 1000), 's');
 }

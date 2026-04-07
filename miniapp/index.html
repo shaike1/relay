@@ -791,6 +791,19 @@
       </div>
     </section>
 
+    <!-- Screen: Cost Dashboard -->
+    <section class="screen" id="screen-cost">
+      <div class="screen-header">
+        <h1>Cost Dashboard</h1>
+        <button class="header-action-btn" onclick="loadCosts()" title="Refresh" aria-label="Refresh">↻</button>
+      </div>
+      <div class="stats-scroll">
+        <div id="cost-content" class="stats-section">
+          <div class="empty-state"><span class="empty-icon">💰</span><span class="empty-text">Switch to this tab to load costs</span></div>
+        </div>
+      </div>
+    </section>
+
     <!-- Screen: Settings -->
     <section class="screen" id="screen-settings">
       <div class="screen-header">
@@ -812,6 +825,9 @@
     </button>
     <button class="nav-tab" onclick="showTab('stats')" id="tab-stats">
       <span class="tab-icon">📊</span>Stats
+    </button>
+    <button class="nav-tab" onclick="showTab('cost')" id="tab-cost">
+      <span class="tab-icon">💰</span>Cost
     </button>
     <button class="nav-tab" onclick="showTab('settings')" id="tab-settings">
       <span class="tab-icon">⚙️</span>Settings
@@ -846,8 +862,18 @@
   <div class="quick-actions" id="quick-actions-row">
     <button class="quick-btn" onclick="sendQuick('restart')"><span class="btn-icon">🔄</span> Restart</button>
     <button class="quick-btn" onclick="sendQuick('cancel')"><span class="btn-icon">✖</span> Cancel</button>
-    <button class="quick-btn" onclick="sendQuick('screenshot')"><span class="btn-icon">📸</span> Screenshot</button>
+    <button class="quick-btn" onclick="showLivePane()"><span class="btn-icon">📺</span> Live</button>
     <button class="quick-btn" onclick="sendQuick('status')"><span class="btn-icon">ℹ️</span> Status</button>
+  </div>
+
+  <!-- Live pane overlay -->
+  <div id="live-pane-overlay" style="display:none;position:absolute;inset:0;background:var(--bg);z-index:100;flex-direction:column;">
+    <div style="display:flex;align-items:center;gap:10px;padding:14px 16px;background:var(--surface);border-bottom:1px solid var(--border);">
+      <button style="background:none;border:none;color:var(--link);font-size:24px;cursor:pointer;line-height:1;" onclick="hideLivePane()">‹</button>
+      <span style="font-weight:600;flex:1;" id="live-pane-title">Live Pane</span>
+      <span id="live-pane-status" style="font-size:11px;color:var(--muted);">connecting…</span>
+    </div>
+    <pre id="live-pane-output" style="flex:1;overflow-y:auto;padding:12px;font-size:11px;line-height:1.5;color:var(--text);white-space:pre-wrap;word-break:break-all;font-family:'SF Mono',Menlo,monospace;background:var(--bg);">Loading…</pre>
   </div>
   <div class="msg-input-bar">
     <textarea class="msg-input" id="msg-input" placeholder="Message…" rows="1"
@@ -948,7 +974,36 @@ let sendingMsg = false;
 const INIT_DATA = tg.initData || '';
 
 // Version shown in Settings
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.1.0'; // v1.8.0 features
+
+// ── Dark/Light override ──────────────────────────────────────────────────────
+let _themeOverride = localStorage.getItem('relay_theme') || null; // 'dark'|'light'|null
+function applyTheme(theme) {
+  const isDark = theme === 'dark' || (!theme && (tg.colorScheme === 'dark'));
+  if (isDark) {
+    document.documentElement.style.setProperty('--bg',      '#212121');
+    document.documentElement.style.setProperty('--surface', '#2c2c2c');
+    document.documentElement.style.setProperty('--text',    '#e8e8e8');
+    document.documentElement.style.setProperty('--muted',   '#9e9e9e');
+    document.documentElement.style.setProperty('--card',    'rgba(255,255,255,0.06)');
+    document.documentElement.style.setProperty('--border',  'rgba(255,255,255,0.10)');
+  } else {
+    document.documentElement.style.setProperty('--bg',      '#f5f5f5');
+    document.documentElement.style.setProperty('--surface', '#ffffff');
+    document.documentElement.style.setProperty('--text',    '#1a1a1a');
+    document.documentElement.style.setProperty('--muted',   '#666666');
+    document.documentElement.style.setProperty('--card',    'rgba(0,0,0,0.04)');
+    document.documentElement.style.setProperty('--border',  'rgba(0,0,0,0.10)');
+  }
+}
+function toggleTheme() {
+  const current = _themeOverride || tg.colorScheme || 'dark';
+  _themeOverride = current === 'dark' ? 'light' : 'dark';
+  localStorage.setItem('relay_theme', _themeOverride);
+  applyTheme(_themeOverride);
+  renderSettings();
+}
+applyTheme(_themeOverride);
 
 // ── Tab navigation ───────────────────────────────────────────────────────────
 function showTab(name) {
@@ -963,6 +1018,7 @@ function showTab(name) {
   fabNew.style.display = name === 'sessions' ? 'flex' : 'none';
 
   if (name === 'stats') loadStats();
+  if (name === 'cost') loadCosts();
   if (name === 'settings') renderSettings();
 }
 
@@ -1482,10 +1538,83 @@ function buildHeatmap(daily) {
   return `<div class="heatmap-labels">${labelsHtml}</div><div class="heatmap-grid">${cells.join('')}</div>${legendHtml}`;
 }
 
+// ── Cost Dashboard ───────────────────────────────────────────────────────────
+async function loadCosts() {
+  const el = document.getElementById('cost-content');
+  el.innerHTML = `<div class="empty-state"><span class="empty-icon">⏳</span><span class="empty-text">Loading costs…</span></div>`;
+  try {
+    const r = await fetch('/api/costs');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    if (!data.sessions || !data.sessions.length) {
+      el.innerHTML = `<div class="empty-state"><span class="empty-icon">💰</span><span class="empty-text">No cost data yet — run some sessions first</span></div>`;
+      return;
+    }
+    const maxCost = Math.max(...data.sessions.map(s => s.total_cost));
+    let html = `<div class="stats-card"><div class="stat-row"><span style="font-weight:600;">Total spend</span><span class="stat-val" style="color:var(--accent);font-size:18px;">$${data.grand_total.toFixed(4)}</span></div><div class="stat-row"><span>Date</span><span class="stat-val">${escHtml(data.date)}</span></div></div>`;
+    html += `<div class="stats-card"><h3 style="margin-bottom:12px;">Per Session</h3>`;
+    for (const s of data.sessions) {
+      const barPct = maxCost > 0 ? (s.total_cost / maxCost * 100).toFixed(1) : 0;
+      const todayPct = s.total_cost > 0 ? (s.today_cost / s.total_cost * 100).toFixed(0) : 0;
+      html += `
+        <div style="margin-bottom:14px;">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;">
+            <span style="font-weight:500;font-size:13px;">${escHtml(s.session)}</span>
+            <span style="font-size:12px;color:var(--muted);">$${s.total_cost.toFixed(4)}</span>
+          </div>
+          <div style="background:var(--border);border-radius:4px;height:6px;overflow:hidden;">
+            <div style="background:var(--accent);height:100%;width:${barPct}%;border-radius:4px;transition:width 0.4s;"></div>
+          </div>
+          <div style="font-size:10px;color:var(--muted);margin-top:3px;">Today: $${s.today_cost.toFixed(4)} (${todayPct}%) · ${s.calls} calls · ${(s.total_input/1000).toFixed(0)}K in / ${(s.total_output/1000).toFixed(0)}K out</div>
+        </div>`;
+    }
+    html += `</div>`;
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = `<div class="empty-state"><span class="empty-icon">❌</span><span class="empty-text">Failed to load: ${escHtml(e.message)}</span></div>`;
+  }
+}
+
+// ── Live Pane ─────────────────────────────────────────────────────────────────
+let _liveEvtSource = null;
+
+function showLivePane() {
+  if (!currentSession) return;
+  const overlay = document.getElementById('live-pane-overlay');
+  overlay.style.display = 'flex';
+  document.getElementById('live-pane-title').textContent = currentSession + ' — live';
+  document.getElementById('live-pane-status').textContent = 'connecting…';
+  document.getElementById('live-pane-output').textContent = 'Connecting…';
+
+  if (_liveEvtSource) { _liveEvtSource.close(); _liveEvtSource = null; }
+  _liveEvtSource = new EventSource(`/api/pane/${encodeURIComponent(currentSession)}`);
+  _liveEvtSource.onopen = () => {
+    document.getElementById('live-pane-status').textContent = 'live ●';
+    document.getElementById('live-pane-status').style.color = 'var(--green)';
+  };
+  _liveEvtSource.onmessage = (e) => {
+    try {
+      const d = JSON.parse(e.data);
+      const el = document.getElementById('live-pane-output');
+      el.textContent = (d.pane || '').replace(/\\n/g, '\n');
+      el.scrollTop = el.scrollHeight;
+    } catch (_) {}
+  };
+  _liveEvtSource.onerror = () => {
+    document.getElementById('live-pane-status').textContent = 'reconnecting…';
+    document.getElementById('live-pane-status').style.color = 'var(--orange)';
+  };
+}
+
+function hideLivePane() {
+  document.getElementById('live-pane-overlay').style.display = 'none';
+  if (_liveEvtSource) { _liveEvtSource.close(); _liveEvtSource = null; }
+}
+
 // ── Settings ─────────────────────────────────────────────────────────────────
 function renderSettings() {
   const el = document.getElementById('settings-content');
-  const colorScheme = tg.colorScheme || 'dark';
+  const effectiveTheme = _themeOverride || tg.colorScheme || 'dark';
   const activeSessions = sessions.filter(s => {
     const diff = s.last_active ? Date.now() / 1000 - s.last_active : Infinity;
     return diff < 300;
@@ -1515,10 +1644,10 @@ function renderSettings() {
 
     <div class="settings-section-label">Appearance</div>
     <div class="settings-card">
-      <div class="settings-row">
-        <span class="settings-row-icon">${colorScheme === 'dark' ? '🌙' : '☀️'}</span>
+      <div class="settings-row" style="cursor:pointer;" onclick="toggleTheme()">
+        <span class="settings-row-icon">${effectiveTheme === 'dark' ? '🌙' : '☀️'}</span>
         <span class="settings-row-label">Theme</span>
-        <span class="settings-row-value">${colorScheme === 'dark' ? 'Dark' : 'Light'} (system)</span>
+        <span class="settings-row-value" style="color:var(--accent);">${effectiveTheme === 'dark' ? 'Dark' : 'Light'} — tap to toggle</span>
       </div>
     </div>
 
