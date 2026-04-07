@@ -513,6 +513,56 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
+    {
+      name: 'send_form',
+      description: 'Send a multi-step interactive form step to the user via Telegram inline buttons. Persists form state so you can track which step the user is on. Use this for multi-step workflows like deploy confirmations, config wizards, etc. After calling send_form, when the user clicks a button, call get_form_state to retrieve context, update_form_state to advance the step, and send_form again for the next step. Call clear_form when done.',
+      inputSchema: {
+        type: 'object',
+        required: ['form_id', 'step', 'question', 'options'],
+        properties: {
+          form_id:  { type: 'string',  description: 'Unique identifier for this form (e.g. "deploy", "confirm-restart")' },
+          step:     { type: 'integer', description: 'Current step number (1-based)' },
+          question: { type: 'string',  description: 'The question or prompt to show the user' },
+          options:  { type: 'array', items: { type: 'string' }, description: 'Button labels for the user to choose from' },
+          context:  { type: 'object',  description: 'Optional state/context to persist with this form step (e.g. {"env": "production"})' },
+        },
+      },
+    },
+    {
+      name: 'get_form_state',
+      description: 'Retrieve the current state of a multi-step form. Returns the form_id, current step, and any context stored by send_form or update_form_state.',
+      inputSchema: {
+        type: 'object',
+        required: ['form_id'],
+        properties: {
+          form_id: { type: 'string', description: 'The form identifier to look up' },
+        },
+      },
+    },
+    {
+      name: 'update_form_state',
+      description: 'Update the state of a multi-step form (advance the step and/or update context). Call this after the user responds to a form step, before sending the next step.',
+      inputSchema: {
+        type: 'object',
+        required: ['form_id'],
+        properties: {
+          form_id: { type: 'string',  description: 'The form identifier to update' },
+          step:    { type: 'integer', description: 'New step number' },
+          context: { type: 'object',  description: 'Updated context/state object (merged with existing context)' },
+        },
+      },
+    },
+    {
+      name: 'clear_form',
+      description: 'Delete a form\'s state file. Call this when the form flow is complete (user confirmed, cancelled, or timed out).',
+      inputSchema: {
+        type: 'object',
+        required: ['form_id'],
+        properties: {
+          form_id: { type: 'string', description: 'The form identifier to clear' },
+        },
+      },
+    },
   ],
 }))
 
@@ -1419,6 +1469,116 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
     } catch (e) {
       return { content: [{ type: 'text', text: `Error sending notification: ${e}` }] }
+    }
+  }
+
+  // ── Interactive Forms ─────────────────────────────────────────────────────
+
+  const formStatePath = (formId: string) => `/tmp/relay-form-${THREAD_ID}-${formId}.json`
+
+  if (name === 'send_form') {
+    const formId   = String(args?.form_id ?? '')
+    const step     = Number(args?.step ?? 1)
+    const question = String(args?.question ?? '')
+    const options  = (args?.options as string[]) ?? []
+    const context  = (args?.context as Record<string, unknown>) ?? {}
+
+    if (!formId) return { content: [{ type: 'text', text: 'Error: form_id is required.' }] }
+    if (!question) return { content: [{ type: 'text', text: 'Error: question is required.' }] }
+    if (options.length === 0) return { content: [{ type: 'text', text: 'Error: options array must not be empty.' }] }
+
+    try {
+      // Read existing state to merge context
+      let existingContext: Record<string, unknown> = {}
+      try {
+        const f = Bun.file(formStatePath(formId))
+        if (await f.exists()) {
+          const existing = JSON.parse(await f.text())
+          existingContext = existing.context ?? {}
+        }
+      } catch {}
+
+      const mergedContext = { ...existingContext, ...context }
+
+      // Persist form state
+      const state = {
+        form_id:     formId,
+        step,
+        context:     mergedContext,
+        waiting_for: options.join('|'),
+        updated_at:  Date.now() / 1000,
+      }
+      await Bun.write(formStatePath(formId), JSON.stringify(state, null, 2))
+
+      // Send the question with inline buttons (one option per button, up to 3 per row)
+      const rows: string[][] = []
+      for (let i = 0; i < options.length; i += 3) {
+        rows.push(options.slice(i, i + 3))
+      }
+      const ids = await sendMessage(question, undefined, rows)
+
+      if (ids.length === 0) {
+        return { content: [{ type: 'text', text: 'ERROR: failed to send form message.' }], isError: true }
+      }
+      return { content: [{ type: 'text', text: `Form '${formId}' step ${step} sent. Waiting for: ${options.join(', ')}` }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error sending form: ${e}` }] }
+    }
+  }
+
+  if (name === 'get_form_state') {
+    const formId = String(args?.form_id ?? '')
+    if (!formId) return { content: [{ type: 'text', text: 'Error: form_id is required.' }] }
+    try {
+      const f = Bun.file(formStatePath(formId))
+      if (!(await f.exists())) {
+        return { content: [{ type: 'text', text: `No state found for form '${formId}'.` }] }
+      }
+      const state = await f.text()
+      return { content: [{ type: 'text', text: state }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error reading form state: ${e}` }] }
+    }
+  }
+
+  if (name === 'update_form_state') {
+    const formId  = String(args?.form_id ?? '')
+    const step    = args?.step !== undefined ? Number(args.step) : undefined
+    const context = (args?.context as Record<string, unknown>) ?? {}
+
+    if (!formId) return { content: [{ type: 'text', text: 'Error: form_id is required.' }] }
+    try {
+      let state: Record<string, unknown> = { form_id: formId, step: 1, context: {}, updated_at: Date.now() / 1000 }
+      try {
+        const f = Bun.file(formStatePath(formId))
+        if (await f.exists()) state = JSON.parse(await f.text())
+      } catch {}
+
+      if (step !== undefined) state.step = step
+      state.context = { ...(state.context as Record<string, unknown>), ...context }
+      state.updated_at = Date.now() / 1000
+
+      await Bun.write(formStatePath(formId), JSON.stringify(state, null, 2))
+      return { content: [{ type: 'text', text: `Form '${formId}' state updated. Step: ${state.step}` }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error updating form state: ${e}` }] }
+    }
+  }
+
+  if (name === 'clear_form') {
+    const formId = String(args?.form_id ?? '')
+    if (!formId) return { content: [{ type: 'text', text: 'Error: form_id is required.' }] }
+    try {
+      const { unlinkSync, existsSync } = await import('fs')
+      const filePath = formStatePath(formId)
+      if (existsSync(filePath)) {
+        unlinkSync(filePath)
+        return { content: [{ type: 'text', text: `Form '${formId}' cleared.` }] }
+      } else {
+        return { content: [{ type: 'text', text: `Form '${formId}' had no state to clear.` }] }
+      }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error clearing form: ${e}` }] }
     }
   }
 

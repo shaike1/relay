@@ -95,6 +95,37 @@ To acknowledge without a full reply: call `react` with the incoming `message_id`
 
 Never leave a message completely unacknowledged — either react or reply.
 
+## Interactive forms
+
+Use `send_form` when a user interaction requires **multiple steps** where each step depends on the previous answer. Use `send_message` with `buttons` for single one-off confirmations.
+
+### When to use send_form vs send_message + buttons
+
+- **send_message + buttons**: Single question, no state needed. Example: "Are you sure? [Yes] [No]"
+- **send_form**: Multi-step flow where you need to carry state between steps. Example: choose environment → confirm deploy → execute.
+
+### How to chain form steps
+
+1. `send_form("deploy", 1, "Which environment?", ["Production", "Staging", "Dev"])`
+2. User clicks "Production" — arrives as a regular message
+3. `get_form_state("deploy")` → returns `{"form_id":"deploy","step":1,"context":{},...}`
+4. `update_form_state("deploy", 2, {"env": "production"})`
+5. `send_form("deploy", 2, "Deploy to Production?", ["Yes, deploy now", "Cancel"])`
+6. User clicks "Yes, deploy now"
+7. `get_form_state("deploy")` → confirms `context.env === "production"`
+8. Execute the deploy
+9. `clear_form("deploy")`
+
+### State file location
+
+Form state is stored at `/tmp/relay-form-${THREAD_ID}-${form_id}.json`. The state object contains:
+- `form_id` — the identifier you passed
+- `step` — current step number
+- `context` — arbitrary key/value state carried between steps
+- `waiting_for` — pipe-separated list of expected button labels
+
+Always call `clear_form` when the flow finishes (success, cancel, or error) to avoid stale state.
+
 ## Important
 
 - Always respond via `send_message` or `react` — never leave a message unacknowledged
