@@ -205,22 +205,41 @@ print(count, max_id)
   # Check if tmux session is alive in this container's socket
   tmux_s has-session -t "$SESSION" 2>/dev/null || continue
 
-  # Nudge via tmux — only when IDLE_GRACE > 0
-  [ "$IDLE_GRACE" -gt 0 ] || continue
+  # tmux send-keys fallback — fires ONCE per new message after TMUX_FALLBACK_DELAY seconds
+  # This is the ccbot-style delivery: reliable even when MCP notification misses.
+  # IDLE_GRACE=0 disables it; TMUX_FALLBACK_DELAY (default 60s) controls the delay.
+  TMUX_FALLBACK_DELAY=${TMUX_FALLBACK_DELAY:-60}
+  [ "$TMUX_FALLBACK_DELAY" -gt 0 ] || continue
 
   now=$(date +%s)
-  # Only nudge for new messages (id > last_nudged_id)
-  # Never retry the same message_id — prevents spam
+  # Only fire for new message_id — never repeat the same message
   [ "$highest_pending_id" -gt "$last_nudged_id" ] || continue
 
-  # Skip if Claude is actively working — check last 3 non-empty lines for active indicators
+  # Wait TMUX_FALLBACK_DELAY seconds before firing — gives MCP notification time to deliver
+  msg_arrived_ts=$(python3 -c "
+import json
+with open('$QUEUE') as f:
+    for line in f:
+        try:
+            m = json.loads(line)
+            if m.get('message_id') == $highest_pending_id:
+                print(int(m.get('ts', 0)))
+                break
+        except: pass
+print(0)
+" 2>/dev/null | head -1)
+  [ "${msg_arrived_ts:-0}" -gt 0 ] || msg_arrived_ts=$now
+  msg_age=$((now - msg_arrived_ts))
+  [ "$msg_age" -ge "$TMUX_FALLBACK_DELAY" ] || continue
+
+  # Skip if Claude is actively working
   pane=$(tmux_s capture-pane -t "$SESSION" -p 2>/dev/null || echo "")
   last_lines=$(echo "$pane" | grep -v "^[[:space:]]*$" | tail -3)
   if echo "$last_lines" | grep -qE "✻|Unfurling|⏳|Forging|Misting|Baking|Cogitat"; then
     continue
   fi
 
-  # Send text first, then Enter after a brief pause so Claude's TUI registers both
+  # Send via tmux — ccbot-style, reliable delivery
   tmux_s send-keys -t "$SESSION" "$NUDGE"
   sleep 0.3
   tmux_s send-keys -t "$SESSION" "" Enter
