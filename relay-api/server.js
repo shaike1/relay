@@ -109,7 +109,7 @@ function checkAuth(req) {
 function authMiddleware(req, res, next) {
   if (!AUTH_PASS) return next(); // No auth if no password set
   // Allow health check without auth
-  if (req.path === '/health') return next();
+  if (req.path === '/health' || req.path === '/health/sessions') return next();
   // Allow login page
   if (req.path === '/login') return next();
   if (checkAuth(req)) {
@@ -465,6 +465,19 @@ function webhookQueueWrite(update) {
   const deployCmd = msg.text && msg.text.trim().match(/^\/deploy(@\S+)?(\s+(\S+))?$/i);
   if (deployCmd) {
     handleDeployCommand(threadId, deployCmd[3] || null, msg.message_id).catch(e => console.error('[deploy] error:', e.message));
+    return;
+  }
+
+  // /export-config — export sessions.json and schedules.json as formatted message
+  if (msg.text && /^\/export-config(@\S+)?$/i.test(msg.text.trim())) {
+    handleExportConfigCommand(threadId, msg.message_id).catch(e => console.error('[export-config] error:', e.message));
+    return;
+  }
+
+  // /rollback [session] — list or rollback Docker image for a session
+  const rollbackCmd = msg.text && msg.text.trim().match(/^\/rollback(@\S+)?(\s+(\S+))?$/i);
+  if (rollbackCmd) {
+    handleRollbackCommand(threadId, msg.message_id, rollbackCmd[3] || null).catch(e => console.error('[rollback] error:', e.message));
     return;
   }
 
@@ -1208,6 +1221,97 @@ async function handleHistoryCommand(threadId, replyTo, page = 1, editMsgId = nul
     console.log(`[history] thread ${threadId} page ${page}/${totalPages}`);
   } catch (e) {
     console.error('[history] Failed:', e.message);
+  }
+}
+
+// /export-config — send sessions.json content as a formatted message (schedules truncated)
+async function handleExportConfigCommand(threadId, replyTo) {
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    // Redact sensitive fields
+    const safe = sessions.map(s => {
+      const { bot_token, ...rest } = s;
+      return rest;
+    });
+    const sessionsText = JSON.stringify(safe, null, 2);
+
+    const SCHEDULES_FILE = process.env.SCHEDULES_FILE || '/relay/schedules.json';
+    let schedulesText = '';
+    try {
+      const schedules = JSON.parse(fs.readFileSync(SCHEDULES_FILE, 'utf8'));
+      schedulesText = JSON.stringify(schedules, null, 2);
+    } catch (_) { schedulesText = '[]'; }
+
+    const MAX = 3000;
+    const header = `📦 <b>Config Export</b>\n\n<b>sessions.json</b> (${safe.length} sessions):\n`;
+    const truncated = sessionsText.length > MAX ? sessionsText.slice(0, MAX) + '\n…(truncated)' : sessionsText;
+    await tgSendMessage(threadId, header + `<pre>${truncated.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`, replyTo, null);
+
+    if (schedulesText.length < MAX) {
+      const schedsHeader = `<b>schedules.json</b>:\n`;
+      await tgSendMessage(threadId, schedsHeader + `<pre>${schedulesText.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`, null, null);
+    }
+    console.log(`[export-config] Exported config to thread ${threadId}`);
+  } catch (e) {
+    console.error('[export-config] Failed:', e.message);
+    await tgSendMessage(threadId, `❌ שגיאה ב-export-config: ${e.message}`, replyTo, null);
+  }
+}
+
+// /rollback [session] — list recent Docker image IDs or rollback a session image
+async function handleRollbackCommand(threadId, replyTo, sessionArg) {
+  try {
+    if (!sessionArg) {
+      // List recent relay-session image history
+      let out;
+      try {
+        out = execSync(`docker image ls relay-session --format '{{json .}}' 2>/dev/null`, { timeout: 10000 }).toString().trim();
+      } catch (_) { out = ''; }
+
+      if (!out) {
+        await tgSendMessage(threadId, '🐳 לא נמצאו images של <code>relay-session</code>', replyTo, null);
+        return;
+      }
+
+      const images = out.split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+      const lines = ['🐳 <b>relay-session images:</b>', ''];
+      for (const img of images.slice(0, 8)) {
+        lines.push(`• <code>${img.Tag || 'none'}</code> — ${img.ID || ''} (${img.CreatedSince || img.CreatedAt || ''})`);
+      }
+      lines.push('', 'שימוש: <code>/rollback &lt;session&gt;</code> לשחזור');
+      await tgSendMessage(threadId, lines.join('\n'), replyTo, null);
+      return;
+    }
+
+    // Rollback a specific session — tag :previous as :latest and restart container
+    const safeSession = sessionArg.replace(/[^a-zA-Z0-9_-]/g, '');
+    const containerName = `relay-session-${safeSession}`;
+
+    // Check if :previous tag exists
+    let prevExists = false;
+    try {
+      const check = execSync(`docker image inspect relay-session:previous 2>/dev/null || echo "notfound"`, { timeout: 5000 }).toString();
+      prevExists = !check.includes('notfound') && check.trim() !== '';
+    } catch (_) {}
+
+    if (!prevExists) {
+      await tgSendMessage(threadId, `⚠️ אין image בתג <code>relay-session:previous</code> לשחזור`, replyTo, null);
+      return;
+    }
+
+    await tgSendMessage(threadId, `🔄 משחזר <code>${safeSession}</code> ל-image הקודם...`, replyTo, null);
+
+    try {
+      execSync(`docker tag relay-session:previous relay-session:latest`, { timeout: 10000 });
+      execSync(`docker restart ${containerName}`, { timeout: 30000 });
+      await tgSendMessage(threadId, `✅ Rollback הושלם עבור <code>${safeSession}</code>`, null, null);
+      console.log(`[rollback] Rolled back ${containerName} to previous image`);
+    } catch (e) {
+      await tgSendMessage(threadId, `❌ שגיאה ב-rollback: ${e.message.substring(0, 200)}`, null, null);
+    }
+  } catch (e) {
+    console.error('[rollback] Failed:', e.message);
+    await tgSendMessage(threadId, `❌ שגיאה ב-rollback: ${e.message}`, replyTo, null);
   }
 }
 
@@ -2568,10 +2672,78 @@ app.get('/api/audit/:session', (req, res) => {
   }
 });
 
-// --- Health check ---
+// ── Health Check Endpoints ───────────────────────────────────────────────────
+// GET /health — no auth required, used by external uptime monitors
+// Returns overall status + per-session last_seen info
+const STALE_THRESHOLD_SEC = 30 * 60; // 30 minutes
+
+function buildSessionHealthData() {
+  const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+  const now = Math.floor(Date.now() / 1000);
+  const sessionData = [];
+
+  for (const s of sessions) {
+    if (s.host) continue; // skip remote sessions
+    const lastSentFile = `/tmp/tg-last-sent-${s.thread_id}`;
+    let lastSeen = null;
+    let status = 'unknown';
+
+    try {
+      const raw = fs.readFileSync(lastSentFile, 'utf8').trim();
+      lastSeen = parseInt(raw);
+      if (isNaN(lastSeen)) lastSeen = null;
+    } catch (_) {}
+
+    if (lastSeen !== null) {
+      const age = now - lastSeen;
+      status = age > STALE_THRESHOLD_SEC ? 'degraded' : 'running';
+    } else {
+      // Fallback: check container state
+      try {
+        const state = execSync(
+          `docker inspect --format '{{.State.Status}}' relay-session-${s.session} 2>/dev/null`,
+          { timeout: 3000 }
+        ).toString().trim();
+        status = state === 'running' ? 'running' : 'degraded';
+      } catch (_) {
+        status = 'degraded';
+      }
+    }
+
+    sessionData.push({
+      name: s.session,
+      thread_id: s.thread_id,
+      status,
+      last_seen: lastSeen,
+    });
+  }
+
+  return sessionData;
+}
+
 app.get('/health', (req, res) => {
-  res.json({ ok: true, uptime: process.uptime() });
+  try {
+    const sessions = buildSessionHealthData();
+    const allOk = sessions.every(s => s.status === 'running' || s.status === 'unknown');
+    res.json({
+      status: allOk ? 'ok' : 'degraded',
+      ts: Math.floor(Date.now() / 1000),
+      uptime: Math.floor(process.uptime()),
+      sessions,
+    });
+  } catch (e) {
+    res.status(500).json({ status: 'error', error: e.message });
+  }
 });
+
+app.get('/health/sessions', (req, res) => {
+  try {
+    res.json(buildSessionHealthData());
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+// ─────────────────────────────────────────────────────────────────────────────
 
 // --- Proxy everything else to nomacode (web terminal) ---
 app.use('/', createProxyMiddleware({
