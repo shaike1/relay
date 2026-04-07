@@ -3215,6 +3215,7 @@ app.get('/miniapp/sessions', (req, res) => {
         type:        s.type || 'claude',
         status:      metricsMap[s.session] || 'unknown',
         last_active: lastActive,
+        protected:   s.protected || false,
       };
     });
     res.json(result);

@@ -735,6 +735,8 @@
     }
     .ctx-menu-item:active { background: var(--card); }
     .ctx-menu-item.danger { color: var(--red); }
+    .ctx-menu-item.disabled { color: var(--muted); cursor: default; opacity: 0.55; pointer-events: none; }
+    .ctx-menu-item .ctx-protected-hint { font-size: 11px; color: var(--muted); display: block; margin-top: 1px; }
 
     /* ── Activity Heatmap ── */
     .heatmap-wrap { margin-top: 10px; }
@@ -929,7 +931,7 @@
 <!-- Context menu for session cards -->
 <div class="ctx-menu" id="ctx-menu">
   <div class="ctx-menu-item" onclick="ctxClone()">📋 Clone</div>
-  <div class="ctx-menu-item danger" onclick="ctxDelete()">🗑 Delete</div>
+  <div class="ctx-menu-item danger" id="ctx-delete-item" onclick="ctxDelete()">🗑 Delete</div>
 </div>
 
 <script>
@@ -1050,7 +1052,7 @@ function renderSessions() {
         <span class="session-time">${lastActive}</span>
         <span class="status-dot ${dotClass}"></span>
       </div>
-      <button class="session-menu-btn" onclick="event.stopPropagation(); openSessionMenu(event, '${escAttr(s.session)}')" aria-label="Options">⋮</button>
+      <button class="session-menu-btn" onclick="event.stopPropagation(); openSessionMenu(event, '${escAttr(s.session)}', ${s.protected ? 'true' : 'false'})" aria-label="Options">⋮</button>
     </div>`;
   }).join('');
 
@@ -1307,10 +1309,20 @@ async function submitNewSession() {
 
 // ── Session Card Context Menu ─────────────────────────────────────────────────
 let _ctxSession = null;
+let _ctxProtected = false;
 
-function openSessionMenu(event, sessionName) {
+function openSessionMenu(event, sessionName, isProtected) {
   _ctxSession = sessionName;
+  _ctxProtected = !!isProtected;
   const menu = document.getElementById('ctx-menu');
+  const deleteItem = document.getElementById('ctx-delete-item');
+  if (_ctxProtected) {
+    deleteItem.className = 'ctx-menu-item disabled';
+    deleteItem.innerHTML = '🔒 Delete<span class="ctx-protected-hint">Protected session</span>';
+  } else {
+    deleteItem.className = 'ctx-menu-item danger';
+    deleteItem.innerHTML = '🗑 Delete';
+  }
   const rect = event.target.getBoundingClientRect();
   menu.style.top = (rect.bottom + 4) + 'px';
   menu.style.right = (window.innerWidth - rect.right) + 'px';
@@ -1352,6 +1364,7 @@ async function ctxClone() {
 async function ctxDelete() {
   closeCtxMenu();
   if (!_ctxSession) return;
+  if (_ctxProtected) { tg.showAlert('🔒 This session is protected and cannot be deleted.'); return; }
   const name = _ctxSession;
   if (!confirm(`Delete session "${name}"? This will stop and remove the container.`)) return;
   try {
