@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <title>Relay</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+    :root {
+      --bg:       #212121;
+      --surface:  #2c2c2c;
+      --card:     #333333;
+      --border:   #444444;
+      --accent:   #2196F3;
+      --accent2:  #1976D2;
+      --text:     #e8e8e8;
+      --muted:    #9e9e9e;
+      --green:    #4CAF50;
+      --red:      #f44336;
+      --orange:   #FF9800;
+    }
+
+    html, body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    /* ── Navigation ── */
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    .nav-tabs {
+      display: flex;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .nav-tab {
+      flex: 1;
+      padding: 12px 8px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--muted);
+      cursor: pointer;
+      border: none;
+      background: none;
+      transition: color 0.2s, border-bottom 0.2s;
+      border-bottom: 2px solid transparent;
+    }
+    .nav-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .nav-tab .tab-icon { font-size: 18px; display: block; margin-bottom: 2px; }
+
+    /* ── Screens ── */
+    .screen {
+      display: none;
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
+    }
+    .screen.active { display: flex; flex-direction: column; }
+
+    /* ── Header ── */
+    .screen-header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    .screen-header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      flex: 1;
+    }
+    .back-btn {
+      background: none;
+      border: none;
+      color: var(--accent);
+      font-size: 22px;
+      cursor: pointer;
+      padding: 4px;
+      line-height: 1;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .status-dot.running { background: var(--green); }
+    .status-dot.stopped { background: var(--red); }
+    .status-dot.unknown { background: var(--orange); }
+
+    /* ── Sessions list ── */
+    .sessions-list {
+      padding: 8px 0;
+      flex: 1;
+    }
+    .session-card {
+      display: flex;
+      align-items: center;
+      padding: 14px 16px;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.15s;
+      gap: 12px;
+    }
+    .session-card:active { background: var(--card); }
+
+    .session-avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      font-weight: bold;
+      flex-shrink: 0;
+      color: #fff;
+    }
+    .session-info { flex: 1; min-width: 0; }
+    .session-name {
+      font-size: 15px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .session-meta {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .session-arrow { color: var(--muted); font-size: 14px; }
+
+    /* ── FAB ── */
+    .fab {
+      position: fixed;
+      bottom: 80px;
+      right: 20px;
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: none;
+      color: #fff;
+      font-size: 26px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(33,150,243,0.4);
+      z-index: 100;
+      transition: transform 0.1s;
+    }
+    .fab:active { transform: scale(0.93); }
+
+    /* ── Session detail ── */
+    #screen-detail {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      z-index: 200;
+      flex-direction: column;
+    }
+    #screen-detail.active { display: flex; }
+
+    .messages-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .msg-bubble {
+      max-width: 85%;
+      padding: 8px 12px;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.4;
+      word-break: break-word;
+    }
+    .msg-bubble.user {
+      align-self: flex-end;
+      background: var(--accent);
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+    .msg-bubble.assistant {
+      align-self: flex-start;
+      background: var(--card);
+      color: var(--text);
+      border-bottom-left-radius: 4px;
+    }
+    .msg-bubble.tool {
+      align-self: flex-start;
+      background: var(--surface);
+      color: var(--muted);
+      border-radius: 8px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 12px;
+      border-left: 3px solid var(--orange);
+    }
+    .msg-time {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+      text-align: right;
+    }
+
+    .quick-actions {
+      display: flex;
+      gap: 8px;
+      padding: 8px 16px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      overflow-x: auto;
+    }
+    .quick-btn {
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+    .quick-btn:active { background: var(--accent); border-color: var(--accent); }
+
+    .msg-input-bar {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+      padding: 10px 12px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+    }
+    .msg-input {
+      flex: 1;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 8px 14px;
+      color: var(--text);
+      font-size: 15px;
+      resize: none;
+      max-height: 120px;
+      line-height: 1.4;
+      outline: none;
+      font-family: inherit;
+    }
+    .msg-input:focus { border-color: var(--accent); }
+    .send-btn {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: none;
+      color: #fff;
+      font-size: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: opacity 0.15s;
+    }
+    .send-btn:disabled { opacity: 0.4; }
+
+    /* ── Stats screen ── */
+    .stats-section {
+      padding: 16px;
+    }
+    .stats-card {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 12px;
+      border: 1px solid var(--border);
+    }
+    .stats-card h3 {
+      font-size: 13px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+    }
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 14px;
+    }
+    .stat-row:last-child { border-bottom: none; }
+    .stat-val {
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    /* ── Empty state ── */
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      padding: 40px;
+      text-align: center;
+      gap: 12px;
+    }
+    .empty-icon { font-size: 48px; }
+    .empty-text { font-size: 15px; }
+
+    /* ── Loading ── */
+    .loading-spinner {
+      text-align: center;
+      padding: 30px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    /* ── Modal ── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 300;
+      align-items: flex-end;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal-sheet {
+      background: var(--surface);
+      border-radius: 16px 16px 0 0;
+      padding: 20px 16px 32px;
+      width: 100%;
+      max-height: 70vh;
+    }
+    .modal-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+    .modal-session-select {
+      width: 100%;
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 15px;
+      margin-bottom: 12px;
+      outline: none;
+    }
+    .modal-textarea {
+      width: 100%;
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 15px;
+      resize: none;
+      height: 90px;
+      outline: none;
+      font-family: inherit;
+      margin-bottom: 12px;
+    }
+    .modal-textarea:focus, .modal-session-select:focus { border-color: var(--accent); }
+    .modal-btn-row { display: flex; gap: 8px; }
+    .btn-primary {
+      flex: 1;
+      padding: 12px;
+      border-radius: 10px;
+      border: none;
+      background: var(--accent);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .btn-secondary {
+      padding: 12px 20px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: none;
+      color: var(--muted);
+      font-size: 15px;
+      cursor: pointer;
+    }
+
+    /* ── Pull-to-refresh indicator ── */
+    .pull-hint {
+      text-align: center;
+      padding: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Navigation tabs -->
+  <nav class="nav-tabs">
+    <button class="nav-tab active" onclick="showTab('sessions')" id="tab-sessions">
+      <span class="tab-icon">💬</span>Sessions
+    </button>
+    <button class="nav-tab" onclick="showTab('stats')" id="tab-stats">
+      <span class="tab-icon">📊</span>Stats
+    </button>
+  </nav>
+
+  <!-- Screen: Sessions List -->
+  <section class="screen active" id="screen-sessions">
+    <div class="screen-header">
+      <h1>Relay Sessions</h1>
+      <button onclick="loadSessions()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer">↻</button>
+    </div>
+    <div id="sessions-content" class="sessions-list">
+      <div class="loading-spinner">Loading sessions…</div>
+    </div>
+  </section>
+
+  <!-- Screen: Stats -->
+  <section class="screen" id="screen-stats">
+    <div class="screen-header">
+      <h1>Token Stats</h1>
+    </div>
+    <div id="stats-content" class="stats-section">
+      <div class="loading-spinner">Loading stats…</div>
+    </div>
+  </section>
+
+  <!-- FAB: compose new message -->
+  <button class="fab" onclick="openNewMessageModal()" id="fab-compose" title="New message">＋</button>
+</div>
+
+<!-- Session Detail Screen (overlay) -->
+<div id="screen-detail">
+  <div class="screen-header">
+    <button class="back-btn" onclick="closeDetail()">‹</button>
+    <span class="status-dot unknown" id="detail-status-dot"></span>
+    <h1 id="detail-title">Session</h1>
+  </div>
+  <div class="messages-list" id="detail-messages">
+    <div class="loading-spinner">Loading messages…</div>
+  </div>
+  <div class="quick-actions">
+    <button class="quick-btn" onclick="sendQuick('restart')">⟳ Restart</button>
+    <button class="quick-btn" onclick="sendQuick('cancel')">✕ Cancel</button>
+    <button class="quick-btn" onclick="sendQuick('screenshot')">📸 Screenshot</button>
+    <button class="quick-btn" onclick="sendQuick('status')">ℹ Status</button>
+  </div>
+  <div class="msg-input-bar">
+    <textarea class="msg-input" id="msg-input" placeholder="Message…" rows="1"
+      onInput="autoResize(this)" onKeydown="msgKeydown(event)"></textarea>
+    <button class="send-btn" id="send-btn" onclick="sendMessage()">➤</button>
+  </div>
+</div>
+
+<!-- New Message Modal -->
+<div class="modal-overlay" id="modal-new" onclick="modalOverlayClick(event)">
+  <div class="modal-sheet">
+    <div class="modal-title">New Message</div>
+    <select class="modal-session-select" id="modal-session-select">
+      <option value="">— Select session —</option>
+    </select>
+    <textarea class="modal-textarea" id="modal-text" placeholder="Type your message…"></textarea>
+    <div class="modal-btn-row">
+      <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn-primary" onclick="sendModalMessage()">Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Telegram Web App init ──────────────────────────────────────────────────────
+const tg = window.Telegram.WebApp;
+tg.ready();
+tg.expand();
+
+// Apply Telegram theme colors if available
+(function applyTheme() {
+  const p = tg.themeParams || {};
+  if (p.bg_color)        document.documentElement.style.setProperty('--bg',      p.bg_color);
+  if (p.secondary_bg_color) document.documentElement.style.setProperty('--surface', p.secondary_bg_color);
+  if (p.text_color)      document.documentElement.style.setProperty('--text',    p.text_color);
+  if (p.hint_color)      document.documentElement.style.setProperty('--muted',   p.hint_color);
+  if (p.link_color)      document.documentElement.style.setProperty('--accent',  p.link_color);
+  if (p.button_color)    document.documentElement.style.setProperty('--accent',  p.button_color);
+})();
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let sessions = [];
+let currentSession = null;
+let currentThreadId = null;
+let sendingMsg = false;
+
+// ── Auth: get initData for Telegram validation ─────────────────────────────────
+const INIT_DATA = tg.initData || '';
+
+// ── Tab navigation ────────────────────────────────────────────────────────────
+function showTab(name) {
+  document.querySelectorAll('.screen:not(#screen-detail)').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('screen-' + name).classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+
+  const fab = document.getElementById('fab-compose');
+  fab.style.display = name === 'sessions' ? 'flex' : 'none';
+
+  if (name === 'stats') loadStats();
+}
+
+// ── Sessions list ─────────────────────────────────────────────────────────────
+async function loadSessions() {
+  const el = document.getElementById('sessions-content');
+  el.innerHTML = '<div class="loading-spinner">Loading sessions…</div>';
+  try {
+    const r = await fetch('/miniapp/sessions');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    sessions = await r.json();
+    renderSessions();
+  } catch (e) {
+    el.innerHTML = `<div class="empty-state"><span class="empty-icon">⚠️</span><span class="empty-text">Failed to load sessions<br><small>${e.message}</small></span></div>`;
+    tg.showAlert('Failed to load sessions: ' + e.message);
+  }
+}
+
+function timeAgo(ts) {
+  if (!ts) return 'never';
+  const diff = Date.now() / 1000 - ts;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return Math.floor(diff / 86400) + 'd ago';
+}
+
+function renderSessions() {
+  const el = document.getElementById('sessions-content');
+  if (!sessions.length) {
+    el.innerHTML = '<div class="empty-state"><span class="empty-icon">🤖</span><span class="empty-text">No sessions configured</span></div>';
+    return;
+  }
+  el.innerHTML = sessions.map(s => {
+    const initial = (s.session || '?')[0].toUpperCase();
+    const statusClass = s.status === 'running' ? 'running' : (s.status === 'stopped' ? 'stopped' : 'unknown');
+    const lastActive = timeAgo(s.last_active);
+    const groupLabel = s.group ? ` · ${s.group}` : '';
+    return `<div class="session-card" onclick="openDetail('${s.session}', '${s.thread_id}', '${s.status}')">
+      <div class="session-avatar" style="background:${avatarColor(s.session)}">${initial}</div>
+      <div class="session-info">
+        <div class="session-name">${escHtml(s.session)}</div>
+        <div class="session-meta">${lastActive}${groupLabel}</div>
+      </div>
+      <span class="status-dot ${statusClass}"></span>
+      <span class="session-arrow">›</span>
+    </div>`;
+  }).join('');
+
+  // Populate modal session select
+  const sel = document.getElementById('modal-session-select');
+  sel.innerHTML = '<option value="">— Select session —</option>' +
+    sessions.map(s => `<option value="${s.session}">${escHtml(s.session)}</option>`).join('');
+}
+
+function avatarColor(name) {
+  const colors = ['#2196F3','#9C27B0','#4CAF50','#FF5722','#009688','#E91E63','#FF9800','#607D8B'];
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % colors.length;
+  return colors[h];
+}
+
+// ── Session detail ─────────────────────────────────────────────────────────────
+async function openDetail(sessionName, threadId, status) {
+  currentSession = sessionName;
+  currentThreadId = threadId;
+  document.getElementById('detail-title').textContent = sessionName;
+  const dot = document.getElementById('detail-status-dot');
+  dot.className = 'status-dot ' + (status === 'running' ? 'running' : (status === 'stopped' ? 'stopped' : 'unknown'));
+  document.getElementById('screen-detail').classList.add('active');
+  document.getElementById('msg-input').value = '';
+  await loadMessages();
+}
+
+function closeDetail() {
+  document.getElementById('screen-detail').classList.remove('active');
+  currentSession = null;
+  currentThreadId = null;
+}
+
+async function loadMessages() {
+  const el = document.getElementById('detail-messages');
+  el.innerHTML = '<div class="loading-spinner">Loading messages…</div>';
+  try {
+    const r = await fetch(`/miniapp/history/${encodeURIComponent(currentSession)}`);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const events = await r.json();
+    renderMessages(events);
+  } catch (e) {
+    el.innerHTML = `<div class="empty-state"><span class="empty-icon">⚠️</span><span class="empty-text">${e.message}</span></div>`;
+  }
+}
+
+function renderMessages(events) {
+  const el = document.getElementById('detail-messages');
+  if (!events.length) {
+    el.innerHTML = '<div class="empty-state"><span class="empty-icon">💬</span><span class="empty-text">No messages yet</span></div>';
+    return;
+  }
+  el.innerHTML = events.map(e => {
+    const time = e.ts ? new Date(e.ts).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+    if (e.type === 'tool') {
+      return `<div class="msg-bubble tool">🔧 ${escHtml(e.tool || '')} ${escHtml(e.command || '')}<div class="msg-time">${time}</div></div>`;
+    }
+    const isUser = e.user && e.user !== 'assistant' && e.type === 'message';
+    const cls = isUser ? 'user' : 'assistant';
+    return `<div class="msg-bubble ${cls}">${escHtml(e.text || '')}<div class="msg-time">${time}</div></div>`;
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+async function sendMessage() {
+  const input = document.getElementById('msg-input');
+  const text = input.value.trim();
+  if (!text || sendingMsg) return;
+  if (!currentSession) return;
+
+  sendingMsg = true;
+  document.getElementById('send-btn').disabled = true;
+  input.value = '';
+  input.style.height = '';
+
+  try {
+    const r = await fetch('/miniapp/send', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ session: currentSession, text, init_data: INIT_DATA }),
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      throw new Error(d.error || 'HTTP ' + r.status);
+    }
+    // Optimistically add message
+    const el = document.getElementById('detail-messages');
+    const now = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    el.insertAdjacentHTML('beforeend', `<div class="msg-bubble user">${escHtml(text)}<div class="msg-time">${now}</div></div>`);
+    el.scrollTop = el.scrollHeight;
+  } catch (e) {
+    tg.showAlert('Send failed: ' + e.message);
+  } finally {
+    sendingMsg = false;
+    document.getElementById('send-btn').disabled = false;
+  }
+}
+
+async function sendQuick(action) {
+  const cmds = { restart: '/restart', cancel: '/cancel', screenshot: '/screenshot', status: '/status' };
+  const text = cmds[action];
+  if (!text || !currentSession) return;
+  try {
+    await fetch('/miniapp/send', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ session: currentSession, text, init_data: INIT_DATA }),
+    });
+    tg.showAlert('Command sent: ' + text);
+  } catch (e) {
+    tg.showAlert('Failed: ' + e.message);
+  }
+}
+
+// ── New Message Modal ──────────────────────────────────────────────────────────
+function openNewMessageModal() {
+  document.getElementById('modal-new').classList.add('active');
+  setTimeout(() => document.getElementById('modal-text').focus(), 100);
+}
+function closeModal() {
+  document.getElementById('modal-new').classList.remove('active');
+  document.getElementById('modal-text').value = '';
+}
+function modalOverlayClick(e) {
+  if (e.target === document.getElementById('modal-new')) closeModal();
+}
+async function sendModalMessage() {
+  const sel = document.getElementById('modal-session-select');
+  const text = document.getElementById('modal-text').value.trim();
+  const sessionName = sel.value;
+  if (!sessionName) { tg.showAlert('Please select a session'); return; }
+  if (!text) { tg.showAlert('Please enter a message'); return; }
+  try {
+    const r = await fetch('/miniapp/send', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ session: sessionName, text, init_data: INIT_DATA }),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    closeModal();
+    tg.showAlert('Message sent!');
+  } catch (e) {
+    tg.showAlert('Send failed: ' + e.message);
+  }
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+async function loadStats() {
+  const el = document.getElementById('stats-content');
+  el.innerHTML = '<div class="loading-spinner">Loading stats…</div>';
+  if (!sessions.length) {
+    try {
+      const r = await fetch('/miniapp/sessions');
+      if (r.ok) sessions = await r.json();
+    } catch (_) {}
+  }
+  if (!sessions.length) {
+    el.innerHTML = '<div class="empty-state"><span class="empty-icon">📊</span><span class="empty-text">No sessions to show</span></div>';
+    return;
+  }
+
+  const statsPromises = sessions.map(async s => {
+    try {
+      const r = await fetch(`/miniapp/stats/${encodeURIComponent(s.session)}`);
+      if (!r.ok) return { session: s.session, error: true };
+      const data = await r.json();
+      return { session: s.session, ...data };
+    } catch (_) { return { session: s.session, error: true }; }
+  });
+
+  const results = await Promise.all(statsPromises);
+  let html = '';
+  for (const d of results) {
+    if (d.error) continue;
+    const totalIn = (d.daily || []).reduce((s, r) => s + (r.input_tokens || 0), 0);
+    const totalOut = (d.daily || []).reduce((s, r) => s + (r.output_tokens || 0), 0);
+    const totalCost = (d.daily || []).reduce((s, r) => s + (r.cost_usd || 0), 0);
+    if (!d.daily || !d.daily.length) continue;
+    html += `<div class="stats-card">
+      <h3>${escHtml(d.session)}</h3>
+      <div class="stat-row"><span>Input tokens</span><span class="stat-val">${totalIn.toLocaleString()}</span></div>
+      <div class="stat-row"><span>Output tokens</span><span class="stat-val">${totalOut.toLocaleString()}</span></div>
+      <div class="stat-row"><span>Est. cost</span><span class="stat-val">$${totalCost.toFixed(4)}</span></div>
+    </div>`;
+  }
+  el.innerHTML = html || '<div class="empty-state"><span class="empty-icon">📊</span><span class="empty-text">No token data available</span></div>';
+}
+
+// ── Input helpers ─────────────────────────────────────────────────────────────
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+function msgKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+loadSessions();
+</script>
+</body>
+</html>

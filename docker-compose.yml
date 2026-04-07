@@ -80,6 +80,8 @@ services:
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
       GROUP_CHAT_ID: "${GROUP_CHAT_ID}"
       WEBHOOK_SECRET: "${WEBHOOK_SECRET:-codex-relay-wh-2026}"
+      MINIAPP_DOMAIN: "${MINIAPP_DOMAIN:-https://relay.right-api.com}"
+      MINIAPP_HTML: "/relay/miniapp/index.html"
     volumes:
       - /root/relay/relay-api/server.js:/relay-api/server.js:ro
       - /root/relay/sessions.json:/relay/sessions.json
@@ -92,6 +94,7 @@ services:
       - /root/relay/tasks-dashboard.html:/relay/tasks-dashboard.html:ro
       - /root/relay/orchestrator.html:/relay/orchestrator.html:ro
       - /root/relay/pipeline.html:/relay/pipeline.html:ro
+      - /root/relay/miniapp:/relay/miniapp:ro
       - /root/relay/scripts:/relay/scripts:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - relay-queue:/tmp
@@ -125,6 +128,8 @@ services:
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
       GROUP_CHAT_ID: "${GROUP_CHAT_ID}"
       WEBHOOK_SECRET: "${WEBHOOK_SECRET:-codex-relay-wh-2026}"
+      MINIAPP_DOMAIN: "${MINIAPP_DOMAIN:-https://relay.right-api.com}"
+      MINIAPP_HTML: "/relay/miniapp/index.html"
     volumes:
       - /root/relay/relay-api/server.js:/relay-api/server.js
       - /root/relay/relay-api/utils.js:/relay-api/utils.js
@@ -139,6 +144,7 @@ services:
       - /root/relay/tasks-dashboard.html:/relay/tasks-dashboard.html:ro
       - /root/relay/orchestrator.html:/relay/orchestrator.html:ro
       - /root/relay/pipeline.html:/relay/pipeline.html:ro
+      - /root/relay/miniapp:/relay/miniapp:ro
       - /root/relay/scripts:/relay/scripts:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - relay-queue:/tmp

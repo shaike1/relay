@@ -139,6 +139,8 @@ function authMiddleware(req, res, next) {
   if (req.path === '/health' || req.path === '/health/sessions') return next();
   // Allow login page
   if (req.path === '/login') return next();
+  // Allow Mini App endpoints — authenticated via Telegram initData instead
+  if (req.path === '/miniapp' || req.path.startsWith('/miniapp/')) return next();
   if (checkAuth(req)) {
     // If auth via URL token, set cookie and redirect to clean URL
     if (req.query.token) {
@@ -453,6 +455,26 @@ function webhookQueueWrite(update) {
     }
   } catch (e) {
     console.error('[self-register] Error:', e.message);
+  }
+
+  // /start — welcome message with Mini App button
+  if (msg.text && /^\/start(@\S+)?$/i.test(msg.text.trim())) {
+    const miniappDomain = process.env.MINIAPP_DOMAIN || (() => {
+      const wu = process.env.WEBHOOK_URL || '';
+      const m = wu.match(/^(https?:\/\/[^\/]+)/);
+      return m ? m[1] : null;
+    })();
+    const miniappUrl = miniappDomain ? `${miniappDomain}/miniapp` : null;
+    const replyMarkup = miniappUrl ? {
+      inline_keyboard: [[{ text: '📱 Open Relay App', web_app: { url: miniappUrl } }]]
+    } : null;
+    tgSendMessage(
+      threadId,
+      '👋 <b>ברוך הבא ל-Relay!</b>\nשלח הודעות לסשן הפעיל, או פתח את האפליקציה לניהול כל הסשנים.',
+      msg.message_id,
+      replyMarkup
+    ).catch(() => {});
+    return;
   }
 
   // Auto-handle /status command without waking Claude (saves tokens)
@@ -3099,6 +3121,213 @@ app.post('/api/notify', (req, res) => {
 });
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Telegram Mini App ─────────────────────────────────────────────────────────
+// All /miniapp/* routes are public — authenticated via Telegram WebApp initData.
+
+const MINIAPP_HTML = process.env.MINIAPP_HTML || '/relay/miniapp/index.html';
+
+// Validate Telegram WebApp initData (HMAC-SHA256)
+function validateInitData(initData, botToken) {
+  if (!initData || !botToken) return false;
+  try {
+    const crypto = require('crypto');
+    const params = new URLSearchParams(initData);
+    const hash = params.get('hash');
+    if (!hash) return false;
+    params.delete('hash');
+    const dataCheckString = [...params.entries()].sort().map(([k, v]) => `${k}=${v}`).join('\n');
+    const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
+    const computedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+    return computedHash === hash;
+  } catch (_) { return false; }
+}
+
+// GET /miniapp — serve the Mini App HTML
+app.get('/miniapp', (req, res) => {
+  try {
+    res.type('html').send(fs.readFileSync(MINIAPP_HTML, 'utf8'));
+  } catch (e) { res.status(500).send('Mini App not found'); }
+});
+
+// GET /miniapp/sessions — sessions list with status (no auth, used by Mini App)
+app.get('/miniapp/sessions', (req, res) => {
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    let metricsMap = {};
+    try {
+      const metricsRaw = execSync(METRICS_SCRIPT, { timeout: 10000 }).toString();
+      const metrics = JSON.parse(metricsRaw);
+      for (const m of metrics) metricsMap[m.session] = m.status;
+    } catch (_) {}
+
+    const result = sessions.map(s => {
+      const lastSentFile = `/tmp/tg-last-sent-${s.thread_id}`;
+      let lastActive = null;
+      try {
+        const ts = parseFloat(fs.readFileSync(lastSentFile, 'utf8').trim());
+        if (!isNaN(ts)) lastActive = ts;
+      } catch (_) {}
+      return {
+        session:     s.session,
+        thread_id:   s.thread_id,
+        group:       s.group || '',
+        type:        s.type || 'claude',
+        status:      metricsMap[s.session] || 'unknown',
+        last_active: lastActive,
+      };
+    });
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /miniapp/history/:session — last 20 messages/events for a session
+app.get('/miniapp/history/:session', (req, res) => {
+  try {
+    const sessionName = req.params.session.replace(/[^a-zA-Z0-9_-]/g, '');
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const session = sessions.find(s => s.session === sessionName);
+    if (!session) return res.status(404).json({ error: 'session not found' });
+
+    const events = [];
+    const threadId = session.thread_id;
+
+    // Messages from queue file
+    const queueFile = `/tmp/tg-queue-${threadId}.jsonl`;
+    if (fs.existsSync(queueFile)) {
+      const lines = fs.readFileSync(queueFile, 'utf8').split('\n').filter(l => l.trim());
+      for (const line of lines.slice(-50)) {
+        try {
+          const m = JSON.parse(line);
+          if (!m.text) continue;
+          events.push({
+            ts:   m.ts ? new Date(m.ts * 1000).toISOString() : null,
+            type: 'message',
+            text: (m.text || '').slice(0, 400),
+            user: m.user || 'unknown',
+          });
+        } catch (_) {}
+      }
+    }
+
+    // Tool calls from Claude project JSONL
+    try {
+      const projectKey = session.path.replace(/\//g, '-').replace(/[^a-zA-Z0-9._-]/g, '-');
+      const projectDir = `/root/.claude/projects/${projectKey}`;
+      const latest = fs.existsSync(projectDir)
+        ? fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl')).sort().pop()
+        : null;
+      if (latest) {
+        const lines = fs.readFileSync(path.join(projectDir, latest), 'utf8').split('\n').filter(l => l.trim());
+        for (const line of lines.slice(-100)) {
+          try {
+            const d = JSON.parse(line);
+            if (d.type === 'assistant' && d.message && Array.isArray(d.message.content)) {
+              for (const block of d.message.content) {
+                if (block.type === 'tool_use') {
+                  events.push({
+                    ts:      d.timestamp,
+                    type:    'tool',
+                    tool:    block.name,
+                    command: JSON.stringify(block.input || {}).slice(0, 120),
+                  });
+                }
+              }
+            }
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+
+    events.sort((a, b) => (a.ts || '') < (b.ts || '') ? -1 : 1);
+    res.json(events.slice(-20));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /miniapp/stats/:session — token usage for a session
+app.get('/miniapp/stats/:session', (req, res) => {
+  try {
+    const sessionName = req.params.session.replace(/[^a-zA-Z0-9_-]/g, '');
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const session = sessions.find(s => s.session === sessionName);
+    if (!session) return res.status(404).json({ error: 'session not found' });
+
+    const statsFile = path.join(QUEUE_DIR, `token-stats-${session.thread_id}.jsonl`);
+    if (!fs.existsSync(statsFile)) return res.json({ session: sessionName, daily: [] });
+
+    const lines = fs.readFileSync(statsFile, 'utf8').split('\n').filter(l => l.trim());
+    const byDate = {};
+    for (const line of lines) {
+      try {
+        const e = JSON.parse(line);
+        const date = (e.ts || '').slice(0, 10);
+        if (!date) continue;
+        if (!byDate[date]) byDate[date] = { date, input_tokens: 0, output_tokens: 0, cost_usd: 0 };
+        byDate[date].input_tokens  += e.input  || 0;
+        byDate[date].output_tokens += e.output || 0;
+        byDate[date].cost_usd      += e.cost_usd || 0;
+      } catch (_) {}
+    }
+    const daily = Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date));
+    res.json({ session: sessionName, daily });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /miniapp/send — accept {session, text, init_data}, validate and queue message
+app.post('/miniapp/send', (req, res) => {
+  const { session: sessionName, text, init_data } = req.body || {};
+  if (!sessionName || !/^[a-zA-Z0-9_-]+$/.test(sessionName)) {
+    return res.status(400).json({ error: 'Invalid session name' });
+  }
+  if (!text || typeof text !== 'string') {
+    return res.status(400).json({ error: 'text required' });
+  }
+
+  // Validate Telegram initData (bypass in dev if no bot token)
+  if (TG_BOT_TOKEN) {
+    if (!init_data || !validateInitData(init_data, TG_BOT_TOKEN)) {
+      return res.status(403).json({ error: 'Invalid or missing Telegram initData' });
+    }
+  }
+
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const session = sessions.find(s => s.session === sessionName);
+    if (!session) return res.status(404).json({ error: 'session not found' });
+
+    // Extract user from initData if present
+    let userName = 'miniapp';
+    let userId = 0;
+    try {
+      const params = new URLSearchParams(init_data || '');
+      const userJson = params.get('user');
+      if (userJson) {
+        const u = JSON.parse(userJson);
+        userName = u.first_name || u.username || 'miniapp';
+        userId = u.id || 0;
+      }
+    } catch (_) {}
+
+    const entry = {
+      message_id: -(Math.floor(Date.now() / 1000) % 2147483647),
+      user: userName,
+      user_id: userId,
+      text: text.slice(0, 2000),
+      ts: Math.floor(Date.now() / 1000),
+      via: 'miniapp',
+      force: true,
+    };
+    const queueFile = path.join(QUEUE_DIR, `tg-queue-${session.thread_id}.jsonl`);
+    fs.appendFileSync(queueFile, JSON.stringify(entry) + '\n');
+    fs.writeFileSync(path.join(QUEUE_DIR, `relay-msg-start-${session.thread_id}`), String(Date.now()));
+    console.log(`[miniapp] ${sessionName}: ${userName}: ${text.substring(0, 60)}`);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[miniapp] send error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+
 // --- Proxy everything else to nomacode (web terminal) ---
 app.use('/', createProxyMiddleware({
   target: NOMACODE_URL,
@@ -3117,6 +3346,28 @@ app.use('/', createProxyMiddleware({
 
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Relay API server listening on port ${PORT}, proxying to ${NOMACODE_URL}`);
+
+  // Set the bot's menu button to open the Mini App
+  const MINIAPP_DOMAIN = process.env.MINIAPP_DOMAIN || (() => {
+    // Derive domain from WEBHOOK_URL env if set (e.g. https://relay.right-api.com/webhook/...)
+    const wu = process.env.WEBHOOK_URL || '';
+    const m = wu.match(/^(https?:\/\/[^\/]+)/);
+    return m ? m[1] : null;
+  })();
+  if (TG_BOT_TOKEN && MINIAPP_DOMAIN) {
+    const miniappUrl = `${MINIAPP_DOMAIN}/miniapp`;
+    fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/setChatMenuButton`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ menu_button: { type: 'web_app', text: 'Open App', web_app: { url: miniappUrl } } }),
+      signal: AbortSignal.timeout(8000),
+    })
+      .then(r => r.json())
+      .then(d => console.log('[miniapp] setChatMenuButton:', d.ok ? 'ok' : JSON.stringify(d)))
+      .catch(e => console.warn('[miniapp] setChatMenuButton failed:', e.message));
+  } else {
+    console.log('[miniapp] Skipping setChatMenuButton — set MINIAPP_DOMAIN or WEBHOOK_URL env var');
+  }
 });
 
 // WebSocket upgrade for terminal
