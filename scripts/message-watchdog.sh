@@ -71,7 +71,14 @@ while true; do
       alerted_file="/tmp/tg-crash-alerted-${THREAD_ID}"
       if [ "$silence_secs" -gt "$threshold" ] && [ ! -f "$alerted_file" ]; then
         mins=$((silence_secs / 60))
-        tg-send "⚠️ Session <b>${SESSION}</b> has not sent any message in ${mins} minutes — may be stuck or crashed." 2>/dev/null || true
+        ALERT_TEXT="⚠️ Session <b>${SESSION}</b> has not sent any message in ${mins} minutes — may be stuck or crashed."
+        tg-send "$ALERT_TEXT" 2>/dev/null || true
+        # Also send a direct DM notification if NOTIFY_USER_ID is set
+        RELAY_API_URL="${RELAY_API_URL:-http://relay-api:9100}"
+        curl -sf -X POST "${RELAY_API_URL}/api/notify" \
+          -H "Content-Type: application/json" \
+          -d "{\"text\":\"$ALERT_TEXT\",\"urgent\":true}" \
+          2>/dev/null || true
         # Set alerted flag — don't repeat until Claude sends a real message (flag cleared by mcp-telegram on send)
         touch "$alerted_file"
       fi

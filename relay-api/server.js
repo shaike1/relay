@@ -52,14 +52,41 @@ function reportError(type, err) {
   }
 }
 
+// ── Direct user notifications ─────────────────────────────────────────────────
+// notifyUser(text) — sends a DM to NOTIFY_USER_ID (if set).
+// Used for critical events: crashes, errors, backup completion, etc.
+const NOTIFY_USER_ID = process.env.NOTIFY_USER_ID || null;
+
+function notifyUser(text, urgent = true) {
+  if (!NOTIFY_USER_ID) return;
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return;
+  const body = JSON.stringify({
+    chat_id: NOTIFY_USER_ID,
+    text,
+    parse_mode: 'HTML',
+    disable_notification: !urgent,
+  });
+  fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+    signal: AbortSignal.timeout(8000),
+  }).catch(() => {});
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 process.on('uncaughtException', (err) => {
   console.error('[error-reporter] uncaughtException:', err);
   reportError('uncaughtException', err);
+  notifyUser(`🚨 <b>relay-api uncaught exception</b>\n<code>${String(err.message || err).substring(0, 300)}</code>`);
 });
 
 process.on('unhandledRejection', (reason) => {
   console.error('[error-reporter] unhandledRejection:', reason);
-  reportError('unhandledRejection', reason instanceof Error ? reason : new Error(String(reason)));
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  reportError('unhandledRejection', err);
+  notifyUser(`🚨 <b>relay-api unhandled rejection</b>\n<code>${String(err.message).substring(0, 300)}</code>`);
 });
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2860,6 +2887,18 @@ app.get('/health/sessions', (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Direct notify API ─────────────────────────────────────────────────────────
+// POST /api/notify — send a DM to NOTIFY_USER_ID (used by scripts like backup.sh)
+app.post('/api/notify', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  const text = req.body && req.body.text ? String(req.body.text) : '';
+  if (!text) return res.status(400).json({ error: 'text required' });
+  if (!NOTIFY_USER_ID) return res.status(503).json({ error: 'NOTIFY_USER_ID not configured' });
+  notifyUser(text, req.body.urgent !== false);
+  res.json({ ok: true });
 });
 // ─────────────────────────────────────────────────────────────────────────────
 

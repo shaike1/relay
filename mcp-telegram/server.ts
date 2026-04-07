@@ -501,6 +501,18 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
+    {
+      name: 'notify',
+      description: 'Send a direct notification message to the owner\'s Telegram user (DM, not the group topic). Use for critical alerts, completed background tasks, or anything that needs immediate attention outside the normal conversation thread. Requires NOTIFY_USER_ID to be set in env.',
+      inputSchema: {
+        type: 'object',
+        required: ['text'],
+        properties: {
+          text:   { type: 'string',  description: 'Notification message text (HTML supported)' },
+          urgent: { type: 'boolean', description: 'If true, sends with notification sound (default). If false, sends silently.' },
+        },
+      },
+    },
   ],
 }))
 
@@ -1375,6 +1387,38 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       return { content: [{ type: 'text', text: `Diff sent. ${filesChanged} files, +${insertions}/-${deletions}` }] }
     } catch (e) {
       return { content: [{ type: 'text', text: `Error sending diff: ${e}` }] }
+    }
+  }
+
+  // ── Notify (DM to owner) ──────────────────────────────────────────────────
+
+  if (name === 'notify') {
+    const text   = String(args?.text ?? '')
+    const urgent = args?.urgent !== false  // default true (with sound)
+    const notifyUserId = process.env.NOTIFY_USER_ID
+    if (!notifyUserId) {
+      return { content: [{ type: 'text', text: 'NOTIFY_USER_ID is not set — cannot send direct notification.' }] }
+    }
+    try {
+      const body: Record<string, unknown> = {
+        chat_id:              notifyUserId,
+        text:                 autoCode(text),
+        parse_mode:           'HTML',
+        disable_notification: !urgent,
+      }
+      const r = await fetch(`${BASE}/sendMessage`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body),
+      })
+      const res = await r.json() as { ok: boolean; result?: { message_id: number }; description?: string }
+      if (res.ok) {
+        return { content: [{ type: 'text', text: `Direct notification sent (message_id: ${res.result?.message_id})` }] }
+      } else {
+        return { content: [{ type: 'text', text: `Failed to send notification: ${res.description ?? JSON.stringify(res)}` }] }
+      }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error sending notification: ${e}` }] }
     }
   }
 

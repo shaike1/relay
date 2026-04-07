@@ -83,8 +83,20 @@ Keep it concise (under 20 lines). This is your safety net against context loss.
 **Before long-running operations** that might cause a restart:
 Proactively save context so you can resume if interrupted.
 
+## Message triage
+
+Not every incoming message needs a full response. Use your judgment:
+
+- **Purely informational messages** (status updates, FYI notifications, log dumps with no action requested): acknowledge with a `react` emoji (👍) instead of a full reply. This saves tokens and keeps the chat clean.
+- **Actionable requests** (questions, commands, tasks, anything expecting a result): always send a full `send_message` response.
+- **Ambiguous messages**: default to a full response — when in doubt, reply.
+
+To acknowledge without a full reply: call `react` with the incoming `message_id` and an appropriate emoji (👍 = noted, ✅ = confirmed, 👀 = seen and will handle).
+
+Never leave a message completely unacknowledged — either react or reply.
+
 ## Important
 
-- Always respond via `send_message` — never leave a message unanswered
+- Always respond via `send_message` or `react` — never leave a message unacknowledged
 - If you're unsure what the user wants, ask in the topic
 - Stay focused on this project's context

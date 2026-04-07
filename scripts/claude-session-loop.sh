@@ -16,6 +16,10 @@ PROJECT_DIR="${HOME}/.claude/projects/${CLAUDE_PROJECT_KEY}"
 export IS_SANDBOX=1
 export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 
+# Proactive check interval (minutes). 0 = disabled (default).
+# Set PROACTIVE_INTERVAL=30 in .env to wake Claude every 30 minutes when idle.
+PROACTIVE_INTERVAL="${PROACTIVE_INTERVAL:-0}"
+
 # Use a per-session tmux socket so containers don't share a tmux server.
 # The socket lives on the shared /tmp volume but each session has its own server.
 TMUX_SOCKET="/tmp/tmux-${SESSION}.sock"
@@ -150,9 +154,9 @@ except Exception:
 '"${MEMORY_KEYS_MSG:+
 $MEMORY_KEYS_MSG
 }"'
-Call typing then send_message with '"'"'חזרתי ✓ (ממשיך מהיכן שעצרנו)'"'"' then fetch_messages and respond.'
+Call typing then send_message with '"'"'חזרתי ✓ (ממשיך מהיכן שעצרנו)'"'"' then fetch_messages and respond. For purely informational messages use react(👍) instead of a full reply; save full responses for actionable requests.'
     else
-      STARTUP_MSG='You just started.'"${MEMORY_KEYS_MSG:+ $MEMORY_KEYS_MSG.}"' Call typing then send_message with '"'"'חזרתי ✓'"'"' to announce you'"'"'re online, then fetch_messages and respond to all pending messages.'
+      STARTUP_MSG='You just started.'"${MEMORY_KEYS_MSG:+ $MEMORY_KEYS_MSG.}"' Call typing then send_message with '"'"'חזרתי ✓'"'"' to announce you'"'"'re online, then fetch_messages and respond to all pending messages. Tip: for purely informational messages (status updates, FYI), use react(👍) instead of a full reply.'
     fi
     printf '%s\n' "$(python3 -c "
 import json, time
@@ -165,6 +169,58 @@ print(json.dumps({
 }))
 ")" >> "$QUEUE_FILE"
   fi
+fi
+
+# Proactive check injector — runs in background, wakes Claude on a schedule
+# Only active when PROACTIVE_INTERVAL > 0 and a THREAD_ID is known.
+if [ -n "$THREAD_ID" ] && [ "$PROACTIVE_INTERVAL" -gt 0 ] 2>/dev/null; then
+  (
+    PROACTIVE_QUEUE_FILE="/tmp/tg-queue-${THREAD_ID}.jsonl"
+    PROACTIVE_INTERVAL_SECS=$(( PROACTIVE_INTERVAL * 60 ))
+    # Wait one full interval before first probe so startup messages settle
+    sleep "$PROACTIVE_INTERVAL_SECS"
+    while true; do
+      # Only inject if no real user message arrived in the last interval
+      # (avoids interrupting active conversations)
+      LAST_USER_TS=$(python3 -c "
+import json, time, os
+queue = '$PROACTIVE_QUEUE_FILE'
+interval = $PROACTIVE_INTERVAL_SECS
+if not os.path.exists(queue):
+    print(0); exit()
+cutoff = time.time() - interval
+latest = 0
+for line in open(queue):
+    try:
+        m = json.loads(line.strip())
+        mid = m.get('message_id', 0)
+        ts = m.get('ts', 0)
+        # Only count real user messages (positive IDs, not system injections)
+        if mid > 0 and ts > latest:
+            latest = ts
+    except Exception:
+        pass
+print(latest)
+" 2>/dev/null || echo 0)
+      NOW=$(date +%s)
+      IDLE_SECS=$(( NOW - ${LAST_USER_TS%.*} ))
+      if [ "$IDLE_SECS" -ge "$PROACTIVE_INTERVAL_SECS" ]; then
+        python3 -c "
+import json, time
+print(json.dumps({
+    'text': 'Check if there\\'s anything worth proactively reporting to the user — background tasks completed, errors noticed, or important state changes. If nothing notable, call typing() and do not send a message.',
+    'user': 'system:proactive',
+    'message_id': -int(time.time() * 1000),
+    'ts': time.time(),
+    'force': True
+}))
+" >> "$PROACTIVE_QUEUE_FILE" 2>/dev/null || true
+      fi
+      sleep "$PROACTIVE_INTERVAL_SECS"
+    done
+  ) &
+  PROACTIVE_PID=$!
+  trap "kill $PROACTIVE_PID 2>/dev/null || true; ${TRAP_EXIT:-}" EXIT
 fi
 
 # Inner loop script that Claude runs inside tmux

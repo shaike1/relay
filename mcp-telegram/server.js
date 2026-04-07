@@ -14923,6 +14923,18 @@ mcp.setRequestHandler(ListToolsRequestSchema2, async () => ({
           caption: { type: "string", description: "Optional caption/title for the diff" }
         }
       }
+    },
+    {
+      name: "notify",
+      description: "Send a direct notification message to the owner's Telegram user (DM, not the group topic). Use for critical alerts, completed background tasks, or anything that needs immediate attention outside the normal conversation thread. Requires NOTIFY_USER_ID to be set in env.",
+      inputSchema: {
+        type: "object",
+        required: ["text"],
+        properties: {
+          text: { type: "string", description: "Notification message text (HTML supported)" },
+          urgent: { type: "boolean", description: "If true, sends with notification sound (default). If false, sends silently." }
+        }
+      }
     }
   ]
 }));
@@ -15762,6 +15774,35 @@ ${task}`,
       return { content: [{ type: "text", text: `Diff sent. ${filesChanged} files, +${insertions}/-${deletions}` }] };
     } catch (e) {
       return { content: [{ type: "text", text: `Error sending diff: ${e}` }] };
+    }
+  }
+  if (name === "notify") {
+    const text = String(args?.text ?? "");
+    const urgent = args?.urgent !== false;
+    const notifyUserId = process.env.NOTIFY_USER_ID;
+    if (!notifyUserId) {
+      return { content: [{ type: "text", text: "NOTIFY_USER_ID is not set \u2014 cannot send direct notification." }] };
+    }
+    try {
+      const body = {
+        chat_id: notifyUserId,
+        text: autoCode(text),
+        parse_mode: "HTML",
+        disable_notification: !urgent
+      };
+      const r = await fetch(`${BASE}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const res = await r.json();
+      if (res.ok) {
+        return { content: [{ type: "text", text: `Direct notification sent (message_id: ${res.result?.message_id})` }] };
+      } else {
+        return { content: [{ type: "text", text: `Failed to send notification: ${res.description ?? JSON.stringify(res)}` }] };
+      }
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error sending notification: ${e}` }] };
     }
   }
   return { content: [{ type: "text", text: `Unknown tool: ${name}` }] };
