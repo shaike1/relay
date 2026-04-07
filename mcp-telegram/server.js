@@ -14985,6 +14985,50 @@ mcp.setRequestHandler(ListToolsRequestSchema2, async () => ({
           form_id: { type: "string", description: "The form identifier to clear" }
         }
       }
+    },
+    {
+      name: "send_voice",
+      description: "Convert text to speech using OpenAI TTS and send as a voice message in Telegram. Requires OPENAI_API_KEY. Falls back to text if not available.",
+      inputSchema: {
+        type: "object",
+        required: ["text"],
+        properties: {
+          text: { type: "string", description: "Text to convert to speech (max ~4096 chars)" },
+          voice: { type: "string", description: "Voice to use: alloy, echo, fable, onyx, nova, shimmer (default: alloy)", enum: ["alloy", "echo", "fable", "onyx", "nova", "shimmer"] }
+        }
+      }
+    },
+    {
+      name: "publish_task",
+      description: "Publish a task to the agent marketplace. Other agents can claim it based on their skills.",
+      inputSchema: {
+        type: "object",
+        required: ["task"],
+        properties: {
+          task: { type: "string", description: "Task description" },
+          required_skills: { type: "array", items: { type: "string" }, description: 'Skills required to perform the task (e.g. ["docker", "python"])' },
+          deadline_minutes: { type: "number", description: "Minutes until the task expires (default: 60)", default: 60 }
+        }
+      }
+    },
+    {
+      name: "claim_task",
+      description: "Claim a task from the marketplace. Notifies the publishing session.",
+      inputSchema: {
+        type: "object",
+        required: ["task_id"],
+        properties: {
+          task_id: { type: "string", description: "Task ID to claim (from list_available_tasks or publish_task)" }
+        }
+      }
+    },
+    {
+      name: "list_available_tasks",
+      description: "List unclaimed, non-expired tasks in the marketplace that match this session's skills.",
+      inputSchema: {
+        type: "object",
+        properties: {}
+      }
     }
   ]
 }));
@@ -15952,6 +15996,179 @@ ${task}`,
       }
     } catch (e) {
       return { content: [{ type: "text", text: `Error clearing form: ${e}` }] };
+    }
+  }
+  if (name === "send_voice") {
+    const text = String(args?.text ?? "");
+    const voice = String(args?.voice ?? "alloy");
+    if (!text)
+      return { content: [{ type: "text", text: "Error: text is required." }] };
+    const openaiKey = process.env.OPENAI_API_KEY;
+    if (!openaiKey) {
+      const ids = await sendMessage(`\uD83D\uDD0A <i>[TTS unavailable \u2014 OPENAI_API_KEY not set]</i>
+${text}`);
+      return { content: [{ type: "text", text: `OPENAI_API_KEY not set \u2014 sent as text. message_ids: ${ids.join(", ")}` }] };
+    }
+    try {
+      const ttsRes = await fetch("https://api.openai.com/v1/audio/speech", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${openaiKey}`
+        },
+        body: JSON.stringify({ model: "tts-1", voice, input: text.slice(0, 4096) }),
+        signal: AbortSignal.timeout(30000)
+      });
+      if (!ttsRes.ok) {
+        const errBody = await ttsRes.text();
+        return { content: [{ type: "text", text: `TTS API error ${ttsRes.status}: ${errBody}` }] };
+      }
+      const audioBuffer = await ttsRes.arrayBuffer();
+      const tmpPath = `/tmp/relay-tts-${THREAD_ID}-${Date.now()}.mp3`;
+      await Bun.write(tmpPath, audioBuffer);
+      const form = new FormData;
+      form.append("chat_id", String(CHAT_ID));
+      const threadParams = buildMessageThreadParams(THREAD_ID);
+      if (threadParams?.message_thread_id != null) {
+        form.append("message_thread_id", String(threadParams.message_thread_id));
+      }
+      form.append("voice", new File([audioBuffer], "voice.mp3", { type: "audio/mpeg" }));
+      const voiceRes = await fetch(`${BASE}/sendVoice`, { method: "POST", body: form });
+      const voiceJson = await voiceRes.json();
+      try {
+        const { unlinkSync } = await import("fs");
+        unlinkSync(tmpPath);
+      } catch (_) {}
+      if (voiceJson.ok) {
+        return { content: [{ type: "text", text: `Voice message sent (message_id: ${voiceJson.result?.message_id})` }] };
+      } else {
+        return { content: [{ type: "text", text: `Failed to send voice: ${JSON.stringify(voiceJson)}` }] };
+      }
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error in send_voice: ${e}` }] };
+    }
+  }
+  const TASK_MARKET_FILE = "/tmp/relay-task-market.jsonl";
+  if (name === "publish_task") {
+    const task = String(args?.task ?? "");
+    const requiredSkills = args?.required_skills ?? [];
+    const deadlineMinutes = Number(args?.deadline_minutes ?? 60);
+    if (!task)
+      return { content: [{ type: "text", text: "Error: task is required." }] };
+    const crypto = await import("crypto");
+    const id = "mkt-" + crypto.randomUUID().slice(0, 8);
+    const now = Date.now() / 1000;
+    const entry = {
+      id,
+      task,
+      required_skills: requiredSkills,
+      from_thread: THREAD_ID,
+      from_session: process.env.SESSION_NAME ?? `session-${THREAD_ID}`,
+      published_at: now,
+      deadline: now + deadlineMinutes * 60,
+      status: "open"
+    };
+    try {
+      const { appendFileSync } = await import("fs");
+      appendFileSync(TASK_MARKET_FILE, JSON.stringify(entry) + `
+`);
+      return { content: [{ type: "text", text: `Task published. id: ${id}
+Deadline: ${deadlineMinutes}m` }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error publishing task: ${e}` }] };
+    }
+  }
+  if (name === "claim_task") {
+    const taskId = String(args?.task_id ?? "");
+    if (!taskId)
+      return { content: [{ type: "text", text: "Error: task_id is required." }] };
+    try {
+      const { readFileSync: readFileSync2, writeFileSync, existsSync } = await import("fs");
+      if (!existsSync(TASK_MARKET_FILE))
+        return { content: [{ type: "text", text: "No tasks in marketplace." }] };
+      const lines = readFileSync2(TASK_MARKET_FILE, "utf8").split(`
+`).filter((l) => l.trim());
+      let found = null;
+      const updated = lines.map((line) => {
+        try {
+          const t = JSON.parse(line);
+          if (t.id === taskId) {
+            if (t.status !== "open")
+              return line;
+            found = { ...t };
+            return JSON.stringify({ ...t, status: "claimed", claimed_by: process.env.SESSION_NAME ?? `session-${THREAD_ID}`, claimed_at: Date.now() / 1000 });
+          }
+        } catch {}
+        return line;
+      });
+      if (!found)
+        return { content: [{ type: "text", text: `Task '${taskId}' not found.` }] };
+      writeFileSync(TASK_MARKET_FILE, updated.join(`
+`) + `
+`);
+      const fromThread = found.from_thread;
+      if (fromThread && fromThread !== THREAD_ID) {
+        const selfName = process.env.SESSION_NAME ?? `session-${THREAD_ID}`;
+        const notifyEntry = JSON.stringify({
+          text: `[Marketplace] Task <b>${taskId}</b> claimed by ${selfName}
+Task: ${found.task}`,
+          user: `market:${selfName}`,
+          message_id: -Date.now(),
+          ts: Date.now() / 1000,
+          force: true
+        });
+        await Bun.write(`/tmp/tg-queue-${fromThread}.jsonl`, notifyEntry + `
+`, { append: true });
+      }
+      return { content: [{ type: "text", text: `Task '${taskId}' claimed.
+${JSON.stringify(found, null, 2)}` }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error claiming task: ${e}` }] };
+    }
+  }
+  if (name === "list_available_tasks") {
+    try {
+      const { readFileSync: readFileSync2, existsSync } = await import("fs");
+      if (!existsSync(TASK_MARKET_FILE))
+        return { content: [{ type: "text", text: "No tasks in marketplace." }] };
+      const sessionsPath = new URL("../sessions.json", import.meta.url).pathname;
+      let mySkills = [];
+      try {
+        const sessions = JSON.parse(readFileSync2(sessionsPath, "utf8"));
+        const me = sessions.find((s) => s.thread_id === THREAD_ID);
+        mySkills = me?.skills ?? [];
+      } catch {}
+      const now = Date.now() / 1000;
+      const lines = readFileSync2(TASK_MARKET_FILE, "utf8").split(`
+`).filter((l) => l.trim());
+      const available = [];
+      for (const line of lines) {
+        try {
+          const t = JSON.parse(line);
+          if (t.status !== "open")
+            continue;
+          if (typeof t.deadline === "number" && t.deadline < now)
+            continue;
+          if (t.from_thread === THREAD_ID)
+            continue;
+          const req2 = t.required_skills ?? [];
+          if (req2.length > 0 && mySkills.length > 0) {
+            const hasSkill = req2.some((s) => mySkills.includes(s));
+            if (!hasSkill)
+              continue;
+          }
+          available.push(t);
+        } catch {}
+      }
+      if (available.length === 0)
+        return { content: [{ type: "text", text: "No available tasks matching your skills." }] };
+      const lines2 = available.map((t) => `\u2022 [${t.id}] ${t.task}
+  Skills: ${t.required_skills.join(", ") || "any"} \u2014 expires in ${Math.round((Number(t.deadline) - now) / 60)}m`);
+      return { content: [{ type: "text", text: lines2.join(`
+
+`) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error listing tasks: ${e}` }] };
     }
   }
   return { content: [{ type: "text", text: `Unknown tool: ${name}` }] };

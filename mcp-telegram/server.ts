@@ -563,6 +563,52 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
+    // ── Feature 3: Voice TTS ──────────────────────────────────────────────────
+    {
+      name: 'send_voice',
+      description: 'Convert text to speech using OpenAI TTS and send as a voice message in Telegram. Requires OPENAI_API_KEY. Falls back to text if not available.',
+      inputSchema: {
+        type: 'object',
+        required: ['text'],
+        properties: {
+          text:  { type: 'string', description: 'Text to convert to speech (max ~4096 chars)' },
+          voice: { type: 'string', description: 'Voice to use: alloy, echo, fable, onyx, nova, shimmer (default: alloy)', enum: ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'] },
+        },
+      },
+    },
+    // ── Feature 5: Agent-to-agent task marketplace ───────────────────────────
+    {
+      name: 'publish_task',
+      description: 'Publish a task to the agent marketplace. Other agents can claim it based on their skills.',
+      inputSchema: {
+        type: 'object',
+        required: ['task'],
+        properties: {
+          task:             { type: 'string',  description: 'Task description' },
+          required_skills:  { type: 'array', items: { type: 'string' }, description: 'Skills required to perform the task (e.g. ["docker", "python"])' },
+          deadline_minutes: { type: 'number',  description: 'Minutes until the task expires (default: 60)', default: 60 },
+        },
+      },
+    },
+    {
+      name: 'claim_task',
+      description: 'Claim a task from the marketplace. Notifies the publishing session.',
+      inputSchema: {
+        type: 'object',
+        required: ['task_id'],
+        properties: {
+          task_id: { type: 'string', description: 'Task ID to claim (from list_available_tasks or publish_task)' },
+        },
+      },
+    },
+    {
+      name: 'list_available_tasks',
+      description: 'List unclaimed, non-expired tasks in the marketplace that match this session\'s skills.',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+      },
+    },
   ],
 }))
 
@@ -1579,6 +1625,186 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
     } catch (e) {
       return { content: [{ type: 'text', text: `Error clearing form: ${e}` }] }
+    }
+  }
+
+  // ── Feature 3: Voice TTS ──────────────────────────────────────────────────
+  if (name === 'send_voice') {
+    const text  = String(args?.text ?? '')
+    const voice = String(args?.voice ?? 'alloy')
+    if (!text) return { content: [{ type: 'text', text: 'Error: text is required.' }] }
+
+    const openaiKey = process.env.OPENAI_API_KEY
+    if (!openaiKey) {
+      // Fallback to text
+      const ids = await sendMessage(`🔊 <i>[TTS unavailable — OPENAI_API_KEY not set]</i>\n${text}`)
+      return { content: [{ type: 'text', text: `OPENAI_API_KEY not set — sent as text. message_ids: ${ids.join(', ')}` }] }
+    }
+
+    try {
+      // Call OpenAI TTS API
+      const ttsRes = await fetch('https://api.openai.com/v1/audio/speech', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${openaiKey}`,
+        },
+        body: JSON.stringify({ model: 'tts-1', voice, input: text.slice(0, 4096) }),
+        signal: AbortSignal.timeout(30000),
+      })
+      if (!ttsRes.ok) {
+        const errBody = await ttsRes.text()
+        return { content: [{ type: 'text', text: `TTS API error ${ttsRes.status}: ${errBody}` }] }
+      }
+
+      const audioBuffer = await ttsRes.arrayBuffer()
+      const tmpPath = `/tmp/relay-tts-${THREAD_ID}-${Date.now()}.mp3`
+      await Bun.write(tmpPath, audioBuffer)
+
+      // Send as voice message via Telegram sendVoice
+      const form = new FormData()
+      form.append('chat_id', String(CHAT_ID))
+      const threadParams = buildMessageThreadParams(THREAD_ID)
+      if (threadParams?.message_thread_id != null) {
+        form.append('message_thread_id', String(threadParams.message_thread_id))
+      }
+      form.append('voice', new File([audioBuffer], 'voice.mp3', { type: 'audio/mpeg' }))
+      const voiceRes = await fetch(`${BASE}/sendVoice`, { method: 'POST', body: form })
+      const voiceJson = await voiceRes.json() as { ok: boolean; result?: { message_id: number } }
+
+      // Clean up tmp file
+      try { const { unlinkSync } = await import('fs'); unlinkSync(tmpPath) } catch (_) {}
+
+      if (voiceJson.ok) {
+        return { content: [{ type: 'text', text: `Voice message sent (message_id: ${voiceJson.result?.message_id})` }] }
+      } else {
+        return { content: [{ type: 'text', text: `Failed to send voice: ${JSON.stringify(voiceJson)}` }] }
+      }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error in send_voice: ${e}` }] }
+    }
+  }
+
+  // ── Feature 5: Task marketplace ───────────────────────────────────────────
+  const TASK_MARKET_FILE = '/tmp/relay-task-market.jsonl'
+
+  if (name === 'publish_task') {
+    const task            = String(args?.task ?? '')
+    const requiredSkills  = (args?.required_skills as string[] | undefined) ?? []
+    const deadlineMinutes = Number(args?.deadline_minutes ?? 60)
+    if (!task) return { content: [{ type: 'text', text: 'Error: task is required.' }] }
+
+    const crypto = await import('crypto')
+    const id = 'mkt-' + crypto.randomUUID().slice(0, 8)
+    const now = Date.now() / 1000
+    const entry = {
+      id,
+      task,
+      required_skills: requiredSkills,
+      from_thread: THREAD_ID,
+      from_session: process.env.SESSION_NAME ?? `session-${THREAD_ID}`,
+      published_at: now,
+      deadline: now + deadlineMinutes * 60,
+      status: 'open',
+    }
+    try {
+      const { appendFileSync } = await import('fs')
+      appendFileSync(TASK_MARKET_FILE, JSON.stringify(entry) + '\n')
+      return { content: [{ type: 'text', text: `Task published. id: ${id}\nDeadline: ${deadlineMinutes}m` }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error publishing task: ${e}` }] }
+    }
+  }
+
+  if (name === 'claim_task') {
+    const taskId = String(args?.task_id ?? '')
+    if (!taskId) return { content: [{ type: 'text', text: 'Error: task_id is required.' }] }
+
+    try {
+      const { readFileSync, writeFileSync, existsSync } = await import('fs')
+      if (!existsSync(TASK_MARKET_FILE)) return { content: [{ type: 'text', text: 'No tasks in marketplace.' }] }
+
+      const lines = readFileSync(TASK_MARKET_FILE, 'utf8').split('\n').filter(l => l.trim())
+      let found: Record<string, unknown> | null = null
+      const updated = lines.map(line => {
+        try {
+          const t = JSON.parse(line) as Record<string, unknown>
+          if (t.id === taskId) {
+            if (t.status !== 'open') return line // already claimed
+            found = { ...t }
+            return JSON.stringify({ ...t, status: 'claimed', claimed_by: process.env.SESSION_NAME ?? `session-${THREAD_ID}`, claimed_at: Date.now() / 1000 })
+          }
+        } catch {}
+        return line
+      })
+
+      if (!found) return { content: [{ type: 'text', text: `Task '${taskId}' not found.` }] }
+
+      writeFileSync(TASK_MARKET_FILE, updated.join('\n') + '\n')
+
+      // Notify publishing session
+      const fromThread = (found as Record<string, unknown>).from_thread as number
+      if (fromThread && fromThread !== THREAD_ID) {
+        const selfName = process.env.SESSION_NAME ?? `session-${THREAD_ID}`
+        const notifyEntry = JSON.stringify({
+          text: `[Marketplace] Task <b>${taskId}</b> claimed by ${selfName}\nTask: ${(found as Record<string, unknown>).task}`,
+          user: `market:${selfName}`,
+          message_id: -Date.now(),
+          ts: Date.now() / 1000,
+          force: true,
+        })
+        await Bun.write(`/tmp/tg-queue-${fromThread}.jsonl`, notifyEntry + '\n', { append: true })
+      }
+
+      return { content: [{ type: 'text', text: `Task '${taskId}' claimed.\n${JSON.stringify(found, null, 2)}` }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error claiming task: ${e}` }] }
+    }
+  }
+
+  if (name === 'list_available_tasks') {
+    try {
+      const { readFileSync, existsSync } = await import('fs')
+      if (!existsSync(TASK_MARKET_FILE)) return { content: [{ type: 'text', text: 'No tasks in marketplace.' }] }
+
+      // Get this session's skills from sessions.json
+      const sessionsPath = new URL('../sessions.json', import.meta.url).pathname
+      let mySkills: string[] = []
+      try {
+        const sessions: Array<{ thread_id: number; skills?: string[] }> = JSON.parse(readFileSync(sessionsPath, 'utf8'))
+        const me = sessions.find(s => s.thread_id === THREAD_ID)
+        mySkills = me?.skills ?? []
+      } catch {}
+
+      const now = Date.now() / 1000
+      const lines = readFileSync(TASK_MARKET_FILE, 'utf8').split('\n').filter(l => l.trim())
+      const available: Record<string, unknown>[] = []
+
+      for (const line of lines) {
+        try {
+          const t = JSON.parse(line) as Record<string, unknown>
+          if (t.status !== 'open') continue
+          if (typeof t.deadline === 'number' && t.deadline < now) continue // expired
+          if (t.from_thread === THREAD_ID) continue // own tasks
+
+          // Skill matching: if task requires skills and we have some, check overlap
+          const req = (t.required_skills as string[] | undefined) ?? []
+          if (req.length > 0 && mySkills.length > 0) {
+            const hasSkill = req.some(s => mySkills.includes(s))
+            if (!hasSkill) continue
+          }
+          available.push(t)
+        } catch {}
+      }
+
+      if (available.length === 0) return { content: [{ type: 'text', text: 'No available tasks matching your skills.' }] }
+
+      const lines2 = available.map(t =>
+        `• [${t.id}] ${t.task}\n  Skills: ${(t.required_skills as string[]).join(', ') || 'any'} — expires in ${Math.round((Number(t.deadline) - now) / 60)}m`
+      )
+      return { content: [{ type: 'text', text: lines2.join('\n\n') }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error listing tasks: ${e}` }] }
     }
   }
 

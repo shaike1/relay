@@ -248,6 +248,16 @@ const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || require('crypto').randomByt
 const TG_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const TG_CHAT_ID = process.env.GROUP_CHAT_ID || '';
 const QUEUE_DIR = '/tmp';
+
+// --- GitHub Webhook config ---
+const GITHUB_WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET || '';
+const GITHUB_DEFAULT_THREAD_ID = process.env.GITHUB_DEFAULT_THREAD_ID || '';
+
+// --- Generic Webhook config ---
+const WEBHOOK_TOKEN = process.env.WEBHOOK_TOKEN || '';
+
+// --- Self-registration config ---
+const ALLOW_SELF_REGISTER = (process.env.ALLOW_SELF_REGISTER || 'false').toLowerCase() === 'true';
 const BOT_WEBHOOK_URL = process.env.BOT_WEBHOOK_URL || 'http://relay:18793/tg';
 
 // --- Rate limiter: 30 messages per minute per user ---
@@ -408,6 +418,42 @@ function webhookQueueWrite(update) {
   if (msg.from && msg.from.is_bot) return;
   const threadId = msg.message_thread_id;
   if (!threadId) return;
+
+  // Feature 4: Self-registration — if no session configured for this thread, auto-create or notify
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const existingSession = sessions.find(s => String(s.thread_id) === String(threadId));
+    if (!existingSession) {
+      const userName = (msg.from && (msg.from.username || msg.from.first_name)) || `user${msg.from && msg.from.id || threadId}`;
+      if (ALLOW_SELF_REGISTER) {
+        // Auto-create new session entry
+        const newSession = {
+          thread_id: threadId,
+          session: userName.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase(),
+          type: 'claude',
+          path: `/root/sessions/${userName.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase()}`,
+          auto_registered: true,
+          registered_at: new Date().toISOString(),
+        };
+        sessions.push(newSession);
+        fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2));
+        console.log(`[self-register] Auto-registered thread ${threadId} as session "${newSession.session}"`);
+        tgSendMessage(threadId,
+          `👋 ברוך הבא! Session חדש נוצר אוטומטית עבורך: <code>${newSession.session}</code>\nמוכן לעבוד!`,
+          null, null
+        ).catch(() => {});
+        // Continue to queue the message normally
+      } else {
+        tgSendMessage(threadId,
+          `❌ סשן לא מוגדר לטופיק זה — צור קשר עם המנהל`,
+          null, null
+        ).catch(() => {});
+        return;
+      }
+    }
+  } catch (e) {
+    console.error('[self-register] Error:', e.message);
+  }
 
   // Auto-handle /status command without waking Claude (saves tokens)
   if (msg.text && /^\/status(@\S+)?$/i.test(msg.text.trim())) {
@@ -1571,6 +1617,157 @@ if (TG_BOT_TOKEN) {
   console.log(`[webhook] Secret path: /webhook/${WEBHOOK_SECRET}`);
   console.log(`[webhook] Set via: POST /api/webhook/set { "url": "https://your-domain.com" }`);
 }
+console.log(`[webhooks] GitHub inbound: POST /webhooks/github (HMAC-SHA256 via GITHUB_WEBHOOK_SECRET)`);
+console.log(`[webhooks] Generic inbound: POST /webhooks/generic (Bearer WEBHOOK_TOKEN)`);
+if (ALLOW_SELF_REGISTER) console.log(`[self-register] ALLOW_SELF_REGISTER=true — new threads will be auto-provisioned`);
+
+// ── Feature 1: GitHub Webhook ─────────────────────────────────────────────────
+// POST /webhooks/github — receives GitHub events and routes to matching session
+// Secured by HMAC-SHA256 signature (X-Hub-Signature-256 header)
+app.post('/webhooks/github', express.raw({ type: 'application/json' }), (req, res) => {
+  const crypto = require('crypto');
+  res.json({ ok: true });
+
+  // Verify HMAC-SHA256 signature
+  const sigHeader = req.headers['x-hub-signature-256'] || '';
+  if (GITHUB_WEBHOOK_SECRET) {
+    const expected = 'sha256=' + crypto
+      .createHmac('sha256', GITHUB_WEBHOOK_SECRET)
+      .update(req.body)
+      .digest('hex');
+    if (sigHeader !== expected) {
+      console.warn('[github-webhook] Invalid signature — ignoring');
+      return;
+    }
+  }
+
+  let payload;
+  try { payload = JSON.parse(req.body.toString()); } catch (e) {
+    console.error('[github-webhook] JSON parse error:', e.message);
+    return;
+  }
+
+  const event = req.headers['x-github-event'] || 'unknown';
+  const repo = (payload.repository && payload.repository.full_name) || '';
+  console.log(`[github-webhook] event=${event} repo=${repo}`);
+
+  // Find matching session by github_repo field, fall back to default thread
+  let threadId = GITHUB_DEFAULT_THREAD_ID || null;
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const match = sessions.find(s => s.github_repo && s.github_repo === repo);
+    if (match) threadId = String(match.thread_id);
+  } catch (_) {}
+
+  if (!threadId) {
+    console.warn('[github-webhook] No matching session and no GITHUB_DEFAULT_THREAD_ID set — dropping');
+    return;
+  }
+
+  // Format message by event type
+  let text = '';
+  if (event === 'pull_request') {
+    const pr = payload.pull_request || {};
+    const action = payload.action || '';
+    const merged = pr.merged ? ' (merged)' : '';
+    const stateLabel = action === 'closed' ? (pr.merged ? 'merged' : 'closed') : action;
+    text = `🔀 <b>PR ${stateLabel}${merged}</b> [${repo}]\n` +
+      `<b>#${pr.number}</b> ${pr.title}\n` +
+      `by ${pr.user && pr.user.login} — <code>${pr.head && pr.head.ref}</code> → <code>${pr.base && pr.base.ref}</code>\n` +
+      (pr.html_url ? `<code>${pr.html_url}</code>` : '');
+  } else if (event === 'push') {
+    const commits = payload.commits || [];
+    const branch = (payload.ref || '').replace('refs/heads/', '');
+    const pusher = payload.pusher && payload.pusher.name;
+    const lines = commits.slice(0, 5).map(c =>
+      `• <code>${c.id.slice(0, 7)}</code> ${(c.message || '').split('\n')[0].slice(0, 80)}`
+    );
+    text = `📦 <b>Push</b> [${repo}] → <code>${branch}</code> by ${pusher}\n` +
+      lines.join('\n') +
+      (commits.length > 5 ? `\n… and ${commits.length - 5} more` : '');
+  } else if (event === 'issues') {
+    const issue = payload.issue || {};
+    const action = payload.action || '';
+    const stateEmoji = action === 'opened' ? '🐛' : action === 'closed' ? '✅' : '📝';
+    text = `${stateEmoji} <b>Issue ${action}</b> [${repo}]\n` +
+      `<b>#${issue.number}</b> ${issue.title}\n` +
+      `by ${issue.user && issue.user.login}\n` +
+      (issue.html_url ? `<code>${issue.html_url}</code>` : '');
+  } else if (event === 'workflow_run') {
+    const run = payload.workflow_run || {};
+    const wf = payload.workflow || {};
+    const conclusion = run.conclusion || run.status || 'unknown';
+    const emoji = conclusion === 'success' ? '✅' : conclusion === 'failure' ? '❌' : '⚙️';
+    text = `${emoji} <b>CI ${conclusion}</b> [${repo}]\n` +
+      `Workflow: ${wf.name || run.name}\n` +
+      `Branch: <code>${run.head_branch}</code>\n` +
+      (run.html_url ? `<code>${run.html_url}</code>` : '');
+  } else {
+    // Generic fallback for other events
+    text = `🔔 <b>GitHub event: ${event}</b> [${repo}]`;
+  }
+
+  if (!text) return;
+
+  const entry = {
+    message_id: -(Math.floor(Date.now() / 1000) % 2147483647),
+    user: `github:${event}`,
+    text,
+    ts: Math.floor(Date.now() / 1000),
+    via: 'github',
+    force: true,
+  };
+  try {
+    fs.appendFileSync(path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`), JSON.stringify(entry) + '\n');
+    console.log(`[github-webhook] Queued ${event} to thread ${threadId}`);
+  } catch (e) {
+    console.error('[github-webhook] Queue error:', e.message);
+  }
+});
+
+// ── Feature 2: Generic Webhook (n8n / Zapier / Make / PagerDuty / Sentry) ─────
+// POST /webhooks/generic — accepts JSON with thread_id/session + text
+// Secured by Authorization: Bearer WEBHOOK_TOKEN header
+app.post('/webhooks/generic', (req, res) => {
+  if (!WEBHOOK_TOKEN) {
+    return res.status(403).json({ ok: false, error: 'WEBHOOK_TOKEN not configured' });
+  }
+  const authHeader = req.headers['authorization'] || '';
+  if (authHeader !== `Bearer ${WEBHOOK_TOKEN}`) {
+    return res.status(401).json({ ok: false, error: 'Unauthorized' });
+  }
+
+  const { thread_id, session, text, via } = req.body || {};
+  if (!text) return res.status(400).json({ ok: false, error: 'text required' });
+
+  // Resolve thread_id from session name if given
+  let threadId = thread_id ? String(thread_id) : null;
+  if (!threadId && session) {
+    try {
+      const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+      const match = sessions.find(s => s.session === session || s.name === session);
+      if (match) threadId = String(match.thread_id);
+    } catch (_) {}
+  }
+  if (!threadId) return res.status(400).json({ ok: false, error: 'thread_id or valid session required' });
+
+  const entry = {
+    message_id: -(Math.floor(Date.now() / 1000) % 2147483647),
+    user: `webhook:${via || 'generic'}`,
+    text: String(text).slice(0, 4000),
+    ts: Math.floor(Date.now() / 1000),
+    via: via || 'webhook',
+    force: true,
+  };
+  try {
+    fs.appendFileSync(path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`), JSON.stringify(entry) + '\n');
+    console.log(`[generic-webhook] Queued message to thread ${threadId} via ${via || 'generic'}`);
+    return res.json({ ok: true, queued: true });
+  } catch (e) {
+    console.error('[generic-webhook] Queue error:', e.message);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 // Apply auth to all routes below
 app.use(authMiddleware);
