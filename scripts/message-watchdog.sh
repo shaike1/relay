@@ -19,6 +19,8 @@ OVERRIDE_ENV="/tmp/relay-session-env-${THREAD_ID}"
 
 INTERVAL=5
 IDLE_GRACE=30          # seconds between nudge retries (fallback if MCP notification missed)
+RELAY_API_URL="${RELAY_API_URL:-}"  # if set, pull queue from remote relay-api (for remote sessions)
+RELAY_API_TOKEN="${RELAY_API_TOKEN:-}"
 MCP_CHECK_INTERVAL=30  # seconds between MCP health checks
 TOOL_NOTIFY_COOLDOWN=3 # min seconds between tool-use notifications
 CRASH_ALERT_MINUTES=${CRASH_ALERT_MINUTES:-30}  # alert if no response for N minutes
@@ -124,6 +126,27 @@ while true; do
     fi
   fi
 
+  # Remote session pull: fetch new messages from relay-api and append to local queue
+  if [ -n "$RELAY_API_URL" ]; then
+    local_last_id=0
+    [ -f "$STATE" ] && local_last_id=$(python3 -c "import json; d=json.load(open('$STATE')); print(d.get('lastId',0))" 2>/dev/null || echo 0)
+    auth_header=""
+    [ -n "$RELAY_API_TOKEN" ] && auth_header="-H \"Authorization: Bearer $RELAY_API_TOKEN\""
+    new_entries=$(curl -sf --connect-timeout 5 $auth_header \
+      "${RELAY_API_URL}/api/queue/${THREAD_ID}/messages?since=${local_last_id}" 2>/dev/null || echo "[]")
+    if [ "$new_entries" != "[]" ] && [ -n "$new_entries" ]; then
+      echo "$new_entries" | python3 -c "
+import json, sys
+entries = json.load(sys.stdin)
+if isinstance(entries, list):
+    with open('$QUEUE', 'a') as f:
+        for e in entries:
+            f.write(json.dumps(e) + '\n')
+    print(len(entries))
+" 2>/dev/null | read count && [ "${count:-0}" -gt 0 ] && echo "[watchdog] pulled $count new messages from relay-api" >&2 || true
+    fi
+  fi
+
   [ -f "$QUEUE" ] || continue
 
   last_id=0
@@ -187,13 +210,9 @@ print(count, max_id)
   [ "$IDLE_GRACE" -gt 0 ] || continue
 
   now=$(date +%s)
-  # Only nudge if there's a NEW message (id > last_nudged_id) OR enough time passed since last nudge
-  is_new_msg=0
-  [ "$highest_pending_id" -gt "$last_nudged_id" ] && is_new_msg=1
-  elapsed=$((now - last_nudge))
-  if [ "$is_new_msg" -eq 0 ] && [ "$elapsed" -lt "$IDLE_GRACE" ]; then
-    continue
-  fi
+  # Only nudge for new messages (id > last_nudged_id)
+  # Never retry the same message_id — prevents spam
+  [ "$highest_pending_id" -gt "$last_nudged_id" ] || continue
 
   # Skip if Claude is actively working — check last 3 non-empty lines for active indicators
   pane=$(tmux_s capture-pane -t "$SESSION" -p 2>/dev/null || echo "")

@@ -137,6 +137,8 @@ function authMiddleware(req, res, next) {
   if (!AUTH_PASS) return next(); // No auth if no password set
   // Allow health check without auth
   if (req.path === '/health' || req.path === '/health/sessions') return next();
+  // Allow remote session queue pull (internal use by watchdog on remote sessions)
+  if (req.path.startsWith('/api/queue/') && req.path.endsWith('/messages')) return next();
   // Allow login page
   if (req.path === '/login') return next();
   // Allow Mini App endpoints — authenticated via Telegram initData instead
@@ -678,13 +680,33 @@ function webhookQueueWrite(update) {
     if (!buf) return;
     _mergeBuffer.delete(uid);
     const merged = { ...buf.firstEntry, text: buf.messages.join('\n') };
-    const queueFile = path.join(QUEUE_DIR, `tg-queue-${buf.effectiveThreadId}.jsonl`);
+    const label = buf.messages.length > 1 ? `[merged ${buf.messages.length} msgs] ` : '';
+    // Check if this thread belongs to a remote session
+    let remoteHost = null;
     try {
-      fs.appendFileSync(queueFile, JSON.stringify(merged) + '\n');
-      fs.writeFileSync(path.join(QUEUE_DIR, `relay-msg-start-${buf.effectiveThreadId}`), String(Date.now()));
-      const label = buf.messages.length > 1 ? `[merged ${buf.messages.length} msgs] ` : '';
-      console.log(`[webhook] ${buf.effectiveThreadId}: ${buf.firstEntry.user}: ${label}${merged.text.substring(0, 60)}`);
-    } catch (err) { console.error(`[webhook] Queue write error:`, err.message); }
+      const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+      const sess = sessions.find(s => String(s.thread_id) === String(buf.effectiveThreadId));
+      if (sess && sess.host) remoteHost = sess.host;
+    } catch (_) {}
+    if (remoteHost) {
+      // Remote session — deliver via HTTP push to mcp-telegram push endpoint
+      try {
+        const pushPort = process.env.REMOTE_PUSH_PORT || '7099';
+        // Extract just the hostname/IP from user@host format
+        const host = remoteHost.includes('@') ? remoteHost.split('@')[1] : remoteHost;
+        const pushSecret = process.env.PUSH_SECRET || '';
+        const secretFlag = pushSecret ? `-H "x-push-secret: ${pushSecret}"` : '';
+        execSync(`curl -sf --connect-timeout 5 -X POST ${secretFlag} -H "Content-Type: application/json" -d '${JSON.stringify(merged).replace(/'/g, "'\\''")}' http://${host}:${pushPort}/push`, { timeout: 8000 });
+        console.log(`[webhook] ${buf.effectiveThreadId} (remote:${host}): ${buf.firstEntry.user}: ${label}${merged.text.substring(0, 60)}`);
+      } catch (err) { console.error(`[webhook] Remote queue write error (${remoteHost}):`, err.message); }
+    } else {
+      const queueFile = path.join(QUEUE_DIR, `tg-queue-${buf.effectiveThreadId}.jsonl`);
+      try {
+        fs.appendFileSync(queueFile, JSON.stringify(merged) + '\n');
+        fs.writeFileSync(path.join(QUEUE_DIR, `relay-msg-start-${buf.effectiveThreadId}`), String(Date.now()));
+        console.log(`[webhook] ${buf.effectiveThreadId}: ${buf.firstEntry.user}: ${label}${merged.text.substring(0, 60)}`);
+      } catch (err) { console.error(`[webhook] Queue write error:`, err.message); }
+    }
   }
 
   if (userId) {
@@ -3944,6 +3966,28 @@ app.get('/api/cicd/status', (req, res) => {
     events.sort((a, b) => (b.ts || 0) - (a.ts || 0));
     res.json(events.slice(0, 20));
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Queue pull API for remote sessions — must be before proxy
+// GET /api/queue/:threadId/messages?since=lastId — returns new queue entries since lastId
+app.get('/api/queue/:threadId/messages', (req, res) => {
+  const { threadId } = req.params;
+  const since = parseInt(req.query.since || '0', 10);
+  const queueFile = path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`);
+  try {
+    if (!fs.existsSync(queueFile)) return res.json([]);
+    const entries = [];
+    for (const line of fs.readFileSync(queueFile, 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const e = JSON.parse(line);
+        if ((e.message_id || 0) > since) entries.push(e);
+      } catch (_) {}
+    }
+    res.json(entries);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
