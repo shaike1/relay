@@ -14958,6 +14958,12 @@ mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
     })() : rawButtons;
     const ids = await sendMessage(text, args?.reply_to, buttons);
     Bun.write(`/tmp/tg-last-sent-${THREAD_ID}`, String(Date.now() / 1000));
+    try {
+      const { unlinkSync, existsSync } = await import("fs");
+      const f = `/tmp/tg-crash-alerted-${THREAD_ID}`;
+      if (existsSync(f))
+        unlinkSync(f);
+    } catch (_) {}
     const mentions = [...text.matchAll(/@([\w-]+)/g)].map((m) => m[1]);
     if (mentions.length > 0) {
       try {

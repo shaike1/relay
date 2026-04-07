@@ -68,11 +68,12 @@ while true; do
       last_sent=$(cat "$last_sent_file" 2>/dev/null | tr -d '[:space:]' || echo "0")
       silence_secs=$((now - ${last_sent%.*}))
       threshold=$((CRASH_ALERT_MINUTES * 60))
-      if [ "$silence_secs" -gt "$threshold" ]; then
+      alerted_file="/tmp/tg-crash-alerted-${THREAD_ID}"
+      if [ "$silence_secs" -gt "$threshold" ] && [ ! -f "$alerted_file" ]; then
         mins=$((silence_secs / 60))
         tg-send "⚠️ Session <b>${SESSION}</b> has not sent any message in ${mins} minutes — may be stuck or crashed." 2>/dev/null || true
-        # Reset timer so we don't spam — alert again after another CRASH_ALERT_MINUTES
-        echo "$now" > "$last_sent_file"
+        # Set alerted flag — don't repeat until Claude sends a real message (flag cleared by mcp-telegram on send)
+        touch "$alerted_file"
       fi
     fi
   fi

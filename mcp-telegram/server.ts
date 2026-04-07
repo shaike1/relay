@@ -544,6 +544,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     )
     // Write response timestamp so the relay bot knows Claude replied
     void Bun.write(`/tmp/tg-last-sent-${THREAD_ID}`, String(Date.now() / 1000))
+    // Clear crash-alert flag so the watchdog can send a fresh alert after the next silence period
+    try { const { unlinkSync, existsSync } = await import('fs'); const f = `/tmp/tg-crash-alerted-${THREAD_ID}`; if (existsSync(f)) unlinkSync(f) } catch (_) { /* best-effort */ }
 
     // Auto-route @mentions to peer sessions
     // e.g. "@itops-dev can you check the Docker setup?" → forwarded to itops-dev session
