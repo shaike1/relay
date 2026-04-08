@@ -585,6 +585,14 @@ function webhookQueueWrite(update) {
     return;
   }
 
+  // /route — manage auto-routing rules
+  // /route list | /route add <pattern> -> <target> | /route del <index>
+  const routeCmd = msg.text && msg.text.trim().match(/^\/route(@\S+)?(\s+(.+))?$/i);
+  if (routeCmd) {
+    handleRouteCommand(threadId, msg.message_id, (routeCmd[3] || '').trim()).catch(e => console.error('[route] error:', e.message));
+    return;
+  }
+
   // /rollback [session] — list or rollback Docker image for a session
   const rollbackCmd = msg.text && msg.text.trim().match(/^\/rollback(@\S+)?(\s+(\S+))?$/i);
   if (rollbackCmd) {
@@ -625,12 +633,6 @@ function webhookQueueWrite(update) {
     return;
   }
 
-  // /route <message> — smart session routing suggestion
-  const routeCmd = msg.text && msg.text.trim().match(/^\/route(@\S+)?\s+([\s\S]+)$/i);
-  if (routeCmd) {
-    handleRouteCommand(threadId, routeCmd[2] || '', msg.message_id).catch(e => console.error('[route] error:', e.message));
-    return;
-  }
 
   // /live [session] — show live tmux pane snapshot
   const liveCmd = msg.text && msg.text.trim().match(/^\/live(@\S+)?(\s+(\S+))?$/i);
@@ -1559,6 +1561,67 @@ async function handleExportConfigCommand(threadId, replyTo) {
   } catch (e) {
     console.error('[export-config] Failed:', e.message);
     await tgSendMessage(threadId, `❌ שגיאה ב-export-config: ${e.message}`, replyTo, null);
+  }
+}
+
+// /route — manage auto-routing rules in /relay/routing.json
+// Usage: /route list | /route add <pattern> -> <target> | /route del <index>
+async function handleRouteCommand(threadId, replyTo, args) {
+  const ROUTING_FILE_CMD = process.env.ROUTING_FILE || '/relay/routing.json';
+  const readRules = () => {
+    try { return JSON.parse(fs.readFileSync(ROUTING_FILE_CMD, 'utf8')); } catch { return []; }
+  };
+  const writeRules = (rules) => fs.writeFileSync(ROUTING_FILE_CMD, JSON.stringify(rules, null, 2));
+
+  try {
+    if (!args || args === 'list' || args === '') {
+      const rules = readRules();
+      if (rules.length === 0) {
+        await tgSendMessage(threadId, '📋 אין כללי routing. הוסף עם:\n<code>/route add pattern -&gt; session</code>', replyTo, null);
+        return;
+      }
+      const lines = rules.map((r, i) => `<b>${i}</b>. <code>${r.pattern}</code> → <code>${r.target}</code>`).join('\n');
+      await tgSendMessage(threadId, `📋 <b>כללי auto-routing:</b>\n\n${lines}\n\nמחק עם: <code>/route del 0</code>`, replyTo, null);
+      return;
+    }
+
+    // /route add <pattern> -> <target>
+    const addMatch = args.match(/^add\s+(.+?)\s*->\s*(\S+)$/i);
+    if (addMatch) {
+      const [, pattern, target] = addMatch;
+      const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+      const found = sessions.find(s => s.session === target || s.name === target);
+      if (!found) {
+        await tgSendMessage(threadId, `❌ סשן <code>${target}</code> לא נמצא`, replyTo, null);
+        return;
+      }
+      const rules = readRules();
+      rules.push({ pattern, target });
+      writeRules(rules);
+      await tgSendMessage(threadId, `✅ נוסף: <code>${pattern}</code> → <code>${target}</code>`, replyTo, null);
+      return;
+    }
+
+    // /route del <index>
+    const delMatch = args.match(/^del\s+(\d+)$/i);
+    if (delMatch) {
+      const idx = parseInt(delMatch[1], 10);
+      const rules = readRules();
+      if (idx < 0 || idx >= rules.length) {
+        await tgSendMessage(threadId, `❌ אינדקס ${idx} לא קיים`, replyTo, null);
+        return;
+      }
+      const removed = rules.splice(idx, 1)[0];
+      writeRules(rules);
+      await tgSendMessage(threadId, `🗑 נמחק: <code>${removed.pattern}</code> → <code>${removed.target}</code>`, replyTo, null);
+      return;
+    }
+
+    await tgSendMessage(threadId,
+      '📖 שימוש:\n<code>/route list</code> — רשימת כללים\n<code>/route add pattern -&gt; session</code> — הוסף כלל\n<code>/route del 0</code> — מחק לפי אינדקס',
+      replyTo, null);
+  } catch (e) {
+    await tgSendMessage(threadId, `❌ שגיאה: ${e.message}`, replyTo, null);
   }
 }
 
