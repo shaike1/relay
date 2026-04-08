@@ -248,11 +248,13 @@ print(0)
   msg_age=$((now - msg_arrived_ts))
   [ "$msg_age" -ge "$TMUX_FALLBACK_DELAY" ] || continue
 
-  # Skip if Claude is actively working
+  # Check if Claude is actively working
   pane=$(tmux_s capture-pane -t "$SESSION" -p 2>/dev/null || echo "")
   last_lines=$(echo "$pane" | grep -v "^[[:space:]]*$" | tail -3)
   if echo "$last_lines" | grep -qE "✻|Unfurling|⏳|Forging|Misting|Baking|Cogitat"; then
-    continue
+    # Busy — check if message has been waiting too long (>3 min) and force-nudge anyway
+    msg_wait=$((now - msg_arrived_ts))
+    [ "$msg_wait" -lt 180 ] && continue
   fi
 
   # Send via tmux — ccbot-style, reliable delivery
