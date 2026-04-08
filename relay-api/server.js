@@ -2018,6 +2018,57 @@ app.post('/webhooks/github', express.raw({ type: 'application/json' }), (req, re
   } catch (e) {
     console.error('[github-webhook] Queue error:', e.message);
   }
+
+  // Process per-session github_triggers for ALL sessions (not just the matched one)
+  // Trigger format: { event, ref?, branch?, workflow?, conclusion?, message }
+  try {
+    const allSessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const ref   = payload.ref || '';
+    const branch = ref.replace('refs/heads/', '');
+    const run   = payload.workflow_run || {};
+    const wf    = payload.workflow || {};
+    const now   = Math.floor(Date.now() / 1000);
+
+    for (const s of allSessions) {
+      const triggers = s.github_triggers;
+      if (!Array.isArray(triggers) || triggers.length === 0) continue;
+      // Only process sessions that match repo (or have no repo filter)
+      if (s.github_repo && s.github_repo !== repo) continue;
+
+      for (const trigger of triggers) {
+        if (trigger.event && trigger.event !== event) continue;
+        if (trigger.ref && trigger.ref !== ref) continue;
+        if (trigger.branch && trigger.branch !== branch) continue;
+        if (trigger.workflow && trigger.workflow !== (wf.name || run.name)) continue;
+        if (trigger.conclusion && trigger.conclusion !== run.conclusion) continue;
+
+        const triggerMsg = (trigger.message || `GitHub trigger: ${event} on ${repo}`)
+          .replace('{repo}', repo)
+          .replace('{branch}', branch)
+          .replace('{event}', event)
+          .replace('{conclusion}', run.conclusion || '')
+          .replace('{ref}', ref);
+
+        const triggerEntry = {
+          message_id: -(now % 2147483647) - Math.floor(Math.random() * 1000),
+          user: `github-trigger:${event}`,
+          text: triggerMsg,
+          ts: now,
+          via: 'github-trigger',
+          force: true,
+        };
+        try {
+          fs.appendFileSync(path.join(QUEUE_DIR, `tg-queue-${s.thread_id}.jsonl`), JSON.stringify(triggerEntry) + '\n');
+          console.log(`[github-trigger] ${event} → session ${s.session} (thread ${s.thread_id}): ${triggerMsg.slice(0, 60)}`);
+        } catch (e) {
+          console.error(`[github-trigger] Queue error for ${s.session}:`, e.message);
+        }
+        break; // Only fire first matching trigger per session
+      }
+    }
+  } catch (e) {
+    console.error('[github-trigger] Processing error:', e.message);
+  }
 });
 
 // ── Feature 2: Generic Webhook (n8n / Zapier / Make / PagerDuty / Sentry) ─────
@@ -3412,7 +3463,9 @@ app.get('/api/agents-data', (req, res) => {
         session: s.session, thread_id: tid, path: s.path || s.workdir,
         type: s.type || 'claude', persona: s.persona || null,
         schedule: s.schedule || [], skills: s.skills || [],
+        github_triggers: s.github_triggers || [],
         memory: {}, last_seen: null,
+        token_stats: null, health: 'unknown',
       };
       // Memory
       try {
@@ -3427,6 +3480,28 @@ app.get('/api/agents-data', (req, res) => {
           data.last_seen = Math.floor(st.mtimeMs / 1000);
         }
       } catch (_) {}
+      // Token stats — last 5 minutes
+      try {
+        const sf = path.join(QUEUE_DIR, `token-stats-${tid}.jsonl`);
+        if (fs.existsSync(sf)) {
+          const lines = fs.readFileSync(sf, 'utf8').split('\n').filter(Boolean);
+          const cutoff = now - 300; // last 5 min
+          let totalIn = 0, totalOut = 0, totalCost = 0, entryCount = 0;
+          for (const line of lines.slice(-50)) {
+            try {
+              const e = JSON.parse(line);
+              const ts = e.ts ? Math.floor(new Date(e.ts).getTime() / 1000) : 0;
+              if (ts > cutoff) { totalIn += e.input || 0; totalOut += e.output || 0; totalCost += e.cost_usd || 0; entryCount++; }
+            } catch (_) {}
+          }
+          data.token_stats = { input: totalIn, output: totalOut, cost_usd: totalCost, entries: entryCount };
+        }
+      } catch (_) {}
+      // Health: online if last_seen within 10 min, offline if > 30 min, degraded otherwise
+      if (data.last_seen) {
+        const age = now - data.last_seen;
+        data.health = age < 600 ? 'online' : age < 1800 ? 'degraded' : 'offline';
+      }
       return data;
     });
 

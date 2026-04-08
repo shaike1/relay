@@ -505,6 +505,17 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'get_briefing',
+      description: 'Get a contextual briefing before starting work on a topic. Searches the shared knowledge base, session memories, and recent activity for anything relevant to the given topic. Call this at the start of a new task to surface useful context.',
+      inputSchema: {
+        type: 'object',
+        required: ['topic'],
+        properties: {
+          topic: { type: 'string', description: 'The topic or task you are about to work on (e.g. "deploy", "backup", "auth bug")' },
+        },
+      },
+    },
+    {
       name: 'auto_dispatch',
       description: 'Automatically find the best session to handle a task based on project path, session type, and recent activity. Then sends the task to that session. Like send_task but with automatic routing.',
       inputSchema: {
@@ -529,6 +540,18 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           target_session: { type: 'string', description: 'Target session name (from list_peers)' },
           task:           { type: 'string', description: 'Task description / prompt to send to the target session' },
           expect_result:  { type: 'boolean', description: 'If true, creates a pending-result file the target can write to when done', default: false },
+        },
+      },
+    },
+    {
+      name: 'await_result',
+      description: 'Wait for a delegated task to complete and return its result. Blocks until the result is available or timeout is reached. Use after delegate_task to get the output synchronously.',
+      inputSchema: {
+        type: 'object',
+        required: ['task_id'],
+        properties: {
+          task_id:      { type: 'string',  description: 'The task_id returned by send_task or delegate_task' },
+          timeout_secs: { type: 'integer', description: 'Max seconds to wait (default: 120)', default: 120 },
         },
       },
     },
@@ -1041,6 +1064,15 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       tasks[taskId].status = status === 'error' ? 'error' : 'complete'
       await Bun.write(TASKS_FILE, JSON.stringify(tasks, null, 2))
 
+      // Write result file for await_result polling
+      const resultFile = `/tmp/relay-task-result-${taskId}.json`
+      await Bun.write(resultFile, JSON.stringify({
+        status,
+        output,
+        from: selfName,
+        completed_at: Date.now() / 1000,
+      }))
+
       // Milestone gating: dispatch any waiting tasks whose dependencies are now met
       const dispatched: string[] = []
       for (const [tid, t] of Object.entries(tasks) as [string, any][]) {
@@ -1290,6 +1322,75 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
   }
 
+  // ── Get Briefing (contextual knowledge surface) ───────────────────────────
+
+  if (name === 'get_briefing') {
+    const topic = String(args?.topic ?? '').toLowerCase()
+    if (!topic) return { content: [{ type: 'text', text: 'Error: topic is required.' }] }
+    try {
+      // Search knowledge base
+      let knowledgeEntries: Array<{ id: string; title: string; content: string; tags: string[]; author: string; ts: number }> = []
+      try {
+        const f = Bun.file(KNOWLEDGE_FILE)
+        if (await f.exists()) knowledgeEntries = JSON.parse(await f.text())
+      } catch {}
+
+      const matchingKnowledge = knowledgeEntries
+        .filter(e =>
+          e.title.toLowerCase().includes(topic) ||
+          e.content.toLowerCase().includes(topic) ||
+          e.tags.some(t => t.toLowerCase().includes(topic))
+        )
+        .reverse()
+        .slice(0, 5)
+
+      // Search all session memory files
+      const memoryMatches: Array<{ session: string; key: string; value: string }> = []
+      const memGlob = new Bun.Glob('/tmp/relay-memory-*.json')
+      for await (const filePath of memGlob.scan('/')) {
+        if (memoryMatches.length >= 5) break
+        try {
+          const f = Bun.file(filePath)
+          if (!(await f.exists())) continue
+          const store: Record<string, string> = JSON.parse(await f.text())
+          const sessionName = filePath.replace('/tmp/relay-memory-', '').replace('.json', '')
+          for (const [k, v] of Object.entries(store)) {
+            if (memoryMatches.length >= 5) break
+            if (k.toLowerCase().includes(topic) || String(v).toLowerCase().includes(topic)) {
+              memoryMatches.push({ session: sessionName, key: k, value: String(v).substring(0, 200) })
+            }
+          }
+        } catch {}
+      }
+
+      const lines: string[] = [`=== Briefing: ${topic} ===`]
+
+      lines.push(`\nFrom Knowledge Library (${matchingKnowledge.length} entries):`)
+      if (matchingKnowledge.length > 0) {
+        for (const e of matchingKnowledge) {
+          const snippet = e.content.length > 150 ? e.content.slice(0, 150) + '…' : e.content
+          lines.push(`• [${e.author}] ${e.title}: ${snippet}`)
+        }
+      } else {
+        lines.push('(nothing relevant found)')
+      }
+
+      lines.push(`\nFrom Session Memories (${memoryMatches.length} entries):`)
+      if (memoryMatches.length > 0) {
+        for (const m of memoryMatches) {
+          const snippet = m.value.length > 150 ? m.value.slice(0, 150) + '…' : m.value
+          lines.push(`• [${m.session}] ${m.key}: ${snippet}`)
+        }
+      } else {
+        lines.push('(nothing relevant found)')
+      }
+
+      return { content: [{ type: 'text', text: lines.join('\n') }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error getting briefing: ${e}` }] }
+    }
+  }
+
   // ── Auto Dispatch ──────────────────────────────────────────────────────────
 
   if (name === 'auto_dispatch') {
@@ -1465,6 +1566,31 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       return { content: [{ type: 'text', text: resultMsg }] }
     } catch (e) {
       return { content: [{ type: 'text', text: `Error delegating task: ${e}` }] }
+    }
+  }
+
+  // ── Await Result (blocking poll for task result) ──────────────────────────
+
+  if (name === 'await_result') {
+    const taskId     = String(args?.task_id ?? '')
+    const timeoutSec = Number(args?.timeout_secs ?? 120)
+    if (!taskId) return { content: [{ type: 'text', text: 'Error: task_id is required.' }] }
+    const resultFile = `/tmp/relay-task-result-${taskId}.json`
+    const deadline = Date.now() + timeoutSec * 1000
+    try {
+      while (Date.now() < deadline) {
+        const f = Bun.file(resultFile)
+        if (await f.exists()) {
+          const data = await f.text()
+          // Delete the result file after reading
+          try { const { unlinkSync } = await import('fs'); unlinkSync(resultFile) } catch (_) {}
+          return { content: [{ type: 'text', text: data }] }
+        }
+        await Bun.sleep(2000)
+      }
+      return { content: [{ type: 'text', text: `Task result not ready after ${timeoutSec}s` }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error waiting for result: ${e}` }] }
     }
   }
 

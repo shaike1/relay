@@ -22,6 +22,9 @@ CRASH_ALERT_MINUTES=${CRASH_ALERT_MINUTES:-30}  # alert if no response for N min
 TOOL_MONITOR=1         # set to 0 to disable per-session tool notifications
 STREAM_MONITOR=1       # live pane streaming when new message arrives
 SCHEDULE_CHECK_INTERVAL=60  # seconds between schedule checks
+TOKEN_ALERT_THRESHOLD=${TOKEN_ALERT_THRESHOLD:-10000}  # output tokens/5min before alert (0=disabled)
+LOOP_DETECT_ENABLED=${LOOP_DETECT_ENABLED:-1}          # detect stuck loops
+LOOP_DETECT_WINDOW=5   # consecutive identical tool hashes before alert
 
 # Per-session env overrides — sourced AFTER defaults so they take effect
 # e.g. echo "RELAY_API_URL=https://relay.right-api.com" > /tmp/relay-session-env-${THREAD_ID}
@@ -37,6 +40,9 @@ last_crash_check=0
 last_stream_trigger=0   # last time streaming was started
 last_queue_mtime=0      # track queue file mtime to detect new messages
 last_schedule_check=0   # last time schedule entries were checked
+last_health_check=0     # last time health/token alert check ran
+loop_hash_count=0       # count of consecutive identical tool call hashes
+last_loop_hash=""       # last seen tool hash for loop detection
 
 # Helper: run tmux with this session's socket
 tmux_s() { tmux -S "$TMUX_SOCKET" "$@"; }
@@ -182,6 +188,112 @@ try:
 except Exception:
     pass
 SCHEDULE_PY
+  fi
+
+  # Health monitoring — token rate alerts + loop detection (every 60s)
+  now=$(date +%s)
+  if [ $((now - last_health_check)) -ge 60 ]; then
+    last_health_check=$now
+
+    # --- Token rate alert ---
+    if [ "${TOKEN_ALERT_THRESHOLD:-0}" -gt 0 ]; then
+      python3 - "$THREAD_ID" "$SESSION" "$TOKEN_ALERT_THRESHOLD" <<'HEALTH_PY' 2>/dev/null || true
+import json, sys, os, time
+
+thread_id, session, threshold = sys.argv[1], sys.argv[2], int(sys.argv[3])
+stats_file = f"/tmp/token-stats-{thread_id}.jsonl"
+alert_cooldown_file = f"/tmp/relay-token-alert-cooldown-{thread_id}"
+
+if not os.path.exists(stats_file):
+    sys.exit(0)
+
+# Cooldown: only alert once per 10 minutes
+try:
+    last_alert = float(open(alert_cooldown_file).read().strip())
+    if time.time() - last_alert < 600:
+        sys.exit(0)
+except Exception:
+    pass
+
+cutoff = time.time() - 300  # last 5 min
+total_out = 0
+try:
+    for line in open(stats_file).readlines()[-50:]:
+        try:
+            e = json.loads(line.strip())
+            ts_str = e.get("ts", "")
+            if ts_str:
+                import datetime
+                ts = datetime.datetime.fromisoformat(ts_str).timestamp()
+                if ts > cutoff:
+                    total_out += e.get("output", 0)
+        except Exception:
+            pass
+except Exception:
+    sys.exit(0)
+
+if total_out > threshold:
+    # Send Telegram alert
+    bot_token = ""
+    chat_id = ""
+    try:
+        for line in open("/root/relay/.env"):
+            if line.startswith("TELEGRAM_BOT_TOKEN="):
+                bot_token = line.strip().split("=", 1)[1].strip('"\'')
+            elif line.startswith("GROUP_CHAT_ID="):
+                chat_id = line.strip().split("=", 1)[1].strip('"\'')
+    except Exception:
+        pass
+
+    if bot_token and chat_id:
+        import urllib.request
+        msg = f"⚡ <b>Token spike: {session}</b>\n{total_out:,} output tokens in last 5 min (threshold: {threshold:,})\nCheck if session is stuck in a loop."
+        import urllib.parse
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        data = urllib.parse.urlencode({
+            "chat_id": chat_id,
+            "message_thread_id": thread_id,
+            "text": msg,
+            "parse_mode": "HTML"
+        }).encode()
+        try:
+            urllib.request.urlopen(url, data, timeout=8)
+            open(alert_cooldown_file, "w").write(str(time.time()))
+        except Exception:
+            pass
+HEALTH_PY
+    fi
+
+    # --- Loop detection ---
+    if [ "${LOOP_DETECT_ENABLED:-1}" = "1" ]; then
+      current_tool_hash=$(tmux_s capture-pane -pt "${SESSION}:0" -l 20 2>/dev/null \
+        | grep -E '●|Tool:|Bash\(|Edit\(|Read\(' | tail -3 | md5sum | cut -c1-8 || echo "")
+      if [ -n "$current_tool_hash" ]; then
+        if [ "$current_tool_hash" = "$last_loop_hash" ]; then
+          loop_hash_count=$((loop_hash_count + 1))
+          if [ "$loop_hash_count" -ge "$LOOP_DETECT_WINDOW" ]; then
+            # Alert and reset counter
+            loop_hash_count=0
+            BOT_TOKEN=""
+            CHAT_ID=""
+            [ -f /root/relay/.env ] && {
+              BOT_TOKEN=$(grep -E '^TELEGRAM_BOT_TOKEN=' /root/relay/.env | cut -d= -f2- | tr -d '"'"'" | head -1)
+              CHAT_ID=$(grep -E '^GROUP_CHAT_ID=' /root/relay/.env | cut -d= -f2- | tr -d '"'"'" | head -1)
+            }
+            if [ -n "$BOT_TOKEN" ] && [ -n "$CHAT_ID" ]; then
+              MSG="🔄 <b>Loop detected: ${SESSION}</b>
+Repeating the same tool calls for 5+ cycles. Session may be stuck."
+              curl -sf "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+                -d "chat_id=${CHAT_ID}&message_thread_id=${THREAD_ID}&text=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$MSG")&parse_mode=HTML" \
+                > /dev/null 2>&1 || true
+            fi
+          fi
+        else
+          loop_hash_count=0
+          last_loop_hash="$current_tool_hash"
+        fi
+      fi
+    fi
   fi
 
   # Rate-limit detection — check pane for API rate limit / overload errors every 30s
