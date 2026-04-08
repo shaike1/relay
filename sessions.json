@@ -300,7 +300,7 @@
   {
     "thread_id": 12625,
     "session": "chat",
-    "path": "/root/relay",
+    "path": "/root/.chat-workspace",
     "host": null,
     "group": "general",
     "description": "General chat topic — conversations, questions, brainstorming",

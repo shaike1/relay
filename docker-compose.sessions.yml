@@ -683,7 +683,7 @@ services:
     environment:
       SESSION_NAME: "chat"
       TELEGRAM_THREAD_ID: "12625"
-      WORKDIR: "/root/relay"
+      WORKDIR: "/root/.chat-workspace"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
@@ -695,7 +695,7 @@ services:
       # Docker socket — allows session to manage containers
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
-      - /root/relay:/root/relay
+      - /root/.chat-workspace:/root/.chat-workspace
     depends_on:
       - relay
     logging:
