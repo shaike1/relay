@@ -2422,12 +2422,14 @@ app.get('/api/session-tasks', (req, res) => {
 
 function writePersonaViaDockerExec(sessionName, workdir, persona) {
   // The relay-api container doesn't have access to session workdirs directly.
-  // Use docker exec to write CLAUDE.md inside the session container (best-effort).
+  // Write a Python script to /tmp (shared relay-queue volume) then exec it in the
+  // session container to avoid any shell escaping issues with multiline -c strings.
   const containerName = `relay-session-${sessionName}`;
-  const script = `
-import json, pathlib, sys
+  const scriptPath = `/tmp/relay-persona-${sessionName}.py`;
+  const personaB64 = Buffer.from(persona).toString('base64');
+  const script = `import base64, pathlib
 workdir = ${JSON.stringify(workdir)}
-persona = ${JSON.stringify(persona)}
+persona = base64.b64decode(${JSON.stringify(personaB64)}).decode()
 marker_open = '<!-- AGENT_PERSONA -->'
 marker_close = '<!-- /AGENT_PERSONA -->'
 persona_block = marker_open + '\\n## Agent Persona\\n' + persona + '\\n' + marker_close + '\\n\\n'
@@ -2446,14 +2448,17 @@ else:
         content = persona_block + content
     claude_md.write_text(content)
 print('ok')
-`.trim();
+`;
   try {
-    execSync(`docker exec ${containerName} python3 -c ${JSON.stringify(script)}`, { timeout: 10000 });
+    fs.writeFileSync(scriptPath, script);
+    execSync(`docker exec ${containerName} python3 ${scriptPath}`, { timeout: 10000 });
     return true;
   } catch (e) {
     // Container might not be running — that's OK, session-loop will inject on next start
     console.warn(`[persona] Could not write CLAUDE.md via docker exec for ${sessionName}: ${e.message}`);
     return false;
+  } finally {
+    try { fs.unlinkSync(scriptPath); } catch (_) {}
   }
 }
 
@@ -3448,58 +3453,6 @@ app.get('/api/agents-data', (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
-});
-
-// GET /api/sessions/:name/persona — get current persona
-app.get('/api/sessions/:name/persona', (req, res) => {
-  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
-  const name = req.params.name;
-  if (!/^[a-zA-Z0-9_-]+$/.test(name)) return res.status(400).json({ error: 'Invalid session name' });
-  try {
-    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
-    const s = sessions.find(x => x.session === name);
-    if (!s) return res.status(404).json({ error: 'Session not found' });
-    res.json({ session: name, persona: s.persona || null });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// POST /api/sessions/:name/persona — set persona (updates sessions.json + CLAUDE.md)
-app.post('/api/sessions/:name/persona', (req, res) => {
-  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
-  const name = req.params.name;
-  if (!/^[a-zA-Z0-9_-]+$/.test(name)) return res.status(400).json({ error: 'Invalid session name' });
-  const persona = String(req.body?.persona || '').trim();
-  try {
-    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
-    const idx = sessions.findIndex(x => x.session === name);
-    if (idx === -1) return res.status(404).json({ error: 'Session not found' });
-
-    // Update sessions.json
-    if (persona) sessions[idx].persona = persona;
-    else delete sessions[idx].persona;
-    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2));
-
-    // Update workdir CLAUDE.md
-    const workdir = sessions[idx].path || sessions[idx].workdir;
-    if (workdir && fs.existsSync(workdir)) {
-      const claudeMd = path.join(workdir, 'CLAUDE.md');
-      const marker = '<!-- AGENT_PERSONA -->';
-      const endMarker = '<!-- /AGENT_PERSONA -->';
-      const section = persona
-        ? `${marker}\n## Agent Persona\n${persona}\n${endMarker}\n\n`
-        : '';
-      let content = '';
-      if (fs.existsSync(claudeMd)) content = fs.readFileSync(claudeMd, 'utf8');
-      if (content.includes(marker)) {
-        content = content.replace(new RegExp(`${marker}[\\s\\S]*?${endMarker}\\n\\n?`, ''), section);
-      } else if (persona) {
-        content = section + content;
-      }
-      if (content.trim() || persona) fs.writeFileSync(claudeMd, content);
-    }
-
-    res.json({ ok: true, persona: persona || null });
-  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Health Check Endpoints ───────────────────────────────────────────────────
