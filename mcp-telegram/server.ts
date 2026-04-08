@@ -703,9 +703,12 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       ? (() => { try { return JSON.parse(rawButtons) } catch { return undefined } })()
       : rawButtons as string[][] | undefined
     const streaming = args?.streaming !== undefined ? Boolean(args.streaming) : true  // default: streaming ON
+    // Negative reply_to IDs are synthetic (e.g. callback buttons) — not valid Telegram message IDs
+    const replyTo = (args?.reply_to as number | undefined)
+    const validReplyTo = replyTo && replyTo > 0 ? replyTo : undefined
     const ids = streaming
-      ? await sendMessageStreaming(text, args?.reply_to as number | undefined, buttons)
-      : await sendMessage(text, args?.reply_to as number | undefined, buttons)
+      ? await sendMessageStreaming(text, validReplyTo, buttons)
+      : await sendMessage(text, validReplyTo, buttons)
     // Write response timestamp so the relay bot knows Claude replied
     void Bun.write(`/tmp/tg-last-sent-${THREAD_ID}`, String(Date.now() / 1000))
     // Clear crash-alert flag so the watchdog can send a fresh alert after the next silence period
