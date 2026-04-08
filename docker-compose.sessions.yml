@@ -5,6 +5,80 @@
 # Each container runs mcp-server + session-loop under s6-overlay.
 
 services:
+  session-ha:
+    image: relay-session:latest
+    build:
+      context: .
+      dockerfile: session.Dockerfile
+    container_name: relay-session-ha
+    restart: always
+    environment:
+      SESSION_NAME: "ha"
+      TELEGRAM_THREAD_ID: "11394"
+      WORKDIR: "/root/ha-skill"
+    volumes:
+      # Shared queue between bot and session containers
+      - relay-queue:/tmp
+      # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
+      - /root/relay/.env:/root/relay/.env:ro
+      # Claude credentials and global state (directory + auth file)
+      - /root/.claude:/root/.claude
+      - /root/.claude.json:/root/.claude.json
+      # Docker socket — allows session to manage containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Project working directory
+      - /root/ha-skill:/root/ha-skill
+    depends_on:
+      - relay
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "claude"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  session-files-config:
+    image: relay-session:latest
+    build:
+      context: .
+      dockerfile: session.Dockerfile
+    container_name: relay-session-files-config
+    restart: always
+    environment:
+      SESSION_NAME: "files-config"
+      TELEGRAM_THREAD_ID: "11351"
+      WORKDIR: "/root/relay"
+    volumes:
+      # Shared queue between bot and session containers
+      - relay-queue:/tmp
+      # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
+      - /root/relay/.env:/root/relay/.env:ro
+      # Claude credentials and global state (directory + auth file)
+      - /root/.claude:/root/.claude
+      - /root/.claude.json:/root/.claude.json
+      # Docker socket — allows session to manage containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Project working directory
+      - /root/relay:/root/relay
+    depends_on:
+      - relay
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "claude"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
   session-openclaw:
     image: relay-session:latest
     build:
@@ -585,6 +659,43 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/meshcentral:/root/meshcentral
+    depends_on:
+      - relay
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "claude"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  session-chat:
+    image: relay-session:latest
+    build:
+      context: .
+      dockerfile: session.Dockerfile
+    container_name: relay-session-chat
+    restart: always
+    environment:
+      SESSION_NAME: "chat"
+      TELEGRAM_THREAD_ID: "12625"
+      WORKDIR: "/root/relay"
+    volumes:
+      # Shared queue between bot and session containers
+      - relay-queue:/tmp
+      # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
+      - /root/relay/.env:/root/relay/.env:ro
+      # Claude credentials and global state (directory + auth file)
+      - /root/.claude:/root/.claude
+      - /root/.claude.json:/root/.claude.json
+      # Docker socket — allows session to manage containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Project working directory
+      - /root/relay:/root/relay
     depends_on:
       - relay
     logging:

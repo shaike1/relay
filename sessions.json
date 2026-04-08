@@ -5,7 +5,13 @@
     "path": "/root/ha-skill",
     "host": null,
     "group": "iot",
-    "skills": ["homeassistant", "automation", "iot", "yaml", "lovelace"]
+    "skills": [
+      "homeassistant",
+      "automation",
+      "iot",
+      "yaml",
+      "lovelace"
+    ]
   },
   {
     "thread_id": 11351,
@@ -14,7 +20,12 @@
     "host": null,
     "group": "infra",
     "description": "Files & Config topic — backups, exports, markdown reports auto-sent here",
-    "skills": ["files", "backup", "config", "export"]
+    "skills": [
+      "files",
+      "backup",
+      "config",
+      "export"
+    ]
   },
   {
     "thread_id": 202,
@@ -285,5 +296,19 @@
       "docker",
       "networking"
     ]
+  },
+  {
+    "thread_id": 12625,
+    "session": "chat",
+    "path": "/root/relay",
+    "host": null,
+    "group": "general",
+    "description": "General chat topic — conversations, questions, brainstorming",
+    "skills": [
+      "general",
+      "chat",
+      "conversation"
+    ],
+    "skills_route": true
   }
 ]
