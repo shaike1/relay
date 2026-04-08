@@ -139,6 +139,8 @@ function authMiddleware(req, res, next) {
   if (req.path === '/health' || req.path === '/health/sessions') return next();
   // Allow remote session queue pull (internal use by watchdog on remote sessions)
   if (req.path.startsWith('/api/queue/') && req.path.endsWith('/messages')) return next();
+  // Allow routing rules API
+  if (req.path === '/api/routing' || req.path.startsWith('/api/routing/')) return next();
   // Allow login page
   if (req.path === '/login') return next();
   // Allow Mini App endpoints — authenticated via Telegram initData instead
@@ -764,6 +766,40 @@ function webhookQueueWrite(update) {
     }
   } catch (e) {
     console.error('[mention] Routing error:', e.message);
+  }
+
+  // Auto-routing: match message text against /relay/routing.json patterns
+  // Only routes if the message landed in the relay session (thread 183) and
+  // the target is a different session on this host.
+  try {
+    const ROUTING_FILE = process.env.ROUTING_FILE || '/relay/routing.json';
+    if (fs.existsSync(ROUTING_FILE)) {
+      const rules = JSON.parse(fs.readFileSync(ROUTING_FILE, 'utf8'));
+      const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+      for (const rule of rules) {
+        const regex = new RegExp(rule.pattern, 'i');
+        if (!regex.test(msg.text)) continue;
+        const targetSession = sessions.find(s => s.session === rule.target || s.name === rule.target);
+        if (!targetSession) continue;
+        if (String(targetSession.thread_id) === String(effectiveThreadId)) continue;
+        // Skip remote sessions (no shared queue volume)
+        if (targetSession.host) continue;
+        const targetQueue = path.join(QUEUE_DIR, `tg-queue-${targetSession.thread_id}.jsonl`);
+        const routeEntry = {
+          ...baseEntry,
+          message_id: -(Math.floor(Date.now() / 1000) % 2147483647),
+          via: 'auto-route',
+          force: true,
+          routed_from_thread: effectiveThreadId,
+          matched_rule: rule.pattern,
+        };
+        fs.appendFileSync(targetQueue, JSON.stringify(routeEntry) + '\n');
+        console.log(`[auto-route] "${rule.pattern}" → ${rule.target} (thread ${targetSession.thread_id})`);
+        break; // first matching rule wins
+      }
+    }
+  } catch (e) {
+    console.error('[auto-route] Routing error:', e.message);
   }
 }
 
@@ -3988,6 +4024,38 @@ app.get('/api/queue/:threadId/messages', (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Routing rules API — GET/POST/DELETE /api/routing
+const ROUTING_FILE = process.env.ROUTING_FILE || '/relay/routing.json';
+
+app.get('/api/routing', (req, res) => {
+  try {
+    const rules = fs.existsSync(ROUTING_FILE) ? JSON.parse(fs.readFileSync(ROUTING_FILE, 'utf8')) : [];
+    res.json(rules);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/routing', (req, res) => {
+  try {
+    const { pattern, target, comment } = req.body;
+    if (!pattern || !target) return res.status(400).json({ error: 'pattern and target required' });
+    const rules = fs.existsSync(ROUTING_FILE) ? JSON.parse(fs.readFileSync(ROUTING_FILE, 'utf8')) : [];
+    rules.push({ pattern, target, ...(comment ? { comment } : {}) });
+    fs.writeFileSync(ROUTING_FILE, JSON.stringify(rules, null, 2));
+    res.json({ ok: true, rules });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/routing/:index', (req, res) => {
+  try {
+    const idx = parseInt(req.params.index, 10);
+    const rules = fs.existsSync(ROUTING_FILE) ? JSON.parse(fs.readFileSync(ROUTING_FILE, 'utf8')) : [];
+    if (idx < 0 || idx >= rules.length) return res.status(404).json({ error: 'rule not found' });
+    const removed = rules.splice(idx, 1);
+    fs.writeFileSync(ROUTING_FILE, JSON.stringify(rules, null, 2));
+    res.json({ ok: true, removed: removed[0], rules });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

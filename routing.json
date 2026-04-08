@@ -1,0 +1,12 @@
+[
+  {
+    "pattern": "home.?assistant|\\bha\\b|בית חכם|אוטומציה|automation|lovelace",
+    "target": "ha",
+    "comment": "Home Assistant questions → ha session"
+  },
+  {
+    "pattern": "backup|duplicacy|גיבוי",
+    "target": "duplicacy",
+    "comment": "Backup questions → duplicacy session"
+  }
+]
