@@ -723,7 +723,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     const buttons: string[][] | undefined = typeof rawButtons === 'string'
       ? (() => { try { return JSON.parse(rawButtons) } catch { return undefined } })()
       : rawButtons as string[][] | undefined
-    const streaming = args?.streaming !== undefined ? Boolean(args.streaming) : true  // default: streaming ON
+    const streaming = args?.streaming !== undefined ? Boolean(args.streaming) : false  // default: streaming OFF (too many rate-limit/HTML failures)
     // Negative reply_to IDs are synthetic (e.g. callback buttons) — not valid Telegram message IDs
     const replyTo = (args?.reply_to as number | undefined)
     const validReplyTo = replyTo && replyTo > 0 ? replyTo : undefined
