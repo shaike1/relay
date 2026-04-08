@@ -264,35 +264,45 @@ async function sendMessageStreaming(text: string, replyTo?: number, buttons?: st
         chat_id: CHAT_ID,
         message_id: msgId,
         text: plainPreview,
-      }) as { ok: boolean; parameters?: { retry_after?: number } }
-      if (!editRes.ok && editRes.parameters?.retry_after) {
-        await Bun.sleep((editRes.parameters.retry_after + 1) * 1000)
-        await tg('editMessageText', { chat_id: CHAT_ID, message_id: msgId, text: plainPreview })
+      }) as { ok: boolean; parameters?: { retry_after?: number }; description?: string }
+      if (!editRes.ok) {
+        process.stderr.write(`[telegram] streaming edit failed: ${editRes.description}\n`)
+        if (editRes.parameters?.retry_after) {
+          await Bun.sleep((editRes.parameters.retry_after + 1) * 1000)
+          await tg('editMessageText', { chat_id: CHAT_ID, message_id: msgId, text: plainPreview })
+        }
+        // On other errors (e.g. "message is not modified"), just continue — not fatal
       }
       lastEditLen = accumulated.length
-      await Bun.sleep(1100)  // stay under Telegram's ~1 edit/sec per message limit
+      await Bun.sleep(1200)  // stay safely under Telegram's ~1 edit/sec per message limit
     }
   }
 
   // Final edit with full text (no cursor) + buttons
-  if (buttons) {
-    const finalBody: Record<string, unknown> = {
+  const replyMarkup = buttons ? {
+    inline_keyboard: buttons.map(row =>
+      row.map(label => ({ text: label, callback_data: `btn:${THREAD_ID}:${label}` }))
+    ),
+  } : undefined
+
+  const finalBody: Record<string, unknown> = {
+    chat_id: CHAT_ID,
+    message_id: msgId,
+    text: accumulated,
+    parse_mode: 'HTML',
+    ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+  }
+  const finalRes = await tg('editMessageText', finalBody) as { ok: boolean; description?: string }
+  if (!finalRes.ok) {
+    // HTML parse failed — fall back to plain text so user sees the full message
+    process.stderr.write(`[telegram] final HTML edit failed (${finalRes.description}) — retrying as plain text\n`)
+    const plain = accumulated.replace(/<[^>]+>/g, '')
+    await tg('editMessageText', {
       chat_id: CHAT_ID,
       message_id: msgId,
-      text: accumulated,
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: buttons.map(row =>
-          row.map(label => ({
-            text: label,
-            callback_data: `btn:${THREAD_ID}:${label}`,
-          }))
-        ),
-      },
-    }
-    await tg('editMessageText', finalBody)
-  } else {
-    await editMessage(msgId, accumulated)
+      text: plain,
+      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+    })
   }
 
   return [msgId]
