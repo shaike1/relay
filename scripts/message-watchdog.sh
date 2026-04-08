@@ -75,7 +75,23 @@ while true; do
       silence_secs=$((now - ${last_sent%.*}))
       threshold=$((CRASH_ALERT_MINUTES * 60))
       alerted_file="/tmp/tg-crash-alerted-${THREAD_ID}"
-      if [ "$silence_secs" -gt "$threshold" ] && [ ! -f "$alerted_file" ]; then
+      # Only alert if there are actually pending messages — idle silence is fine
+      _queue_pending=0
+      if [ -f "$QUEUE" ]; then
+        _queue_pending=$(python3 -c "
+import json
+last_id = $([ -f '$STATE' ] && python3 -c "import json; d=json.load(open('$STATE')); print(d.get('lastId',0))" 2>/dev/null || echo 0)
+count = 0
+with open('$QUEUE') as f:
+    for line in f:
+        try:
+            m = json.loads(line)
+            if m.get('message_id', 0) > last_id: count += 1
+        except: pass
+print(count)
+" 2>/dev/null || echo 0)
+      fi
+      if [ "$silence_secs" -gt "$threshold" ] && [ ! -f "$alerted_file" ] && [ "$_queue_pending" -gt 0 ]; then
         mins=$((silence_secs / 60))
         ALERT_TEXT="⚠️ Session <b>${SESSION}</b> has not sent any message in ${mins} minutes — may be stuck or crashed."
         tg-send "$ALERT_TEXT" 2>/dev/null || true
