@@ -803,6 +803,46 @@ function webhookQueueWrite(update) {
   } catch (e) {
     console.error('[auto-route] Routing error:', e.message);
   }
+
+  // Skills-based routing: if incoming session has skills_route:true, match message
+  // against all other sessions' skills arrays and forward to the best match.
+  // Sends a "↪ forwarded" confirmation back in the originating thread.
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const originSession = sessions.find(s => String(s.thread_id) === String(effectiveThreadId));
+    if (originSession && originSession.skills_route) {
+      const text = (msg.text || '').toLowerCase();
+      let bestMatch = null;
+      let bestScore = 0;
+      for (const s of sessions) {
+        if (String(s.thread_id) === String(effectiveThreadId)) continue;
+        if (s.host) continue; // skip remote sessions
+        if (!s.skills || s.skills.length === 0) continue;
+        // Score = number of skills that appear in message text
+        const score = s.skills.filter(skill => text.includes(skill.toLowerCase())).length;
+        if (score > bestScore) { bestScore = score; bestMatch = s; }
+      }
+      if (bestMatch && bestScore > 0) {
+        const targetQueue = path.join(QUEUE_DIR, `tg-queue-${bestMatch.thread_id}.jsonl`);
+        const skillEntry = {
+          ...baseEntry,
+          message_id: -(Math.floor(Date.now() / 1000) % 2147483647),
+          via: 'skills-route',
+          force: true,
+          routed_from_thread: effectiveThreadId,
+          matched_session: bestMatch.session,
+          skill_score: bestScore,
+        };
+        fs.appendFileSync(targetQueue, JSON.stringify(skillEntry) + '\n');
+        console.log(`[skills-route] score=${bestScore} → ${bestMatch.session} (thread ${bestMatch.thread_id})`);
+        // Confirm back in originating thread
+        const confirmText = `↪ הועבר ל-<b>${bestMatch.session}</b>`;
+        tgSendMessage(String(effectiveThreadId), confirmText, msg.message_id, null).catch(() => {});
+      }
+    }
+  } catch (e) {
+    console.error('[skills-route] Routing error:', e.message);
+  }
 }
 
 // Multi-tenant routing: maps (thread_id, user_id) → isolated virtual thread_id
