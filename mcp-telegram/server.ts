@@ -249,7 +249,7 @@ async function sendMessageStreaming(text: string, replyTo?: number, buttons?: st
   const words = text.split(/(\s+)/)
   let accumulated = ''
   let lastEditLen = 0
-  const CHUNK_SIZE = 8  // edit every N words for smoothness
+  const CHUNK_SIZE = 12  // edit every N words — keep well under Telegram's 1 edit/sec limit
   let wordCount = 0
 
   for (const word of words) {
@@ -257,9 +257,24 @@ async function sendMessageStreaming(text: string, replyTo?: number, buttons?: st
     if (/\S/.test(word)) wordCount++
     // Edit periodically, not every single word (to avoid rate limits)
     if (wordCount % CHUNK_SIZE === 0 && accumulated.length > lastEditLen) {
-      await editMessage(msgId, accumulated + ' ▍')
+      const editRes = await tg('editMessageText', {
+        chat_id: CHAT_ID,
+        message_id: msgId,
+        text: accumulated + ' ▍',
+        parse_mode: 'HTML',
+      }) as { ok: boolean; parameters?: { retry_after?: number } }
+      if (!editRes.ok && editRes.parameters?.retry_after) {
+        // Rate limited — wait as instructed then retry once
+        await Bun.sleep((editRes.parameters.retry_after + 1) * 1000)
+        await tg('editMessageText', {
+          chat_id: CHAT_ID,
+          message_id: msgId,
+          text: accumulated + ' ▍',
+          parse_mode: 'HTML',
+        })
+      }
       lastEditLen = accumulated.length
-      await Bun.sleep(80)
+      await Bun.sleep(1100)  // stay under Telegram's ~1 edit/sec per message limit
     }
   }
 

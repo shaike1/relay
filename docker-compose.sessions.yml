@@ -239,6 +239,7 @@ services:
       TELEGRAM_THREAD_ID: "183"
       WORKDIR: "/root/relay"
       STREAM_MONITOR: "0"
+      CRASH_ALERT_MINUTES: "120"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
