@@ -717,14 +717,19 @@ function webhookQueueWrite(update) {
     const existing = _mergeBuffer.get(userId);
     if (existing) {
       // Cancel previous timer, append text, restart timer
+      // Deduplicate by message_id to handle Telegram webhook retries
       clearTimeout(existing.timer);
-      existing.messages.push(msg.text);
+      if (!existing.seenIds.has(msg.message_id)) {
+        existing.seenIds.add(msg.message_id);
+        existing.messages.push(msg.text);
+      }
       existing.timer = setTimeout(() => flushMergeBuffer(userId), MERGE_DELAY_MS);
     } else {
       // Start new buffer entry for this user
       const bufEntry = {
         timer: null,
         messages: [msg.text],
+        seenIds: new Set([msg.message_id]),
         firstEntry: baseEntry,
         effectiveThreadId,
       };
@@ -744,6 +749,7 @@ function webhookQueueWrite(update) {
   }
 
   // Mention routing: if message contains @session_name, copy to that session's queue
+  const mentionRoutedThreads = new Set(); // track to avoid double-routing in skills-route
   try {
     const mentionMatches = msg.text.match(/@([a-zA-Z0-9_-]+)/g);
     if (mentionMatches) {
@@ -763,6 +769,7 @@ function webhookQueueWrite(update) {
           mention_from_thread: effectiveThreadId,
         };
         fs.appendFileSync(targetQueue, JSON.stringify(mentionEntry) + '\n');
+        mentionRoutedThreads.add(String(targetSession.thread_id));
         console.log(`[mention] Routed @${mentionName} → thread ${targetSession.thread_id}`);
       }
     }
@@ -822,7 +829,8 @@ function webhookQueueWrite(update) {
         const score = s.skills.filter(skill => text.includes(skill.toLowerCase())).length;
         if (score > bestScore) { bestScore = score; bestMatch = s; }
       }
-      if (bestMatch && bestScore > 0) {
+      // Skip if already routed to this session via @mention
+      if (bestMatch && bestScore > 0 && !mentionRoutedThreads.has(String(bestMatch.thread_id))) {
         const targetQueue = path.join(QUEUE_DIR, `tg-queue-${bestMatch.thread_id}.jsonl`);
         const skillEntry = {
           ...baseEntry,
@@ -838,6 +846,8 @@ function webhookQueueWrite(update) {
         // Confirm back in originating thread
         const confirmText = `↪ הועבר ל-<b>${bestMatch.session}</b>`;
         tgSendMessage(String(effectiveThreadId), confirmText, msg.message_id, null).catch(() => {});
+      } else if (bestMatch && bestScore > 0) {
+        console.log(`[skills-route] skipping ${bestMatch.session} — already mention-routed`);
       }
     }
   } catch (e) {
