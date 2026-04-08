@@ -240,6 +240,7 @@ services:
       WORKDIR: "/root/relay"
       STREAM_MONITOR: "0"
       CRASH_ALERT_MINUTES: "120"
+      CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING: "1"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp

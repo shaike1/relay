@@ -19,7 +19,7 @@
     "path": "/root/relay",
     "host": null,
     "group": "infra",
-    "description": "Files & Config topic — backups, exports, markdown reports auto-sent here",
+    "description": "Files & Config topic \u2014 backups, exports, markdown reports auto-sent here",
     "skills": [
       "files",
       "backup",
@@ -124,7 +124,8 @@
     "protected": true,
     "env": {
       "STREAM_MONITOR": "0",
-      "CRASH_ALERT_MINUTES": "120"
+      "CRASH_ALERT_MINUTES": "120",
+      "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING": "1"
     },
     "skills": [
       "relay",
@@ -304,7 +305,7 @@
     "path": "/root/.chat-workspace",
     "host": null,
     "group": "general",
-    "description": "General chat topic — conversations, questions, brainstorming",
+    "description": "General chat topic \u2014 conversations, questions, brainstorming",
     "skills": [
       "general",
       "chat",
