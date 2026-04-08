@@ -372,6 +372,41 @@ function webhookQueueWrite(update) {
     const label = match[2];
     const queueFile = path.join(QUEUE_DIR, `tg-queue-${threadId}.jsonl`);
     const now = Math.floor(Date.now() / 1000);
+
+    // Tool approval response — format: approve:REQID or deny:REQID
+    // Written to response file so pre-tool-hook.sh can pick it up; do NOT queue to Claude.
+    const approvalMatch = label.match(/^(approve|deny):(.+)$/);
+    if (approvalMatch) {
+      const action = approvalMatch[1];
+      const reqId = approvalMatch[2];
+      const respFile = path.join(QUEUE_DIR, `tool-approval-resp-${threadId}-${reqId}`);
+      try {
+        fs.writeFileSync(respFile, action === 'approve' ? 'approved' : 'denied');
+        console.log(`[approval] ${threadId}: ${action} for req ${reqId}`);
+      } catch (e) { console.error(`[approval] write error:`, e.message); }
+      // Still answer callback + update button below — fall through to that code
+      try {
+        const botToken = process.env.TELEGRAM_BOT_TOKEN;
+        if (botToken && cb.id) {
+          fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery?callback_query_id=${cb.id}&text=${encodeURIComponent(action === 'approve' ? '✅ אושר' : '❌ בוטל')}`)
+            .catch(() => {});
+          if (cb.message) {
+            const resultText = action === 'approve' ? '✅ אושר' : '❌ בוטל';
+            fetch(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: cb.message.chat.id,
+                message_id: cb.message.message_id,
+                reply_markup: { inline_keyboard: [[{ text: resultText, callback_data: 'noop:done' }]] }
+              })
+            }).catch(() => {});
+          }
+        }
+      } catch (_) {}
+      return;
+    }
+
     const entry = {
       message_id: -(now % 2147483647),
       user: (cb.from.first_name || cb.from.username || 'unknown'),
@@ -2383,6 +2418,82 @@ app.get('/api/session-tasks', (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Failed to read tasks' }); }
 });
 
+// --- Persona API ---
+
+function writePersonaViaDockerExec(sessionName, workdir, persona) {
+  // The relay-api container doesn't have access to session workdirs directly.
+  // Use docker exec to write CLAUDE.md inside the session container (best-effort).
+  const containerName = `relay-session-${sessionName}`;
+  const script = `
+import json, pathlib, sys
+workdir = ${JSON.stringify(workdir)}
+persona = ${JSON.stringify(persona)}
+marker_open = '<!-- AGENT_PERSONA -->'
+marker_close = '<!-- /AGENT_PERSONA -->'
+persona_block = marker_open + '\\n## Agent Persona\\n' + persona + '\\n' + marker_close + '\\n\\n'
+claude_md = pathlib.Path(workdir) / 'CLAUDE.md'
+if not claude_md.exists():
+    claude_md.write_text(persona_block)
+else:
+    content = claude_md.read_text()
+    open_idx = content.find(marker_open)
+    close_idx = content.find(marker_close)
+    if open_idx != -1 and close_idx != -1 and close_idx > open_idx:
+        tail = content[close_idx + len(marker_close):]
+        tail = tail.lstrip('\\n')
+        content = content[:open_idx] + persona_block + tail
+    else:
+        content = persona_block + content
+    claude_md.write_text(content)
+print('ok')
+`.trim();
+  try {
+    execSync(`docker exec ${containerName} python3 -c ${JSON.stringify(script)}`, { timeout: 10000 });
+    return true;
+  } catch (e) {
+    // Container might not be running — that's OK, session-loop will inject on next start
+    console.warn(`[persona] Could not write CLAUDE.md via docker exec for ${sessionName}: ${e.message}`);
+    return false;
+  }
+}
+
+app.post('/api/sessions/:name/persona', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  const sessionName = req.params.name;
+  if (!sessionName || !/^[a-zA-Z0-9_-]+$/.test(sessionName)) {
+    return res.status(400).json({ error: 'Invalid session name' });
+  }
+  const { persona } = req.body;
+  if (typeof persona !== 'string') return res.status(400).json({ error: 'persona must be a string' });
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const session = sessions.find(s => s.session === sessionName);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    const workdir = session.path;
+    if (!workdir) return res.status(400).json({ error: 'Session has no path' });
+    // Persist persona in sessions.json first
+    session.persona = persona;
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2));
+    // Best-effort: write CLAUDE.md now via docker exec if session is running
+    const applied = writePersonaViaDockerExec(sessionName, workdir, persona);
+    res.json({ ok: true, applied_now: applied });
+  } catch (e) { res.status(500).json({ error: 'Failed to set persona: ' + e.message }); }
+});
+
+app.get('/api/sessions/:name/persona', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  const sessionName = req.params.name;
+  if (!sessionName || !/^[a-zA-Z0-9_-]+$/.test(sessionName)) {
+    return res.status(400).json({ error: 'Invalid session name' });
+  }
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const session = sessions.find(s => s.session === sessionName);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    res.json({ persona: session.persona || null });
+  } catch (e) { res.status(500).json({ error: 'Failed to get persona: ' + e.message }); }
+});
+
 // Session detail page
 const SESSION_DETAIL_HTML = process.env.SESSION_DETAIL_HTML || '/relay/session-detail.html';
 app.get('/sessions/:name', (req, res) => {
@@ -3272,6 +3383,123 @@ app.get('/api/audit/:session', (req, res) => {
     console.error('[audit] Failed:', e.message);
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── Agents Dashboard ─────────────────────────────────────────────────────────
+
+const AGENTS_HTML = process.env.AGENTS_HTML || '/relay/agents.html';
+app.get('/agents', (req, res) => {
+  if (!checkAuth(req)) return res.redirect('/login');
+  try { res.type('html').send(fs.readFileSync(AGENTS_HTML, 'utf8')); }
+  catch (e) { res.status(500).send('Agents page not found'); }
+});
+
+// GET /api/agents-data — returns all sessions enriched with memory, knowledge, tasks
+app.get('/api/agents-data', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const now = Math.floor(Date.now() / 1000);
+
+    const enriched = sessions.map(s => {
+      const tid = s.thread_id;
+      const data = {
+        session: s.session, thread_id: tid, path: s.path || s.workdir,
+        type: s.type || 'claude', persona: s.persona || null,
+        schedule: s.schedule || [], skills: s.skills || [],
+        memory: {}, last_seen: null,
+      };
+      // Memory
+      try {
+        const mf = path.join(QUEUE_DIR, `relay-memory-${s.session}.json`);
+        if (fs.existsSync(mf)) data.memory = JSON.parse(fs.readFileSync(mf, 'utf8'));
+      } catch (_) {}
+      // Last seen (from queue file mtime)
+      try {
+        const qf = path.join(QUEUE_DIR, `tg-queue-${tid}.jsonl`);
+        if (fs.existsSync(qf)) {
+          const st = fs.statSync(qf);
+          data.last_seen = Math.floor(st.mtimeMs / 1000);
+        }
+      } catch (_) {}
+      return data;
+    });
+
+    // Shared knowledge
+    let knowledge = [];
+    try {
+      const kf = '/root/.claude/relay-knowledge.json';
+      if (fs.existsSync(kf)) knowledge = JSON.parse(fs.readFileSync(kf, 'utf8'));
+    } catch (_) {}
+
+    // Task marketplace
+    let tasks = [];
+    try {
+      const tf = path.join(QUEUE_DIR, 'relay-marketplace.json');
+      if (fs.existsSync(tf)) {
+        const raw = JSON.parse(fs.readFileSync(tf, 'utf8'));
+        tasks = Array.isArray(raw) ? raw : Object.values(raw);
+        // Filter expired
+        tasks = tasks.filter(t => !t.expires_at || t.expires_at > now);
+      }
+    } catch (_) {}
+
+    res.json({ sessions: enriched, knowledge, tasks });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/sessions/:name/persona — get current persona
+app.get('/api/sessions/:name/persona', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  const name = req.params.name;
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) return res.status(400).json({ error: 'Invalid session name' });
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const s = sessions.find(x => x.session === name);
+    if (!s) return res.status(404).json({ error: 'Session not found' });
+    res.json({ session: name, persona: s.persona || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/sessions/:name/persona — set persona (updates sessions.json + CLAUDE.md)
+app.post('/api/sessions/:name/persona', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  const name = req.params.name;
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) return res.status(400).json({ error: 'Invalid session name' });
+  const persona = String(req.body?.persona || '').trim();
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const idx = sessions.findIndex(x => x.session === name);
+    if (idx === -1) return res.status(404).json({ error: 'Session not found' });
+
+    // Update sessions.json
+    if (persona) sessions[idx].persona = persona;
+    else delete sessions[idx].persona;
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2));
+
+    // Update workdir CLAUDE.md
+    const workdir = sessions[idx].path || sessions[idx].workdir;
+    if (workdir && fs.existsSync(workdir)) {
+      const claudeMd = path.join(workdir, 'CLAUDE.md');
+      const marker = '<!-- AGENT_PERSONA -->';
+      const endMarker = '<!-- /AGENT_PERSONA -->';
+      const section = persona
+        ? `${marker}\n## Agent Persona\n${persona}\n${endMarker}\n\n`
+        : '';
+      let content = '';
+      if (fs.existsSync(claudeMd)) content = fs.readFileSync(claudeMd, 'utf8');
+      if (content.includes(marker)) {
+        content = content.replace(new RegExp(`${marker}[\\s\\S]*?${endMarker}\\n\\n?`, ''), section);
+      } else if (persona) {
+        content = section + content;
+      }
+      if (content.trim() || persona) fs.writeFileSync(claudeMd, content);
+    }
+
+    res.json({ ok: true, persona: persona || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Health Check Endpoints ───────────────────────────────────────────────────

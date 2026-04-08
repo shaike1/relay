@@ -1,7 +1,8 @@
 #!/bin/bash
-# pre-tool-hook.sh — PreToolUse hook: blocks dangerous operations and logs all tool use.
+# pre-tool-hook.sh — PreToolUse hook: blocks dangerous operations and asks for Telegram approval.
 # Reads JSON from stdin (Claude Code PreToolUse hook format).
-# Exits 2 to block, 0 to allow.
+# For dangerous commands: sends Telegram buttons and WAITS for approval (up to 5 min).
+# Exits 0 to allow, 2 to block.
 set -euo pipefail
 
 # Load credentials from .env
@@ -13,6 +14,7 @@ if [ -f /root/relay/.env ]; then
 fi
 
 THREAD_ID="${TELEGRAM_THREAD_ID:-}"
+SESSION="${SESSION_NAME:-unknown}"
 
 # Read the hook JSON from stdin
 HOOK_JSON=$(cat)
@@ -74,18 +76,37 @@ if [ "$is_dangerous" -eq 0 ]; then
   exit 0
 fi
 
-# --- Dangerous: send Telegram confirmation request ---
-if [ -n "$BOT_TOKEN" ] && [ -n "$CHAT_ID" ] && [ -n "$THREAD_ID" ]; then
-  # Truncate command for display
-  DISPLAY_CMD=$(echo "$COMMAND" | head -c 200)
+# --- Skip approval if TOOL_APPROVAL=0 (per-session opt-out) ---
+if [ "${TOOL_APPROVAL:-1}" = "0" ]; then
+  exit 0
+fi
 
-  PAYLOAD=$(python3 -c "
+# --- No Telegram credentials: block immediately ---
+if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ] || [ -z "$THREAD_ID" ]; then
+  echo "Dangerous command blocked (no Telegram credentials to request approval): $danger_reason" >&2
+  exit 2
+fi
+
+# --- Generate unique request ID ---
+REQ_ID="$(date +%s%3N)-$$"
+RESP_FILE="/tmp/tool-approval-resp-${THREAD_ID}-${REQ_ID}"
+PENDING_FILE="/tmp/tool-approval-pending-${THREAD_ID}"
+
+# Write pending file so relay-api knows there's an approval in progress
+echo "$REQ_ID" > "$PENDING_FILE"
+
+# --- Send Telegram approval request with buttons ---
+DISPLAY_CMD=$(echo "$COMMAND" | head -c 250)
+
+PAYLOAD=$(python3 -c "
 import json, sys
 chat_id = sys.argv[1]
 thread_id = int(sys.argv[2])
 reason = sys.argv[3]
 cmd = sys.argv[4]
-text = '⚠️ <b>פעולה מסוכנת זוהתה</b>\n\nסיבה: <code>' + reason + '</code>\nפקודה:\n<pre>' + cmd[:200] + '</pre>\n\nלאשר את הפעולה?'
+session = sys.argv[5]
+req_id = sys.argv[6]
+text = '⚠️ <b>אישור נדרש</b> — session <code>' + session + '</code>\n\nסיבה: <code>' + reason + '</code>\nפקודה:\n<pre>' + cmd[:250] + '</pre>'
 payload = {
   'chat_id': chat_id,
   'message_thread_id': thread_id,
@@ -93,23 +114,37 @@ payload = {
   'parse_mode': 'HTML',
   'reply_markup': {
     'inline_keyboard': [[
-      {'text': 'אשר', 'callback_data': 'confirm_tool'},
-      {'text': 'בטל', 'callback_data': 'cancel_tool'}
+      {'text': '✅ אשר', 'callback_data': 'btn:' + str(thread_id) + ':approve:' + req_id},
+      {'text': '❌ בטל', 'callback_data': 'btn:' + str(thread_id) + ':deny:' + req_id}
     ]]
   }
 }
 print(json.dumps(payload))
-" "$CHAT_ID" "$THREAD_ID" "$danger_reason" "$DISPLAY_CMD" 2>/dev/null)
+" "$CHAT_ID" "$THREAD_ID" "$danger_reason" "$DISPLAY_CMD" "$SESSION" "$REQ_ID" 2>/dev/null || echo "")
 
-  if [ -n "$PAYLOAD" ]; then
-    curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-      -H 'Content-Type: application/json' \
-      -d "$PAYLOAD" > /dev/null 2>&1 || true
-  fi
-
-  # Write flag file
-  touch "/tmp/relay-pending-confirm-${THREAD_ID}" 2>/dev/null || true
+if [ -n "$PAYLOAD" ]; then
+  curl -sf -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+    -H 'Content-Type: application/json' \
+    -d "$PAYLOAD" > /dev/null 2>&1 || true
 fi
 
-# Exit 2 to block the tool call
+# --- Poll for approval response (up to 5 minutes) ---
+TIMEOUT=300
+for i in $(seq 1 "$TIMEOUT"); do
+  sleep 1
+  if [ -f "$RESP_FILE" ]; then
+    RESP=$(cat "$RESP_FILE" 2>/dev/null || echo "denied")
+    rm -f "$RESP_FILE" "$PENDING_FILE" 2>/dev/null || true
+    if [ "$RESP" = "approved" ]; then
+      exit 0
+    else
+      echo "Command blocked: user denied the operation ($danger_reason)" >&2
+      exit 2
+    fi
+  fi
+done
+
+# Timeout — block by default
+rm -f "$PENDING_FILE" 2>/dev/null || true
+echo "Command blocked: approval timeout after ${TIMEOUT}s ($danger_reason)" >&2
 exit 2

@@ -19,7 +19,7 @@
     "path": "/root/relay",
     "host": null,
     "group": "infra",
-    "description": "Files & Config topic \u2014 backups, exports, markdown reports auto-sent here",
+    "description": "Files & Config topic — backups, exports, markdown reports auto-sent here",
     "skills": [
       "files",
       "backup",
@@ -134,7 +134,8 @@
       "python",
       "typescript",
       "docker"
-    ]
+    ],
+    "persona": "You are a senior DevOps engineer. Be concise and technical."
   },
   {
     "thread_id": 187,
@@ -305,7 +306,7 @@
     "path": "/root/.chat-workspace",
     "host": null,
     "group": "general",
-    "description": "General chat topic \u2014 conversations, questions, brainstorming",
+    "description": "General chat topic — conversations, questions, brainstorming",
     "skills": [
       "general",
       "chat",

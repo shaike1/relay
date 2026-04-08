@@ -21,6 +21,7 @@ TOOL_NOTIFY_COOLDOWN=3 # min seconds between tool-use notifications
 CRASH_ALERT_MINUTES=${CRASH_ALERT_MINUTES:-30}  # alert if no response for N minutes
 TOOL_MONITOR=1         # set to 0 to disable per-session tool notifications
 STREAM_MONITOR=1       # live pane streaming when new message arrives
+SCHEDULE_CHECK_INTERVAL=60  # seconds between schedule checks
 
 # Per-session env overrides — sourced AFTER defaults so they take effect
 # e.g. echo "RELAY_API_URL=https://relay.right-api.com" > /tmp/relay-session-env-${THREAD_ID}
@@ -35,6 +36,7 @@ last_tool_notify=0
 last_crash_check=0
 last_stream_trigger=0   # last time streaming was started
 last_queue_mtime=0      # track queue file mtime to detect new messages
+last_schedule_check=0   # last time schedule entries were checked
 
 # Helper: run tmux with this session's socket
 tmux_s() { tmux -S "$TMUX_SOCKET" "$@"; }
@@ -105,6 +107,81 @@ print(count)
         touch "$alerted_file"
       fi
     fi
+  fi
+
+  # Proactive schedule — inject queue messages for time-based entries in sessions.json
+  # Format: "schedule": [{"time": "HH:MM", "days": "1-5", "message": "..."}]
+  # days: "1-7" (Mon=1, Sun=7), or "1-5" for weekdays, omit for every day
+  now=$(date +%s)
+  if [ $((now - last_schedule_check)) -ge "$SCHEDULE_CHECK_INTERVAL" ]; then
+    last_schedule_check=$now
+    current_hhmm=$(date +"%H:%M")
+    current_dow=$(date +"%u")  # 1=Mon, 7=Sun
+    python3 - "$THREAD_ID" "$QUEUE" "$current_hhmm" "$current_dow" <<'SCHEDULE_PY' 2>/dev/null || true
+import json, sys, os, time
+
+thread_id = sys.argv[1]
+queue_file = sys.argv[2]
+current_hhmm = sys.argv[3]
+current_dow = int(sys.argv[4])
+
+# Load sessions.json and find our session
+try:
+    sessions = json.load(open('/root/relay/sessions.json'))
+    session = next((s for s in sessions if str(s.get('thread_id','')) == thread_id), None)
+    if not session or 'schedule' not in session:
+        sys.exit(0)
+    schedule = session['schedule']
+except Exception:
+    sys.exit(0)
+
+# Fired-today tracking file to avoid double-firing
+fired_file = f'/tmp/relay-schedule-fired-{thread_id}-{time.strftime("%Y%m%d")}'
+fired = set()
+try:
+    fired = set(open(fired_file).read().split())
+except Exception:
+    pass
+
+for entry in schedule:
+    t = entry.get('time', '')
+    msg = entry.get('message', '')
+    days = entry.get('days', '1-7')
+    if not t or not msg:
+        continue
+    # Check time match (exact HH:MM)
+    if t != current_hhmm:
+        continue
+    # Check day-of-week range (e.g. "1-5" = Mon-Fri)
+    if '-' in str(days):
+        parts = str(days).split('-')
+        day_start, day_end = int(parts[0]), int(parts[1])
+        if not (day_start <= current_dow <= day_end):
+            continue
+    # Deduplicate: don't fire same entry twice in same day
+    entry_key = f'{t}:{msg[:20]}'
+    if entry_key in fired:
+        continue
+    # Inject scheduled message into queue
+    entry_msg = {
+        'text': f'[Scheduled {t}] {msg}',
+        'user': 'system:schedule',
+        'message_id': -int(time.time() * 1000),
+        'ts': time.time(),
+        'force': True
+    }
+    with open(queue_file, 'a') as f:
+        f.write(json.dumps(entry_msg) + '\n')
+    fired.add(entry_key)
+    print(f'[schedule] fired: {entry_key}', file=sys.stderr)
+
+# Write fired set back
+try:
+    with open(fired_file, 'w') as f:
+        f.write('\n'.join(fired))
+except Exception:
+    pass
+SCHEDULE_PY
   fi
 
   # Rate-limit detection — check pane for API rate limit / overload errors every 30s

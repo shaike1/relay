@@ -568,6 +568,17 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'memory_search',
+      description: 'Search across ALL sessions\' memory stores for a keyword or value. Useful for finding context from other sessions, e.g. "what did the relay session remember about backups?"',
+      inputSchema: {
+        type: 'object',
+        required: ['query'],
+        properties: {
+          query: { type: 'string', description: 'Search term to look for in any session\'s memory keys or values' },
+        },
+      },
+    },
+    {
       name: 'send_diff',
       description: 'Send a git diff to Telegram. Parses the diff for stats (files changed, insertions, deletions) and sends a summary followed by the diff content.',
       inputSchema: {
@@ -1204,7 +1215,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
   // ── Knowledge Library ─────────────────────────────────────────────────────
 
-  const KNOWLEDGE_FILE = '/tmp/relay-knowledge.json'
+  const KNOWLEDGE_FILE = '/root/.claude/relay-knowledge.json'  // persists across container restarts
 
   if (name === 'knowledge_write') {
     const title   = String(args?.title ?? '')
@@ -1524,6 +1535,34 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
     } catch (e) {
       return { content: [{ type: 'text', text: `Error reading memory: ${e}` }] }
+    }
+  }
+
+  if (name === 'memory_search') {
+    const query = String(args?.query ?? '').toLowerCase()
+    if (!query) return { content: [{ type: 'text', text: 'Query required.' }] }
+    try {
+      const results: Array<{ session: string; key: string; value: string }> = []
+      // Find all relay-memory-*.json files (covers all sessions sharing /tmp)
+      const glob = new Bun.Glob('/tmp/relay-memory-*.json')
+      for await (const filePath of glob.scan('/')) {
+        const sessionName = filePath.replace('/tmp/relay-memory-', '').replace('.json', '')
+        try {
+          const f = Bun.file(filePath)
+          if (!(await f.exists())) continue
+          const store: Record<string, string> = JSON.parse(await f.text())
+          for (const [k, v] of Object.entries(store)) {
+            if (k.toLowerCase().includes(query) || String(v).toLowerCase().includes(query)) {
+              results.push({ session: sessionName, key: k, value: String(v).substring(0, 200) })
+            }
+          }
+        } catch {}
+      }
+      if (results.length === 0) return { content: [{ type: 'text', text: `No memory entries found matching "${query}".` }] }
+      const lines = results.map(r => `[${r.session}] ${r.key}: ${r.value}`)
+      return { content: [{ type: 'text', text: lines.join('\n---\n') }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error searching memory: ${e}` }] }
     }
   }
 

@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Relay — Agents</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh; background: #0d1117; color: #c9d1d9;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px;
+    padding: 20px;
+  }
+  .header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 24px; padding-bottom: 12px; border-bottom: 1px solid #21262d;
+  }
+  .header h1 { font-size: 18px; font-weight: 400; color: #f0f6fc; }
+  .nav { display: flex; gap: 16px; align-items: center; }
+  .nav a { color: #58a6ff; font-size: 12px; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .nav a.active { color: #f0f6fc; font-weight: bold; }
+  .refresh { color: #58a6ff; cursor: pointer; font-size: 12px; background: none; border: none; font-family: inherit; }
+  .refresh:hover { text-decoration: underline; }
+
+  /* Layout */
+  .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+
+  /* Cards */
+  .card {
+    background: #161b22; border: 1px solid #21262d; border-radius: 8px;
+    padding: 16px;
+  }
+  .card-title {
+    font-size: 12px; color: #8b949e; text-transform: uppercase;
+    letter-spacing: 0.5px; margin-bottom: 12px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .card-title .count { color: #58a6ff; font-size: 12px; }
+
+  /* Agent list */
+  .agent-item {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 10px 0; border-bottom: 1px solid #21262d; cursor: pointer;
+  }
+  .agent-item:last-child { border-bottom: none; }
+  .agent-item:hover { background: rgba(88,166,255,0.03); margin: 0 -16px; padding: 10px 16px; }
+  .agent-dot {
+    width: 8px; height: 8px; border-radius: 50%; margin-top: 4px; flex-shrink: 0;
+  }
+  .dot-online { background: #3fb950; }
+  .dot-offline { background: #6e7681; }
+  .dot-unknown { background: #d29922; }
+  .agent-body { flex: 1; min-width: 0; }
+  .agent-name { color: #f0f6fc; font-size: 13px; margin-bottom: 3px; }
+  .agent-path { color: #6e7681; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .agent-persona { color: #58a6ff; font-size: 11px; margin-top: 3px; font-style: italic; }
+  .agent-memory { color: #8b949e; font-size: 11px; margin-top: 3px; }
+  .agent-schedule { color: #d29922; font-size: 11px; margin-top: 3px; }
+
+  /* Persona editor */
+  .persona-form {
+    margin-top: 6px; display: none;
+    background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 8px;
+  }
+  .persona-form.open { display: flex; gap: 6px; align-items: center; }
+  .persona-input {
+    flex: 1; background: transparent; border: none; color: #c9d1d9;
+    font-family: inherit; font-size: 12px; outline: none;
+  }
+  .btn-sm {
+    background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
+    padding: 3px 8px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 11px;
+  }
+  .btn-sm:hover { background: #30363d; }
+  .btn-sm.primary { background: #238636; border-color: #2ea043; color: #fff; }
+  .btn-sm.primary:hover { background: #2ea043; }
+
+  /* Knowledge */
+  .knowledge-item {
+    padding: 10px 0; border-bottom: 1px solid #21262d;
+  }
+  .knowledge-item:last-child { border-bottom: none; }
+  .knowledge-title { color: #f0f6fc; font-size: 12px; margin-bottom: 4px; }
+  .knowledge-meta { color: #6e7681; font-size: 11px; margin-bottom: 4px; }
+  .knowledge-content { color: #8b949e; font-size: 11px; line-height: 1.5; }
+  .tag {
+    display: inline-block; background: #21262d; border-radius: 3px;
+    padding: 1px 6px; font-size: 10px; color: #8b949e; margin: 2px 2px 0 0;
+  }
+  .tag.auto { color: #d29922; }
+
+  /* Marketplace */
+  .task-item { padding: 10px 0; border-bottom: 1px solid #21262d; }
+  .task-item:last-child { border-bottom: none; }
+  .task-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; }
+  .task-title { color: #f0f6fc; font-size: 12px; }
+  .task-status {
+    font-size: 10px; padding: 2px 6px; border-radius: 3px;
+    background: #21262d; color: #8b949e;
+  }
+  .task-status.available { background: #1c2d1e; color: #3fb950; }
+  .task-status.claimed { background: #1c2028; color: #58a6ff; }
+  .task-meta { color: #6e7681; font-size: 11px; }
+
+  .empty { color: #6e7681; font-size: 12px; padding: 12px 0; text-align: center; }
+  .full-width { grid-column: 1 / -1; }
+  .loading { color: #6e7681; font-size: 12px; padding: 20px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Agents</h1>
+  <div style="display:flex;gap:16px;align-items:center">
+    <nav class="nav">
+      <a href="/metrics">Metrics</a>
+      <a href="/sessions">Sessions</a>
+      <a href="/tasks">Tasks</a>
+      <a href="/agents" class="active">Agents</a>
+      <a href="/config">Config</a>
+    </nav>
+    <button class="refresh" onclick="load()">↻ refresh</button>
+  </div>
+</div>
+
+<div class="layout" id="layout">
+  <div class="loading">Loading agent data...</div>
+</div>
+
+<script>
+let agentsData = null;
+
+async function load() {
+  try {
+    const r = await fetch('/api/agents-data');
+    if (!r.ok) { document.getElementById('layout').innerHTML = '<div class="loading">Error loading data</div>'; return; }
+    agentsData = await r.json();
+    render(agentsData);
+  } catch (e) {
+    document.getElementById('layout').innerHTML = `<div class="loading">Error: ${e.message}</div>`;
+  }
+}
+
+function timeAgo(ts) {
+  if (!ts) return '';
+  const diff = Math.floor(Date.now() / 1000) - ts;
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+  return `${Math.floor(diff/86400)}d ago`;
+}
+
+function render(data) {
+  const sessions = data.sessions || [];
+  const knowledge = data.knowledge || [];
+  const tasks = data.tasks || [];
+
+  const layout = document.getElementById('layout');
+  layout.innerHTML = '';
+
+  // Agents card
+  const agentCard = document.createElement('div');
+  agentCard.className = 'card';
+  agentCard.innerHTML = `<div class="card-title">Agents <span class="count">${sessions.length}</span></div>`;
+  const agentList = document.createElement('div');
+  if (sessions.length === 0) {
+    agentList.innerHTML = '<div class="empty">No agents configured</div>';
+  } else {
+    sessions.forEach(s => {
+      const isOnline = s.last_seen && (Date.now()/1000 - s.last_seen) < 300;
+      const dotClass = s.last_seen ? (isOnline ? 'dot-online' : 'dot-offline') : 'dot-unknown';
+      const memKeys = Object.keys(s.memory || {});
+      const schedEntries = (s.schedule || []).length;
+      const item = document.createElement('div');
+      item.className = 'agent-item';
+      item.innerHTML = `
+        <div class="agent-dot ${dotClass}"></div>
+        <div class="agent-body">
+          <div class="agent-name">${s.session} ${s.last_seen ? `<span style="color:#6e7681;font-size:11px">${timeAgo(s.last_seen)}</span>` : ''}</div>
+          <div class="agent-path">${s.path || s.workdir || ''}</div>
+          ${s.persona ? `<div class="agent-persona">🎭 ${s.persona}</div>` : ''}
+          ${memKeys.length ? `<div class="agent-memory">💾 ${memKeys.slice(0,4).join(', ')}${memKeys.length > 4 ? ' +' + (memKeys.length-4) : ''}</div>` : ''}
+          ${schedEntries ? `<div class="agent-schedule">⏰ ${schedEntries} scheduled task${schedEntries > 1 ? 's' : ''}</div>` : ''}
+          <div class="persona-form" id="pf-${s.session}">
+            <input class="persona-input" id="pi-${s.session}" placeholder="Set persona (e.g. DevOps engineer specializing in Docker)" value="${s.persona || ''}">
+            <button class="btn-sm primary" onclick="savePersona('${s.session}')">Save</button>
+            <button class="btn-sm" onclick="closePersona('${s.session}')">✕</button>
+          </div>
+        </div>
+        <button class="btn-sm" onclick="togglePersona('${s.session}');event.stopPropagation()">🎭</button>
+      `;
+      item.addEventListener('click', () => window.location = `/sessions/${s.session}`);
+      agentList.appendChild(item);
+    });
+  }
+  agentCard.appendChild(agentList);
+  layout.appendChild(agentCard);
+
+  // Knowledge card
+  const knowledgeCard = document.createElement('div');
+  knowledgeCard.className = 'card';
+  const recent = knowledge.slice().reverse().slice(0, 15);
+  knowledgeCard.innerHTML = `<div class="card-title">Shared Knowledge <span class="count">${knowledge.length}</span></div>`;
+  if (recent.length === 0) {
+    knowledgeCard.innerHTML += '<div class="empty">No knowledge entries yet</div>';
+  } else {
+    recent.forEach(e => {
+      const isAuto = (e.tags || []).includes('auto-summary');
+      const div = document.createElement('div');
+      div.className = 'knowledge-item';
+      div.innerHTML = `
+        <div class="knowledge-title">${e.title || 'Untitled'}</div>
+        <div class="knowledge-meta">${e.author || 'unknown'} · ${timeAgo(e.ts)}</div>
+        <div class="knowledge-content">${(e.content || '').substring(0,150)}${(e.content||'').length>150?'…':''}</div>
+        <div style="margin-top:4px">${(e.tags||[]).map(t => `<span class="tag ${t==='auto-summary'?'auto':''}">${t}</span>`).join('')}</div>
+      `;
+      knowledgeCard.appendChild(div);
+    });
+  }
+  layout.appendChild(knowledgeCard);
+
+  // Task marketplace card
+  if (tasks.length > 0) {
+    const taskCard = document.createElement('div');
+    taskCard.className = 'card full-width';
+    taskCard.innerHTML = `<div class="card-title">Task Marketplace <span class="count">${tasks.length}</span></div>`;
+    tasks.slice(0, 10).forEach(t => {
+      const div = document.createElement('div');
+      div.className = 'task-item';
+      div.innerHTML = `
+        <div class="task-header">
+          <div class="task-title">${t.task || t.title || 'Unnamed task'}</div>
+          <span class="task-status ${t.claimed_by ? 'claimed' : 'available'}">${t.claimed_by ? `claimed by ${t.claimed_by}` : 'available'}</span>
+        </div>
+        <div class="task-meta">Published by ${t.published_by || 'unknown'} · ${timeAgo(t.ts)}</div>
+      `;
+      taskCard.appendChild(div);
+    });
+    layout.appendChild(taskCard);
+  }
+}
+
+function togglePersona(session) {
+  const form = document.getElementById(`pf-${session}`);
+  form.classList.toggle('open');
+  if (form.classList.contains('open')) document.getElementById(`pi-${session}`).focus();
+}
+function closePersona(session) {
+  document.getElementById(`pf-${session}`).classList.remove('open');
+}
+async function savePersona(session) {
+  const val = document.getElementById(`pi-${session}`).value.trim();
+  try {
+    const r = await fetch(`/api/sessions/${session}/persona`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ persona: val })
+    });
+    if (r.ok) { closePersona(session); load(); }
+    else alert('Failed to save persona');
+  } catch (e) { alert(e.message); }
+}
+
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>

@@ -111,4 +111,68 @@ if not os.path.exists(flag_file):
         # Write flag to prevent multiple triggers today
         open(flag_file, "w").close()
         print(f"[token-monitor] Auto-compact triggered for thread {thread_id} (output={total_output} > threshold={threshold})", file=sys.stderr)
+
+# --- Auto-summarize logic ---
+try:
+    import time, secrets
+
+    output_tokens = entry.get("output", 0)
+    if output_tokens > 200:
+        cooldown_file = f"/tmp/relay-autosummary-lastrun-{thread_id}"
+        now = int(time.time())
+        last_run = 0
+        try:
+            last_run = int(open(cooldown_file).read().strip())
+        except Exception:
+            pass
+
+        if now - last_run >= 1800:
+            # Extract tool names and last assistant text from last 150 lines
+            tool_names = []
+            last_text = ""
+            for line in reversed(lines[-150:]):
+                try:
+                    d = json.loads(line.strip())
+                    if d.get("type") == "assistant":
+                        for block in d.get("message", {}).get("content", []):
+                            if isinstance(block, dict):
+                                if block.get("type") == "tool_use" and len(tool_names) < 5:
+                                    name = block.get("name", "")
+                                    if name and name not in tool_names:
+                                        tool_names.append(name)
+                                if block.get("type") == "text" and not last_text:
+                                    last_text = (block.get("text", "") or "")[:200]
+                except Exception:
+                    pass
+
+            knowledge_file = "/root/.claude/relay-knowledge.json"
+            try:
+                existing = json.loads(open(knowledge_file).read())
+            except Exception:
+                existing = []
+
+            # Skip if we already wrote an entry for this session in the last 30 min
+            cutoff = now - 1800
+            recent = any(
+                e.get("author") == session and e.get("ts", 0) > cutoff
+                for e in existing
+            )
+
+            if not recent:
+                tools_str = ", ".join(tool_names) if tool_names else "none"
+                content = f"Tools used: {tools_str}. Last response: {last_text}"
+                new_entry = {
+                    "id": secrets.token_hex(4),
+                    "title": f"[{session}] session summary",
+                    "content": content,
+                    "tags": ["auto-summary", session],
+                    "author": session,
+                    "ts": now,
+                }
+                existing.append(new_entry)
+                with open(knowledge_file, "w") as f:
+                    f.write(json.dumps(existing, indent=2))
+                open(cooldown_file, "w").write(str(now))
+except Exception:
+    pass
 PY

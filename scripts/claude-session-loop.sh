@@ -115,6 +115,45 @@ with open('$MCP_JSON_PATH', 'w') as f:
     echo "[session-loop:${SESSION}] wrote .mcp.json (thread=${THREAD_ID})" >&2
   fi
 
+  # Inject persona into CLAUDE.md if set in sessions.json
+  python3 -c "
+import json, os, sys, pathlib
+
+sessions_file = '/root/relay/sessions.json'
+workdir = '$WORKDIR'
+session_name = '$SESSION'
+
+try:
+    sessions = json.load(open(sessions_file))
+    s = next((s for s in sessions if s['session'] == session_name), None)
+    persona = s.get('persona', '') if s else ''
+except Exception:
+    persona = ''
+
+if not persona:
+    sys.exit(0)
+
+claude_md = pathlib.Path(workdir) / 'CLAUDE.md'
+marker_open = '<!-- AGENT_PERSONA -->'
+marker_close = '<!-- /AGENT_PERSONA -->'
+persona_block = f'{marker_open}\n## Agent Persona\n{persona}\n{marker_close}\n\n'
+
+if not claude_md.exists():
+    claude_md.write_text(persona_block)
+else:
+    content = claude_md.read_text()
+    open_idx = content.find(marker_open)
+    close_idx = content.find(marker_close)
+    if open_idx != -1 and close_idx != -1 and close_idx > open_idx:
+        tail = content[close_idx + len(marker_close):]
+        tail = tail.lstrip('\n')
+        content = content[:open_idx] + persona_block + tail
+    else:
+        content = persona_block + content
+    claude_md.write_text(content)
+print(f'[session-loop:$SESSION] persona injected into CLAUDE.md', file=sys.stderr)
+" 2>/dev/null || true
+
   if [ "${S6_SUPERVISED:-0}" != "1" ]; then
     /root/relay/scripts/mcp-server-wrapper.sh &
     MCP_WRAPPER_PID=$!
