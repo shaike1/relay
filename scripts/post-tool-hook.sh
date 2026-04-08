@@ -31,6 +31,11 @@ case "$TOOL_NAME" in
     ;;
   Bash)
     CMD="$(echo "$TOOL_INPUT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('command','')[:150])" 2>/dev/null || echo '')"
+    # Skip noisy diagnostic commands
+    case "$CMD" in
+      *"docker inspect"*|*"docker logs"*|*"tmux capture"*|*"tmux -S"*|*"docker exec"*"tmux"*|*"tail -"*"/tmp/"*|*"cat /tmp/"*)
+        exit 0 ;;
+    esac
     MSG="🔧 <b>Bash</b> <code>${CMD}</code>"
     ;;
   Edit)
