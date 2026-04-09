@@ -15187,7 +15187,7 @@ mcp.setRequestHandler(ListToolsRequestSchema2, async () => ({
 var _updateActivity = null;
 mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
   const { name, arguments: args } = req.params;
-  if (_updateActivity && ["fetch_messages", "send_message", "typing", "react", "send_file", "message_peer", "complete_task", "set_agent_state", "split_task"].includes(name))
+  if (_updateActivity)
     _updateActivity();
   if (name === "send_message") {
     let text = String(args?.text ?? args?.message ?? "");
@@ -16844,7 +16844,7 @@ async function poll() {
 `);
         pendingDelivery = null;
       }
-      if (pendingDelivery && Date.now() - pendingDelivery.sentAt > 3000) {
+      if (pendingDelivery && Date.now() - pendingDelivery.sentAt > 30000) {
         const totalAge = Date.now() - pendingDelivery.firstSentAt;
         if (totalAge > 300000) {
           process.stderr.write(`[telegram] giving up on msg ${pendingDelivery.message_id} after 5min \u2014 advancing lastId
@@ -16942,8 +16942,6 @@ async function poll() {
               ackedForceIds.add(id);
             await saveState(lastId, trimmed);
           } else if (message_id > lastId) {
-            lastId = message_id;
-            await saveState(lastId, [...ackedForceIds]);
             pendingDelivery = { message_id, sentAt: Date.now(), firstSentAt: Date.now() };
           }
           sentOne = true;

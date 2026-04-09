@@ -785,7 +785,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args } = req.params
   // Confirm delivery when Claude calls any messaging-related tool — proves it's actively responding.
   // fetch_messages, send_message, typing, react, send_file all indicate the session is alive and processing.
-  if (_updateActivity && ['fetch_messages', 'send_message', 'typing', 'react', 'send_file', 'message_peer', 'complete_task', 'set_agent_state', 'split_task'].includes(name)) _updateActivity()
+  // Update activity on ANY tool call — proves Claude is alive and processing
+  if (_updateActivity) _updateActivity()
 
   if (name === 'send_message') {
     // Accept 'message' as alias for 'text' — Claude sometimes uses wrong param name
@@ -2534,8 +2535,10 @@ async function poll(): Promise<void> {
         pendingDelivery = null
       }
 
-      // Re-send pending notification if Claude hasn't responded within 3s
-      if (pendingDelivery && Date.now() - pendingDelivery.sentAt > 3000) {
+      // Re-send pending notification if Claude hasn't responded within 30s
+      // (Claude may be in the middle of a long tool chain — Bash, Edit, etc. — and genuinely
+      //  busy without calling any MCP tool. 3s was too aggressive and caused duplicate delivery.)
+      if (pendingDelivery && Date.now() - pendingDelivery.sentAt > 30_000) {
         // Give up after 5 minutes — Claude may be busy with long-running tools (Bash, file ops)
         // which don't trigger lastActivityTs. Only skip if truly unresponsive for a long time.
         const totalAge = Date.now() - pendingDelivery.firstSentAt
@@ -2639,10 +2642,9 @@ async function poll(): Promise<void> {
             for (const id of trimmed) ackedForceIds.add(id)
             await saveState(lastId, trimmed)
           } else if (message_id > lastId) {
-            // Advance lastId immediately so restarts don't re-deliver this message.
-            // pendingDelivery still tracks activity confirmation for logging purposes.
-            lastId = message_id
-            await saveState(lastId, [...ackedForceIds])
+            // Don't advance lastId until we confirm Claude received and acted on the notification.
+            // This ensures that if Claude is busy (long tool chain) and misses the notification,
+            // the message stays pending and will be re-delivered — not silently skipped.
             pendingDelivery = { message_id, sentAt: Date.now(), firstSentAt: Date.now() }
           }
           sentOne = true
