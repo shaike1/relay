@@ -53,6 +53,11 @@
   .dot-offline { background: #6e7681; }
   .dot-degraded { background: #d29922; }
   .dot-unknown { background: #6e7681; }
+  .agent-state { font-size: 11px; margin-top: 3px; }
+  .state-idle     { color: #8b949e; }
+  .state-busy     { color: #58a6ff; }
+  .state-awaiting { color: #d29922; }
+  .state-done     { color: #3fb950; }
   .agent-body { flex: 1; min-width: 0; }
   .agent-name { color: #f0f6fc; font-size: 13px; margin-bottom: 3px; }
   .agent-path { color: #6e7681; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -193,6 +198,7 @@ function render(data) {
           ${(s.github_triggers||[]).length ? `<div class="agent-schedule">🔗 ${s.github_triggers.length} CI/CD trigger${s.github_triggers.length>1?'s':''}</div>` : ''}
           ${s.token_stats && s.token_stats.output > 0 ? `<div class="agent-memory">⚡ ${s.token_stats.output.toLocaleString()} out tokens / 5m · $${(s.token_stats.cost_usd||0).toFixed(4)}</div>` : ''}
           ${s.uptime != null ? `<div class="agent-memory" title="Container uptime">🕐 up ${fmtUptime(s.uptime)}${s.responses_today != null ? ` · ${s.responses_today} resp today` : ''}${s.msg_count_today != null ? ` · ${s.msg_count_today} msgs` : ''}</div>` : ''}
+          ${s.agent_state ? `<div class="agent-state state-${s.agent_state}">${{idle:'⚪',busy:'🔵',awaiting:'🟡',done:'🟢'}[s.agent_state]||'⚪'} ${s.agent_state}${s.agent_task ? `: ${s.agent_task}` : ''}${s.agent_blocked_by ? ` (waiting: ${s.agent_blocked_by})` : ''}</div>` : ''}
           <div class="persona-form" id="pf-${s.session}">
             <input class="persona-input" id="pi-${s.session}" placeholder="Set persona (e.g. DevOps engineer specializing in Docker)" value="${s.persona || ''}">
             <button class="btn-sm primary" onclick="savePersona('${s.session}')">Save</button>

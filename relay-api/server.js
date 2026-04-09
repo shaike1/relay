@@ -3531,6 +3531,17 @@ app.get('/api/agents-data', (req, res) => {
         const age = now - data.last_seen;
         data.health = age < 600 ? 'online' : age < 1800 ? 'degraded' : 'offline';
       }
+      // Agent state machine (set_agent_state MCP tool)
+      try {
+        const sf = path.join(QUEUE_DIR, `relay-agent-state-${tid}.json`);
+        if (fs.existsSync(sf)) {
+          const st = JSON.parse(fs.readFileSync(sf, 'utf8'));
+          data.agent_state = st.state || 'idle';
+          data.agent_task  = st.task  || null;
+          data.agent_blocked_by = st.blocked_by || null;
+          data.agent_state_ts  = st.ts || null;
+        }
+      } catch (_) {}
       // Container uptime
       try {
         const startedAt = execSync(
@@ -3667,6 +3678,55 @@ app.get('/health/sessions', (req, res) => {
   }
 });
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ── Ephemeral agent spawner ───────────────────────────────────────────────────
+// POST /api/spawn-agent — launch a one-shot Docker container to handle a task.
+// The container runs claude-session-loop.sh, processes one task, and auto-exits.
+app.post('/api/spawn-agent', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  const agentId = req.body?.agent_id ? String(req.body.agent_id) : `ephemeral-${Date.now()}`;
+  const task    = req.body?.task    ? String(req.body.task)    : '';
+  const workdir = req.body?.workdir ? String(req.body.workdir) : '/relay';
+  if (!task) return res.status(400).json({ error: 'task required' });
+
+  // Sanitize agentId for Docker container name
+  const safeName = agentId.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 40);
+  const containerName = `relay-ephemeral-${safeName}`;
+
+  // Write the task as a one-shot injection file — claude-session-loop.sh picks it up
+  const taskFile = path.join(QUEUE_DIR, `relay-ephemeral-task-${safeName}`);
+  try { fs.writeFileSync(taskFile, task); } catch (e) {
+    return res.status(500).json({ error: `Failed to write task file: ${e.message}` });
+  }
+
+  // Spawn container: inherit the relay-session image, mount volumes, auto-remove
+  const cmd = [
+    'docker', 'run', '--rm', '-d',
+    '--name', containerName,
+    '--network', 'relay_default',
+    '-v', 'relay-queue:/tmp',
+    '-v', '/root/.claude:/root/.claude',
+    '-v', '/root/relay:/root/relay:ro',
+    '-e', `SESSION_NAME=${safeName}`,
+    '-e', `WORKDIR=${workdir}`,
+    '-e', `EPHEMERAL_TASK_FILE=${taskFile}`,
+    '-e', 'EPHEMERAL=1',
+    '-e', `TELEGRAM_THREAD_ID=0`,  // no-op thread — ephemeral agents don't have a Telegram topic
+    'relay-session:latest',
+    'bash', '-c',
+    `[ -f "$EPHEMERAL_TASK_FILE" ] && cat "$EPHEMERAL_TASK_FILE" | claude --print --no-markdown 2>/tmp/ephemeral-err-${safeName}.log && exit 0 || exit 1`,
+  ];
+
+  try {
+    const { execSync } = require('child_process');
+    const containerId = execSync(cmd.join(' '), { timeout: 15000 }).toString().trim();
+    console.log(`[spawn-agent] Started ${containerName} (${containerId.slice(0, 12)})`);
+    res.json({ ok: true, agent_id: agentId, container: containerName, container_id: containerId.slice(0, 12) });
+  } catch (e) {
+    console.error(`[spawn-agent] Error:`, e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // ── Direct notify API ─────────────────────────────────────────────────────────
 // POST /api/notify — send a DM to NOTIFY_USER_ID (used by scripts like backup.sh)

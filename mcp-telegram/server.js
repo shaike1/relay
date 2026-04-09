@@ -14679,34 +14679,52 @@ async function sendMessageStreaming(text, replyTo, buttons) {
   const words = text.split(/(\s+)/);
   let accumulated = "";
   let lastEditLen = 0;
-  const CHUNK_SIZE = 8;
+  const CHUNK_SIZE = 12;
   let wordCount = 0;
   for (const word of words) {
     accumulated += word;
     if (/\S/.test(word))
       wordCount++;
     if (wordCount % CHUNK_SIZE === 0 && accumulated.length > lastEditLen) {
-      await editMessage(msgId, accumulated + " \u258D");
+      const plainPreview = accumulated.replace(/<[^>]+>/g, "") + " \u258D";
+      const editRes = await tg("editMessageText", {
+        chat_id: CHAT_ID,
+        message_id: msgId,
+        text: plainPreview
+      });
+      if (!editRes.ok) {
+        process.stderr.write(`[telegram] streaming edit failed: ${editRes.description}
+`);
+        if (editRes.parameters?.retry_after) {
+          await Bun.sleep((editRes.parameters.retry_after + 1) * 1000);
+          await tg("editMessageText", { chat_id: CHAT_ID, message_id: msgId, text: plainPreview });
+        }
+      }
       lastEditLen = accumulated.length;
-      await Bun.sleep(80);
+      await Bun.sleep(1200);
     }
   }
-  if (buttons) {
-    const finalBody = {
+  const replyMarkup = buttons ? {
+    inline_keyboard: buttons.map((row) => row.map((label) => ({ text: label, callback_data: `btn:${THREAD_ID}:${label}` })))
+  } : undefined;
+  const finalBody = {
+    chat_id: CHAT_ID,
+    message_id: msgId,
+    text: accumulated,
+    parse_mode: "HTML",
+    ...replyMarkup ? { reply_markup: replyMarkup } : {}
+  };
+  const finalRes = await tg("editMessageText", finalBody);
+  if (!finalRes.ok) {
+    process.stderr.write(`[telegram] final HTML edit failed (${finalRes.description}) \u2014 retrying as plain text
+`);
+    const plain = accumulated.replace(/<[^>]+>/g, "");
+    await tg("editMessageText", {
       chat_id: CHAT_ID,
       message_id: msgId,
-      text: accumulated,
-      parse_mode: "HTML",
-      reply_markup: {
-        inline_keyboard: buttons.map((row) => row.map((label) => ({
-          text: label,
-          callback_data: `btn:${THREAD_ID}:${label}`
-        })))
-      }
-    };
-    await tg("editMessageText", finalBody);
-  } else {
-    await editMessage(msgId, accumulated);
+      text: plain,
+      ...replyMarkup ? { reply_markup: replyMarkup } : {}
+    });
   }
   return [msgId];
 }
@@ -14899,6 +14917,17 @@ mcp.setRequestHandler(ListToolsRequestSchema2, async () => ({
       }
     },
     {
+      name: "get_briefing",
+      description: "Get a contextual briefing before starting work on a topic. Searches the shared knowledge base, session memories, and recent activity for anything relevant to the given topic. Call this at the start of a new task to surface useful context.",
+      inputSchema: {
+        type: "object",
+        required: ["topic"],
+        properties: {
+          topic: { type: "string", description: 'The topic or task you are about to work on (e.g. "deploy", "backup", "auth bug")' }
+        }
+      }
+    },
+    {
       name: "auto_dispatch",
       description: "Automatically find the best session to handle a task based on project path, session type, and recent activity. Then sends the task to that session. Like send_task but with automatic routing.",
       inputSchema: {
@@ -14923,6 +14952,18 @@ mcp.setRequestHandler(ListToolsRequestSchema2, async () => ({
           target_session: { type: "string", description: "Target session name (from list_peers)" },
           task: { type: "string", description: "Task description / prompt to send to the target session" },
           expect_result: { type: "boolean", description: "If true, creates a pending-result file the target can write to when done", default: false }
+        }
+      }
+    },
+    {
+      name: "await_result",
+      description: "Wait for a delegated task to complete and return its result. Blocks until the result is available or timeout is reached. Use after delegate_task to get the output synchronously.",
+      inputSchema: {
+        type: "object",
+        required: ["task_id"],
+        properties: {
+          task_id: { type: "string", description: "The task_id returned by send_task or delegate_task" },
+          timeout_secs: { type: "integer", description: "Max seconds to wait (default: 120)", default: 120 }
         }
       }
     },
@@ -14958,6 +14999,17 @@ mcp.setRequestHandler(ListToolsRequestSchema2, async () => ({
         type: "object",
         properties: {
           key: { type: "string", description: "Optional key to read. If omitted, returns all keys." }
+        }
+      }
+    },
+    {
+      name: "memory_search",
+      description: `Search across ALL sessions' memory stores for a keyword or value. Useful for finding context from other sessions, e.g. "what did the relay session remember about backups?"`,
+      inputSchema: {
+        type: "object",
+        required: ["query"],
+        properties: {
+          query: { type: "string", description: "Search term to look for in any session's memory keys or values" }
         }
       }
     },
@@ -15078,13 +15130,64 @@ mcp.setRequestHandler(ListToolsRequestSchema2, async () => ({
         type: "object",
         properties: {}
       }
+    },
+    {
+      name: "set_agent_state",
+      description: "Set this agent's current operational state. Call this to report what you are doing so the /agents dashboard and other agents can see your status. States: idle (waiting for work), busy (actively working), awaiting (waiting for another agent or resource), done (task complete, returning to idle).",
+      inputSchema: {
+        type: "object",
+        required: ["state"],
+        properties: {
+          state: { type: "string", description: "Agent state", enum: ["idle", "busy", "awaiting", "done"] },
+          task: { type: "string", description: 'Brief description of current task (e.g. "running tests", "writing migration")' },
+          blocked_by: { type: "string", description: "If state=awaiting, what/who this agent is waiting for" }
+        }
+      }
+    },
+    {
+      name: "split_task",
+      description: "Fan out a task to multiple sessions in parallel and aggregate all results. The orchestrator sends subtasks to each target session, waits for all to complete (or timeout), and returns a combined result. Best used when a large task can be parallelized across agents.",
+      inputSchema: {
+        type: "object",
+        required: ["subtasks"],
+        properties: {
+          subtasks: {
+            type: "array",
+            description: "List of subtasks to fan out. Each has a target session and prompt.",
+            items: {
+              type: "object",
+              required: ["session", "prompt"],
+              properties: {
+                session: { type: "string", description: "Target session name" },
+                prompt: { type: "string", description: "Task prompt for this session" }
+              }
+            }
+          },
+          timeout_secs: { type: "integer", description: "Max seconds to wait for ALL tasks (default: 180)", default: 180 },
+          context: { type: "string", description: "Optional shared context prepended to every subtask prompt" }
+        }
+      }
+    },
+    {
+      name: "spawn_agent",
+      description: "Spawn a temporary one-shot agent to handle a task. The agent runs in an isolated container, completes the task, reports back, and is automatically cleaned up. Use for tasks that need a fresh context, a different working directory, or should not affect the current session.",
+      inputSchema: {
+        type: "object",
+        required: ["task"],
+        properties: {
+          task: { type: "string", description: "Task for the ephemeral agent to perform" },
+          workdir: { type: "string", description: "Working directory for the agent (default: /relay)" },
+          wait: { type: "boolean", description: "If true, wait for the agent to complete and return the result (default: false \u2014 fire and forget)", default: false },
+          timeout_secs: { type: "integer", description: "Max seconds to wait if wait=true (default: 300)", default: 300 }
+        }
+      }
     }
   ]
 }));
 var _updateActivity = null;
 mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
   const { name, arguments: args } = req.params;
-  if (_updateActivity && ["fetch_messages", "send_message", "typing", "react", "send_file", "message_peer", "complete_task"].includes(name))
+  if (_updateActivity && ["fetch_messages", "send_message", "typing", "react", "send_file", "message_peer", "complete_task", "set_agent_state", "split_task"].includes(name))
     _updateActivity();
   if (name === "send_message") {
     let text = String(args?.text ?? args?.message ?? "");
@@ -15111,8 +15214,10 @@ mcp.setRequestHandler(CallToolRequestSchema2, async (req) => {
         return;
       }
     })() : rawButtons;
-    const streaming = args?.streaming !== undefined ? Boolean(args.streaming) : true;
-    const ids = streaming ? await sendMessageStreaming(text, args?.reply_to, buttons) : await sendMessage(text, args?.reply_to, buttons);
+    const streaming = args?.streaming !== undefined ? Boolean(args.streaming) : false;
+    const replyTo = args?.reply_to;
+    const validReplyTo = replyTo && replyTo > 0 ? replyTo : undefined;
+    const ids = streaming ? await sendMessageStreaming(text, validReplyTo, buttons) : await sendMessage(text, validReplyTo, buttons);
     Bun.write(`/tmp/tg-last-sent-${THREAD_ID}`, String(Date.now() / 1000));
     try {
       const { unlinkSync, existsSync } = await import("fs");
@@ -15414,6 +15519,13 @@ ${output}`,
 `, { append: true });
       tasks[taskId].status = status === "error" ? "error" : "complete";
       await Bun.write(TASKS_FILE, JSON.stringify(tasks, null, 2));
+      const resultFile = `/tmp/relay-task-result-${taskId}.json`;
+      await Bun.write(resultFile, JSON.stringify({
+        status,
+        output,
+        from: selfName,
+        completed_at: Date.now() / 1000
+      }));
       const dispatched = [];
       for (const [tid, t] of Object.entries(tasks)) {
         if (t.status !== "waiting" || !t.depends_on)
@@ -15597,7 +15709,7 @@ Failed: ${failed.join(", ")}` : result }] };
       return { content: [{ type: "text", text: `Error broadcasting: ${e}` }] };
     }
   }
-  const KNOWLEDGE_FILE = "/tmp/relay-knowledge.json";
+  const KNOWLEDGE_FILE = "/root/.claude/relay-knowledge.json";
   if (name === "knowledge_write") {
     const title = String(args?.title ?? "");
     const content = String(args?.content ?? "");
@@ -15661,6 +15773,65 @@ ${e.content}`;
 `) }] };
     } catch (e) {
       return { content: [{ type: "text", text: `Error reading knowledge: ${e}` }] };
+    }
+  }
+  if (name === "get_briefing") {
+    const topic = String(args?.topic ?? "").toLowerCase();
+    if (!topic)
+      return { content: [{ type: "text", text: "Error: topic is required." }] };
+    try {
+      let knowledgeEntries = [];
+      try {
+        const f = Bun.file(KNOWLEDGE_FILE);
+        if (await f.exists())
+          knowledgeEntries = JSON.parse(await f.text());
+      } catch {}
+      const matchingKnowledge = knowledgeEntries.filter((e) => e.title.toLowerCase().includes(topic) || e.content.toLowerCase().includes(topic) || e.tags.some((t) => t.toLowerCase().includes(topic))).reverse().slice(0, 5);
+      const memoryMatches = [];
+      const memGlob = new Bun.Glob("/tmp/relay-memory-*.json");
+      for await (const filePath of memGlob.scan("/")) {
+        if (memoryMatches.length >= 5)
+          break;
+        try {
+          const f = Bun.file(filePath);
+          if (!await f.exists())
+            continue;
+          const store = JSON.parse(await f.text());
+          const sessionName = filePath.replace("/tmp/relay-memory-", "").replace(".json", "");
+          for (const [k, v] of Object.entries(store)) {
+            if (memoryMatches.length >= 5)
+              break;
+            if (k.toLowerCase().includes(topic) || String(v).toLowerCase().includes(topic)) {
+              memoryMatches.push({ session: sessionName, key: k, value: String(v).substring(0, 200) });
+            }
+          }
+        } catch {}
+      }
+      const lines = [`=== Briefing: ${topic} ===`];
+      lines.push(`
+From Knowledge Library (${matchingKnowledge.length} entries):`);
+      if (matchingKnowledge.length > 0) {
+        for (const e of matchingKnowledge) {
+          const snippet = e.content.length > 150 ? e.content.slice(0, 150) + "\u2026" : e.content;
+          lines.push(`\u2022 [${e.author}] ${e.title}: ${snippet}`);
+        }
+      } else {
+        lines.push("(nothing relevant found)");
+      }
+      lines.push(`
+From Session Memories (${memoryMatches.length} entries):`);
+      if (memoryMatches.length > 0) {
+        for (const m of memoryMatches) {
+          const snippet = m.value.length > 150 ? m.value.slice(0, 150) + "\u2026" : m.value;
+          lines.push(`\u2022 [${m.session}] ${m.key}: ${snippet}`);
+        }
+      } else {
+        lines.push("(nothing relevant found)");
+      }
+      return { content: [{ type: "text", text: lines.join(`
+`) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error getting briefing: ${e}` }] };
     }
   }
   if (name === "auto_dispatch") {
@@ -15829,6 +16000,31 @@ ${task}`,
       return { content: [{ type: "text", text: `Error delegating task: ${e}` }] };
     }
   }
+  if (name === "await_result") {
+    const taskId = String(args?.task_id ?? "");
+    const timeoutSec = Number(args?.timeout_secs ?? 120);
+    if (!taskId)
+      return { content: [{ type: "text", text: "Error: task_id is required." }] };
+    const resultFile = `/tmp/relay-task-result-${taskId}.json`;
+    const deadline = Date.now() + timeoutSec * 1000;
+    try {
+      while (Date.now() < deadline) {
+        const f = Bun.file(resultFile);
+        if (await f.exists()) {
+          const data = await f.text();
+          try {
+            const { unlinkSync } = await import("fs");
+            unlinkSync(resultFile);
+          } catch (_) {}
+          return { content: [{ type: "text", text: data }] };
+        }
+        await Bun.sleep(2000);
+      }
+      return { content: [{ type: "text", text: `Task result not ready after ${timeoutSec}s` }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error waiting for result: ${e}` }] };
+    }
+  }
   if (name === "send_code") {
     const code = String(args?.code ?? "");
     const language = args?.language ? String(args.language) : "";
@@ -15886,6 +16082,37 @@ ${task}`,
       }
     } catch (e) {
       return { content: [{ type: "text", text: `Error reading memory: ${e}` }] };
+    }
+  }
+  if (name === "memory_search") {
+    const query = String(args?.query ?? "").toLowerCase();
+    if (!query)
+      return { content: [{ type: "text", text: "Query required." }] };
+    try {
+      const results = [];
+      const glob = new Bun.Glob("/tmp/relay-memory-*.json");
+      for await (const filePath of glob.scan("/")) {
+        const sessionName = filePath.replace("/tmp/relay-memory-", "").replace(".json", "");
+        try {
+          const f = Bun.file(filePath);
+          if (!await f.exists())
+            continue;
+          const store = JSON.parse(await f.text());
+          for (const [k, v] of Object.entries(store)) {
+            if (k.toLowerCase().includes(query) || String(v).toLowerCase().includes(query)) {
+              results.push({ session: sessionName, key: k, value: String(v).substring(0, 200) });
+            }
+          }
+        } catch {}
+      }
+      if (results.length === 0)
+        return { content: [{ type: "text", text: `No memory entries found matching "${query}".` }] };
+      const lines = results.map((r) => `[${r.session}] ${r.key}: ${r.value}`);
+      return { content: [{ type: "text", text: lines.join(`
+---
+`) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error searching memory: ${e}` }] };
     }
   }
   if (name === "send_diff") {
@@ -16221,6 +16448,154 @@ ${JSON.stringify(found, null, 2)}` }] };
       return { content: [{ type: "text", text: `Error listing tasks: ${e}` }] };
     }
   }
+  if (name === "set_agent_state") {
+    const state = String(args?.state ?? "idle");
+    const task = args?.task ? String(args.task) : null;
+    const blockedBy = args?.blocked_by ? String(args.blocked_by) : null;
+    const stateFile = `/tmp/relay-agent-state-${THREAD_ID}.json`;
+    const entry = {
+      thread_id: THREAD_ID,
+      state,
+      task,
+      blocked_by: blockedBy,
+      ts: Math.floor(Date.now() / 1000)
+    };
+    try {
+      await Bun.write(stateFile, JSON.stringify(entry, null, 2));
+      return { content: [{ type: "text", text: `State set to '${state}'${task ? ` (${task})` : ""}.` }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error writing state: ${e}` }] };
+    }
+  }
+  if (name === "split_task") {
+    const subtasks = args?.subtasks ?? [];
+    const timeoutSecs = Number(args?.timeout_secs ?? 180);
+    const context = args?.context ? String(args.context) : null;
+    if (subtasks.length === 0)
+      return { content: [{ type: "text", text: "Error: subtasks array is required and must not be empty." }] };
+    try {
+      const sessionsPath = new URL("../sessions.json", import.meta.url).pathname;
+      const sessions = JSON.parse(readFileSync(sessionsPath, "utf8"));
+      const queueDir = "/tmp";
+      const dispatched = [];
+      const now = Math.floor(Date.now() / 1000);
+      for (const sub of subtasks) {
+        const target = sessions.find((s) => s.session === sub.session);
+        if (!target)
+          continue;
+        const taskId = `split-${now}-${sub.session}-${Math.random().toString(36).slice(2, 6)}`;
+        const fullPrompt = context ? `[Context] ${context}
+
+[Task] ${sub.prompt}
+
+When done, call complete_task with task_id="${taskId}" and your result.` : `${sub.prompt}
+
+When done, call complete_task with task_id="${taskId}" and your result.`;
+        const entry = {
+          message_id: -(Date.now() % 2147483647),
+          user: `orchestrator:${THREAD_ID}`,
+          text: fullPrompt,
+          ts: now,
+          via: "split_task",
+          force: true,
+          task_id: taskId
+        };
+        const queueFile = `${queueDir}/tg-queue-${target.thread_id}.jsonl`;
+        const { appendFileSync } = await import("fs");
+        appendFileSync(queueFile, JSON.stringify(entry) + `
+`);
+        dispatched.push({ session: sub.session, task_id: taskId });
+      }
+      if (dispatched.length === 0)
+        return { content: [{ type: "text", text: "No valid target sessions found." }] };
+      const deadline = Date.now() + timeoutSecs * 1000;
+      const results = {};
+      while (Date.now() < deadline) {
+        for (const d of dispatched) {
+          if (results[d.session])
+            continue;
+          const resultFile = `/tmp/relay-task-result-${d.task_id}.json`;
+          const f = Bun.file(resultFile);
+          if (await f.exists()) {
+            try {
+              const data = JSON.parse(await f.text());
+              results[d.session] = data.result ?? String(data);
+              const { unlinkSync } = await import("fs");
+              try {
+                unlinkSync(resultFile);
+              } catch (_) {}
+            } catch (_) {}
+          }
+        }
+        if (Object.keys(results).length === dispatched.length)
+          break;
+        await Bun.sleep(2000);
+      }
+      const lines = [`Dispatched ${dispatched.length} subtasks, received ${Object.keys(results).length}/${dispatched.length} results:
+`];
+      for (const d of dispatched) {
+        lines.push(`\u2500\u2500 ${d.session} \u2500\u2500`);
+        lines.push(results[d.session] ?? "(no result \u2014 timed out)");
+      }
+      return { content: [{ type: "text", text: lines.join(`
+`) }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error in split_task: ${e}` }] };
+    }
+  }
+  if (name === "spawn_agent") {
+    const task = String(args?.task ?? "");
+    const workdir = args?.workdir ? String(args.workdir) : "/relay";
+    const wait = Boolean(args?.wait ?? false);
+    const timeoutSecs = Number(args?.timeout_secs ?? 300);
+    if (!task)
+      return { content: [{ type: "text", text: "Error: task is required." }] };
+    const agentId = `ephemeral-${Date.now()}`;
+    const resultFile = `/tmp/relay-task-result-${agentId}.json`;
+    const taskFull = wait ? `${task}
+
+When done, write your result to: ${resultFile} as JSON with key "result". Example: {"result": "your answer here"}` : task;
+    try {
+      const { execSync } = await import("child_process");
+      const apiIp = (() => {
+        try {
+          return execSync("getent hosts relay-api | awk '{print $1}' | head -1", { timeout: 3000 }).toString().trim();
+        } catch {
+          return "";
+        }
+      })();
+      if (!apiIp)
+        return { content: [{ type: "text", text: "Error: relay-api not reachable \u2014 cannot spawn agent." }] };
+      const payload = JSON.stringify({ agent_id: agentId, task: taskFull, workdir });
+      const curlCmd = `curl -sf --connect-timeout 5 -X POST -H "Content-Type: application/json" -u "${process.env.AUTH_USER ?? "relay"}:${process.env.AUTH_PASS ?? ""}" -d '${payload.replace(/'/g, "'\\''")}' http://${apiIp}:7070/api/spawn-agent`;
+      const resp = execSync(curlCmd, { timeout: 1e4 }).toString().trim();
+      const parsed = JSON.parse(resp);
+      if (!parsed.ok)
+        return { content: [{ type: "text", text: `Error spawning agent: ${parsed.error ?? resp}` }] };
+      if (!wait) {
+        return { content: [{ type: "text", text: `Ephemeral agent spawned (id: ${agentId}). Running in background \u2014 no result expected.` }] };
+      }
+      const deadline = Date.now() + timeoutSecs * 1000;
+      while (Date.now() < deadline) {
+        const f = Bun.file(resultFile);
+        if (await f.exists()) {
+          try {
+            const data = JSON.parse(await f.text());
+            const { unlinkSync } = await import("fs");
+            try {
+              unlinkSync(resultFile);
+            } catch (_) {}
+            return { content: [{ type: "text", text: `Agent result:
+${data.result ?? JSON.stringify(data)}` }] };
+          } catch (_) {}
+        }
+        await Bun.sleep(3000);
+      }
+      return { content: [{ type: "text", text: `Ephemeral agent (${agentId}) did not complete within ${timeoutSecs}s.` }] };
+    } catch (e) {
+      return { content: [{ type: "text", text: `Error spawning agent: ${e}` }] };
+    }
+  }
   return { content: [{ type: "text", text: `Unknown tool: ${name}` }] };
 });
 var db = new Database(`/tmp/tg-history-${THREAD_ID}.db`);
@@ -16240,6 +16615,32 @@ function dbInsert(msg) {
 }
 function dbRecent(limit) {
   return db.query("SELECT message_id, user, text, ts FROM messages ORDER BY rowid DESC LIMIT ?").all(limit).reverse();
+}
+async function dbWarmFromQueue() {
+  try {
+    const file = Bun.file(QUEUE_FILE);
+    if (!await file.exists())
+      return;
+    const count = db.query("SELECT COUNT(*) as n FROM messages").get().n;
+    if (count > 20)
+      return;
+    for (const line of (await file.text()).split(`
+`)) {
+      if (!line.trim())
+        continue;
+      try {
+        const e = JSON.parse(line);
+        if (e.force || !e.user || e.user.startsWith("system"))
+          continue;
+        if (e.message_id > 0) {
+          const isoTs = new Date(e.ts * 1000).toISOString();
+          dbInsert({ message_id: e.message_id, user: e.user, text: e.text, ts: isoTs });
+        }
+      } catch {}
+    }
+    process.stderr.write(`[telegram] DB warmed from queue (${count} existing rows)
+`);
+  } catch {}
 }
 var QUEUE_FILE = `/tmp/tg-queue-${THREAD_ID}.jsonl`;
 var LOCK_FILE = `/tmp/tg-queue-${THREAD_ID}.lock`;
@@ -16314,16 +16715,22 @@ async function trimQueue(lastId) {
     const file = Bun.file(QUEUE_FILE);
     if (!await file.exists())
       return;
-    const cutoff = Date.now() / 1000 - 86400;
+    const now = Date.now() / 1000;
+    const cutoff24h = now - 86400;
+    const cutoff6h = now - 21600;
     const lines = (await file.text()).split(`
 `).filter((line) => {
       if (!line.trim())
         return false;
       try {
         const e = JSON.parse(line);
-        if (e.ts > cutoff)
-          return true;
+        if (e.ts < cutoff24h)
+          return false;
+        if (e.force && e.ts < cutoff6h)
+          return false;
         if (!e.force && e.message_id > lastId)
+          return true;
+        if (e.ts > cutoff6h)
           return true;
         return false;
       } catch {
@@ -16388,7 +16795,8 @@ async function poll() {
       }
     }
   } catch {}
-  await Bun.sleep(1000);
+  await dbWarmFromQueue();
+  await Bun.sleep(4000);
   try {
     const sessionsPath = new URL("../sessions.json", import.meta.url).pathname;
     const allSessions = JSON.parse(readFileSync(sessionsPath, "utf8"));
@@ -16495,8 +16903,11 @@ async function poll() {
             continue;
           if (pendingDelivery && message_id === pendingDelivery.message_id)
             continue;
-          if (force && deliveredForce.has(message_id) && Date.now() - deliveredForce.get(message_id) < 15000)
-            continue;
+          if (force && deliveredForce.has(message_id)) {
+            const deliveredAt = deliveredForce.get(message_id);
+            if (deliveredAt === Infinity || Date.now() - deliveredAt < 15000)
+              continue;
+          }
           if (message_id <= lastId && !force && !isRecent)
             continue;
           const isoTs = new Date(ts * 1000).toISOString();
@@ -16520,7 +16931,15 @@ async function poll() {
           if (force) {
             deliveredForce.set(message_id, Date.now());
             ackedForceIds.add(message_id);
-            const trimmed = [...ackedForceIds].slice(-200);
+            const twoHoursAgoMs = Date.now() - 7200000;
+            const trimmed = [...ackedForceIds].filter((id) => {
+              if (id >= 0)
+                return true;
+              return -id > twoHoursAgoMs;
+            }).slice(-200);
+            ackedForceIds.clear();
+            for (const id of trimmed)
+              ackedForceIds.add(id);
             await saveState(lastId, trimmed);
           } else if (message_id > lastId) {
             lastId = message_id;

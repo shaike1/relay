@@ -721,6 +721,60 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {},
       },
     },
+    // ── Feature: Agent state machine ─────────────────────────────────────────
+    {
+      name: 'set_agent_state',
+      description: 'Set this agent\'s current operational state. Call this to report what you are doing so the /agents dashboard and other agents can see your status. States: idle (waiting for work), busy (actively working), awaiting (waiting for another agent or resource), done (task complete, returning to idle).',
+      inputSchema: {
+        type: 'object',
+        required: ['state'],
+        properties: {
+          state:   { type: 'string', description: 'Agent state', enum: ['idle', 'busy', 'awaiting', 'done'] },
+          task:    { type: 'string', description: 'Brief description of current task (e.g. "running tests", "writing migration")' },
+          blocked_by: { type: 'string', description: 'If state=awaiting, what/who this agent is waiting for' },
+        },
+      },
+    },
+    // ── Feature: Orchestrator (split_task) ───────────────────────────────────
+    {
+      name: 'split_task',
+      description: 'Fan out a task to multiple sessions in parallel and aggregate all results. The orchestrator sends subtasks to each target session, waits for all to complete (or timeout), and returns a combined result. Best used when a large task can be parallelized across agents.',
+      inputSchema: {
+        type: 'object',
+        required: ['subtasks'],
+        properties: {
+          subtasks: {
+            type: 'array',
+            description: 'List of subtasks to fan out. Each has a target session and prompt.',
+            items: {
+              type: 'object',
+              required: ['session', 'prompt'],
+              properties: {
+                session: { type: 'string', description: 'Target session name' },
+                prompt:  { type: 'string', description: 'Task prompt for this session' },
+              },
+            },
+          },
+          timeout_secs: { type: 'integer', description: 'Max seconds to wait for ALL tasks (default: 180)', default: 180 },
+          context:      { type: 'string',  description: 'Optional shared context prepended to every subtask prompt' },
+        },
+      },
+    },
+    // ── Feature: Ephemeral agents ─────────────────────────────────────────────
+    {
+      name: 'spawn_agent',
+      description: 'Spawn a temporary one-shot agent to handle a task. The agent runs in an isolated container, completes the task, reports back, and is automatically cleaned up. Use for tasks that need a fresh context, a different working directory, or should not affect the current session.',
+      inputSchema: {
+        type: 'object',
+        required: ['task'],
+        properties: {
+          task:     { type: 'string',  description: 'Task for the ephemeral agent to perform' },
+          workdir:  { type: 'string',  description: 'Working directory for the agent (default: /relay)' },
+          wait:     { type: 'boolean', description: 'If true, wait for the agent to complete and return the result (default: false — fire and forget)', default: false },
+          timeout_secs: { type: 'integer', description: 'Max seconds to wait if wait=true (default: 300)', default: 300 },
+        },
+      },
+    },
   ],
 }))
 
@@ -731,7 +785,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args } = req.params
   // Confirm delivery when Claude calls any messaging-related tool — proves it's actively responding.
   // fetch_messages, send_message, typing, react, send_file all indicate the session is alive and processing.
-  if (_updateActivity && ['fetch_messages', 'send_message', 'typing', 'react', 'send_file', 'message_peer', 'complete_task'].includes(name)) _updateActivity()
+  if (_updateActivity && ['fetch_messages', 'send_message', 'typing', 'react', 'send_file', 'message_peer', 'complete_task', 'set_agent_state', 'split_task'].includes(name)) _updateActivity()
 
   if (name === 'send_message') {
     // Accept 'message' as alias for 'text' — Claude sometimes uses wrong param name
@@ -2050,6 +2104,154 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       return { content: [{ type: 'text', text: lines2.join('\n\n') }] }
     } catch (e) {
       return { content: [{ type: 'text', text: `Error listing tasks: ${e}` }] }
+    }
+  }
+
+  // ── Agent state machine ───────────────────────────────────────────────────
+
+  if (name === 'set_agent_state') {
+    const state      = String(args?.state ?? 'idle')
+    const task       = args?.task       ? String(args.task) : null
+    const blockedBy  = args?.blocked_by ? String(args.blocked_by) : null
+    const stateFile  = `/tmp/relay-agent-state-${THREAD_ID}.json`
+    const entry = {
+      thread_id:  THREAD_ID,
+      state,
+      task,
+      blocked_by: blockedBy,
+      ts: Math.floor(Date.now() / 1000),
+    }
+    try {
+      await Bun.write(stateFile, JSON.stringify(entry, null, 2))
+      return { content: [{ type: 'text', text: `State set to '${state}'${task ? ` (${task})` : ''}.` }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error writing state: ${e}` }] }
+    }
+  }
+
+  // ── Orchestrator: split_task ───────────────────────────────────────────────
+
+  if (name === 'split_task') {
+    const subtasks    = (args?.subtasks as Array<{ session: string; prompt: string }>) ?? []
+    const timeoutSecs = Number(args?.timeout_secs ?? 180)
+    const context     = args?.context ? String(args.context) : null
+    if (subtasks.length === 0) return { content: [{ type: 'text', text: 'Error: subtasks array is required and must not be empty.' }] }
+
+    try {
+      const sessionsPath = new URL('../sessions.json', import.meta.url).pathname
+      const sessions: Array<{ session: string; thread_id: number; host?: string }> =
+        JSON.parse(readFileSync(sessionsPath, 'utf8'))
+
+      const queueDir   = '/tmp'
+      const dispatched: Array<{ session: string; task_id: string }> = []
+      const now        = Math.floor(Date.now() / 1000)
+
+      for (const sub of subtasks) {
+        const target = sessions.find(s => s.session === sub.session)
+        if (!target) continue
+        const taskId   = `split-${now}-${sub.session}-${Math.random().toString(36).slice(2, 6)}`
+        const fullPrompt = context
+          ? `[Context] ${context}\n\n[Task] ${sub.prompt}\n\nWhen done, call complete_task with task_id="${taskId}" and your result.`
+          : `${sub.prompt}\n\nWhen done, call complete_task with task_id="${taskId}" and your result.`
+        const entry = {
+          message_id: -(Date.now() % 2147483647),
+          user:       `orchestrator:${THREAD_ID}`,
+          text:       fullPrompt,
+          ts:         now,
+          via:        'split_task',
+          force:      true,
+          task_id:    taskId,
+        }
+        const queueFile = `${queueDir}/tg-queue-${target.thread_id}.jsonl`
+        const { appendFileSync } = await import('fs')
+        appendFileSync(queueFile, JSON.stringify(entry) + '\n')
+        dispatched.push({ session: sub.session, task_id: taskId })
+      }
+
+      if (dispatched.length === 0) return { content: [{ type: 'text', text: 'No valid target sessions found.' }] }
+
+      // Wait for all results
+      const deadline  = Date.now() + timeoutSecs * 1000
+      const results: Record<string, string> = {}
+      while (Date.now() < deadline) {
+        for (const d of dispatched) {
+          if (results[d.session]) continue
+          const resultFile = `/tmp/relay-task-result-${d.task_id}.json`
+          const f = Bun.file(resultFile)
+          if (await f.exists()) {
+            try {
+              const data = JSON.parse(await f.text())
+              results[d.session] = data.result ?? String(data)
+              const { unlinkSync } = await import('fs')
+              try { unlinkSync(resultFile) } catch (_) {}
+            } catch (_) {}
+          }
+        }
+        if (Object.keys(results).length === dispatched.length) break
+        await Bun.sleep(2000)
+      }
+
+      const lines: string[] = [`Dispatched ${dispatched.length} subtasks, received ${Object.keys(results).length}/${dispatched.length} results:\n`]
+      for (const d of dispatched) {
+        lines.push(`── ${d.session} ──`)
+        lines.push(results[d.session] ?? '(no result — timed out)')
+      }
+      return { content: [{ type: 'text', text: lines.join('\n') }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error in split_task: ${e}` }] }
+    }
+  }
+
+  // ── Ephemeral agents: spawn_agent ──────────────────────────────────────────
+
+  if (name === 'spawn_agent') {
+    const task        = String(args?.task ?? '')
+    const workdir     = args?.workdir ? String(args.workdir) : '/relay'
+    const wait        = Boolean(args?.wait ?? false)
+    const timeoutSecs = Number(args?.timeout_secs ?? 300)
+    if (!task) return { content: [{ type: 'text', text: 'Error: task is required.' }] }
+
+    const agentId   = `ephemeral-${Date.now()}`
+    const resultFile = `/tmp/relay-task-result-${agentId}.json`
+    const taskFull  = wait
+      ? `${task}\n\nWhen done, write your result to: ${resultFile} as JSON with key "result". Example: {"result": "your answer here"}`
+      : task
+
+    try {
+      // Spawn via relay-api /api/spawn-agent endpoint
+      const { execSync } = await import('child_process')
+      const apiIp = (() => {
+        try { return execSync('getent hosts relay-api | awk \'{print $1}\' | head -1', { timeout: 3000 }).toString().trim() } catch { return '' }
+      })()
+      if (!apiIp) return { content: [{ type: 'text', text: 'Error: relay-api not reachable — cannot spawn agent.' }] }
+
+      const payload = JSON.stringify({ agent_id: agentId, task: taskFull, workdir })
+      const curlCmd = `curl -sf --connect-timeout 5 -X POST -H "Content-Type: application/json" -u "${process.env.AUTH_USER ?? 'relay'}:${process.env.AUTH_PASS ?? ''}" -d '${payload.replace(/'/g, "'\\''")}' http://${apiIp}:7070/api/spawn-agent`
+      const resp = execSync(curlCmd, { timeout: 10000 }).toString().trim()
+      const parsed = JSON.parse(resp)
+      if (!parsed.ok) return { content: [{ type: 'text', text: `Error spawning agent: ${parsed.error ?? resp}` }] }
+
+      if (!wait) {
+        return { content: [{ type: 'text', text: `Ephemeral agent spawned (id: ${agentId}). Running in background — no result expected.` }] }
+      }
+
+      // Wait for result file
+      const deadline = Date.now() + timeoutSecs * 1000
+      while (Date.now() < deadline) {
+        const f = Bun.file(resultFile)
+        if (await f.exists()) {
+          try {
+            const data = JSON.parse(await f.text())
+            const { unlinkSync } = await import('fs')
+            try { unlinkSync(resultFile) } catch (_) {}
+            return { content: [{ type: 'text', text: `Agent result:\n${data.result ?? JSON.stringify(data)}` }] }
+          } catch (_) {}
+        }
+        await Bun.sleep(3000)
+      }
+      return { content: [{ type: 'text', text: `Ephemeral agent (${agentId}) did not complete within ${timeoutSecs}s.` }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error spawning agent: ${e}` }] }
     }
   }
 
