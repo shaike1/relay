@@ -113,6 +113,38 @@
   .empty { color: #6e7681; font-size: 12px; padding: 12px 0; text-align: center; }
   .full-width { grid-column: 1 / -1; }
   .loading { color: #6e7681; font-size: 12px; padding: 20px; text-align: center; }
+
+  /* Fleet summary bar */
+  .fleet-bar {
+    display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
+    margin-bottom: 16px; padding: 10px 14px;
+    background: #161b22; border: 1px solid #21262d; border-radius: 8px;
+    font-size: 12px; color: #8b949e;
+  }
+  .fleet-stat { display: flex; flex-direction: column; gap: 2px; }
+  .fleet-stat-val { font-size: 15px; color: #f0f6fc; font-weight: 500; }
+  .fleet-stat-val.green { color: #3fb950; }
+  .fleet-stat-val.yellow { color: #d29922; }
+  .fleet-sep { border-left: 1px solid #21262d; height: 30px; }
+  .fleet-right { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+  .last-updated { color: #6e7681; font-size: 11px; }
+  .spinner { display: inline-block; font-size: 13px; color: #58a6ff; opacity: 0; transition: opacity 0.2s; }
+  .spinner.active { opacity: 1; animation: spin 1s linear infinite; }
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+  /* Health colors — left border on agent items */
+  .agent-item.health-online  { border-left: 3px solid #3fb950; padding-left: 13px; }
+  .agent-item.health-degraded { border-left: 3px solid #d29922; padding-left: 13px; }
+  .agent-item.health-offline  { border-left: 3px solid #6e3333; padding-left: 13px; opacity: 0.65; }
+  .agent-item.health-unknown  { border-left: 3px solid #30363d; padding-left: 13px; }
+
+  /* Agent state */
+  .agent-state-ts { color: #6e7681; font-size: 10px; margin-left: 4px; }
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(88,166,255,0.5); }
+    50%       { opacity: 0.7; box-shadow: 0 0 0 4px rgba(88,166,255,0); }
+  }
+  .dot-busy { background: #58a6ff; animation: pulse-dot 1.4s ease-in-out infinite; }
 </style>
 </head>
 <body>
@@ -126,7 +158,28 @@
       <a href="/agents" class="active">Agents</a>
       <a href="/config">Config</a>
     </nav>
+    <span class="spinner" id="spinner">↻</span>
     <button class="refresh" onclick="load()">↻ refresh</button>
+  </div>
+</div>
+
+<div class="fleet-bar" id="fleet-bar" style="display:none">
+  <div class="fleet-stat">
+    <span class="fleet-stat-val green" id="fleet-online">—</span>
+    <span>online / total</span>
+  </div>
+  <div class="fleet-sep"></div>
+  <div class="fleet-stat">
+    <span class="fleet-stat-val yellow" id="fleet-cost">$0.00</span>
+    <span>fleet cost today</span>
+  </div>
+  <div class="fleet-sep"></div>
+  <div class="fleet-stat">
+    <span class="fleet-stat-val" id="fleet-resp">0</span>
+    <span>responses today</span>
+  </div>
+  <div class="fleet-right">
+    <span class="last-updated" id="last-updated"></span>
   </div>
 </div>
 
@@ -136,17 +189,44 @@
 
 <script>
 let agentsData = null;
+let lastLoadedAt = null;
 
 async function load() {
+  const spinner = document.getElementById('spinner');
+  spinner.classList.add('active');
   try {
     const r = await fetch('/api/agents-data');
     if (!r.ok) { document.getElementById('layout').innerHTML = '<div class="loading">Error loading data</div>'; return; }
     agentsData = await r.json();
+    lastLoadedAt = Date.now();
     render(agentsData);
+    updateFleetBar(agentsData);
   } catch (e) {
     document.getElementById('layout').innerHTML = `<div class="loading">Error: ${e.message}</div>`;
+  } finally {
+    spinner.classList.remove('active');
   }
 }
+
+function updateFleetBar(data) {
+  const sessions = data.sessions || [];
+  const online = sessions.filter(s => s.health === 'online').length;
+  const totalCost = sessions.reduce((sum, s) => sum + ((s.token_stats && s.token_stats.cost_today) || 0), 0);
+  const totalResp = sessions.reduce((sum, s) => sum + (s.responses_today || 0), 0);
+
+  document.getElementById('fleet-online').textContent = `${online} / ${sessions.length}`;
+  document.getElementById('fleet-cost').textContent = `$${totalCost.toFixed(3)}`;
+  document.getElementById('fleet-resp').textContent = totalResp;
+  document.getElementById('fleet-bar').style.display = 'flex';
+}
+
+function updateLastUpdatedClock() {
+  const el = document.getElementById('last-updated');
+  if (!lastLoadedAt) { el.textContent = ''; return; }
+  const secs = Math.floor((Date.now() - lastLoadedAt) / 1000);
+  el.textContent = secs < 5 ? 'Just updated' : `Updated ${secs}s ago`;
+}
+setInterval(updateLastUpdatedClock, 1000);
 
 function timeAgo(ts) {
   if (!ts) return '';
@@ -182,13 +262,18 @@ function render(data) {
     agentList.innerHTML = '<div class="empty">No agents configured</div>';
   } else {
     sessions.forEach(s => {
-      const dotClass = { online: 'dot-online', offline: 'dot-offline', degraded: 'dot-degraded', unknown: 'dot-unknown' }[s.health] || 'dot-unknown';
+      const health = s.health || 'unknown';
+      const dotClass = { online: 'dot-online', offline: 'dot-offline', degraded: 'dot-degraded', unknown: 'dot-unknown' }[health] || 'dot-unknown';
+      // Busy state gets its own pulsing dot class
+      const agentState = s.agent_state || '';
+      const stateDotClass = agentState === 'busy' ? 'dot-busy' : dotClass;
       const memKeys = Object.keys(s.memory || {});
       const schedEntries = (s.schedule || []).length;
       const item = document.createElement('div');
-      item.className = 'agent-item';
+      item.className = `agent-item health-${health}`;
+      const stateTs = s.agent_state_ts ? `<span class="agent-state-ts">${timeAgo(s.agent_state_ts)}</span>` : '';
       item.innerHTML = `
-        <div class="agent-dot ${dotClass}"></div>
+        <div class="agent-dot ${stateDotClass}"></div>
         <div class="agent-body">
           <div class="agent-name">${s.session} ${s.last_seen ? `<span style="color:#6e7681;font-size:11px">${timeAgo(s.last_seen)}</span>` : ''}</div>
           <div class="agent-path">${s.path || s.workdir || ''}</div>
@@ -196,9 +281,9 @@ function render(data) {
           ${memKeys.length ? `<div class="agent-memory">💾 ${memKeys.slice(0,4).join(', ')}${memKeys.length > 4 ? ' +' + (memKeys.length-4) : ''}</div>` : ''}
           ${schedEntries ? `<div class="agent-schedule">⏰ ${schedEntries} scheduled</div>` : ''}
           ${(s.github_triggers||[]).length ? `<div class="agent-schedule">🔗 ${s.github_triggers.length} CI/CD trigger${s.github_triggers.length>1?'s':''}</div>` : ''}
-          ${s.token_stats && s.token_stats.output > 0 ? `<div class="agent-memory">⚡ ${s.token_stats.output.toLocaleString()} out tokens / 5m · $${(s.token_stats.cost_usd||0).toFixed(4)}</div>` : ''}
+          ${s.token_stats && s.token_stats.output > 0 ? `<div class="agent-memory">⚡ ${s.token_stats.output.toLocaleString()} out tokens / 5m · $${(s.token_stats.cost_usd||0).toFixed(4)}${s.token_stats.cost_today > 0 ? ` <span style="color:#d29922">· today $${s.token_stats.cost_today.toFixed(3)}</span>` : ''}</div>` : ''}
           ${s.uptime != null ? `<div class="agent-memory" title="Container uptime">🕐 up ${fmtUptime(s.uptime)}${s.responses_today != null ? ` · ${s.responses_today} resp today` : ''}${s.msg_count_today != null ? ` · ${s.msg_count_today} msgs` : ''}</div>` : ''}
-          ${s.agent_state ? `<div class="agent-state state-${s.agent_state}">${{idle:'⚪',busy:'🔵',awaiting:'🟡',done:'🟢'}[s.agent_state]||'⚪'} ${s.agent_state}${s.agent_task ? `: ${s.agent_task}` : ''}${s.agent_blocked_by ? ` (waiting: ${s.agent_blocked_by})` : ''}</div>` : ''}
+          ${agentState ? `<div class="agent-state state-${agentState}">${{idle:'⚪',busy:'🔵',awaiting:'🟡',done:'🟢'}[agentState]||'⚪'} ${agentState}${s.agent_task ? `: ${s.agent_task}` : ''}${s.agent_blocked_by ? ` (waiting: ${s.agent_blocked_by})` : ''}${stateTs}</div>` : ''}
           <div class="persona-form" id="pf-${s.session}">
             <input class="persona-input" id="pi-${s.session}" placeholder="Set persona (e.g. DevOps engineer specializing in Docker)" value="${s.persona || ''}">
             <button class="btn-sm primary" onclick="savePersona('${s.session}')">Save</button>

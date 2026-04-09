@@ -266,6 +266,27 @@ const WEBHOOK_TOKEN = process.env.WEBHOOK_TOKEN || '';
 const ALLOW_SELF_REGISTER = (process.env.ALLOW_SELF_REGISTER || 'false').toLowerCase() === 'true';
 const BOT_WEBHOOK_URL = process.env.BOT_WEBHOOK_URL || 'http://relay:18793/tg';
 
+// Sessions cache — avoid reading sessions.json on every webhook message
+let _sessionsCache = null;
+let _sessionsCacheTs = 0;
+const SESSIONS_CACHE_TTL_MS = 30_000;  // 30s
+
+function getCachedSessions() {
+  const now = Date.now();
+  if (_sessionsCache && now - _sessionsCacheTs < SESSIONS_CACHE_TTL_MS) return _sessionsCache;
+  try {
+    _sessionsCache = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    _sessionsCacheTs = now;
+  } catch (e) {
+    if (_sessionsCache) return _sessionsCache;  // return stale on error
+    _sessionsCache = [];
+  }
+  return _sessionsCache;
+}
+
+// Invalidate sessions cache after writes (add/update/delete session)
+function invalidateSessionsCache() { _sessionsCacheTs = 0; }
+
 // --- Rate limiter: 30 messages per minute per user ---
 const RATE_LIMIT_MAX = 30;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
@@ -723,7 +744,7 @@ function webhookQueueWrite(update) {
     // Check if this thread belongs to a remote session
     let remoteHost = null;
     try {
-      const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+      const sessions = getCachedSessions();
       const sess = sessions.find(s => String(s.thread_id) === String(buf.effectiveThreadId));
       if (sess && sess.host) remoteHost = sess.host;
     } catch (_) {}
@@ -738,6 +759,15 @@ function webhookQueueWrite(update) {
         execSync(`curl -sf --connect-timeout 5 -X POST ${secretFlag} -H "Content-Type: application/json" -d '${JSON.stringify(merged).replace(/'/g, "'\\''")}' http://${host}:${pushPort}/push`, { timeout: 8000 });
         console.log(`[webhook] ${buf.effectiveThreadId} (remote:${host}): ${buf.firstEntry.user}: ${label}${merged.text.substring(0, 60)}`);
       } catch (err) { console.error(`[webhook] Remote queue write error (${remoteHost}):`, err.message); }
+      // Receipt confirmation for remote sessions too
+      if (TG_BOT_TOKEN && TG_CHAT_ID && merged.message_id > 0) {
+        fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/setMessageReaction`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: TG_CHAT_ID, message_id: merged.message_id, reaction: [{ type: 'emoji', emoji: '👀' }], is_big: false }),
+          signal: AbortSignal.timeout(5000),
+        }).catch(() => {});
+      }
     } else {
       const queueFile = path.join(QUEUE_DIR, `tg-queue-${buf.effectiveThreadId}.jsonl`);
       try {
@@ -745,6 +775,15 @@ function webhookQueueWrite(update) {
         fs.writeFileSync(path.join(QUEUE_DIR, `relay-msg-start-${buf.effectiveThreadId}`), String(Date.now()));
         console.log(`[webhook] ${buf.effectiveThreadId}: ${buf.firstEntry.user}: ${label}${merged.text.substring(0, 60)}`);
       } catch (err) { console.error(`[webhook] Queue write error:`, err.message); }
+      // Receipt confirmation: react 👀 so user knows message was received
+      if (TG_BOT_TOKEN && TG_CHAT_ID && merged.message_id > 0) {
+        fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/setMessageReaction`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: TG_CHAT_ID, message_id: merged.message_id, reaction: [{ type: 'emoji', emoji: '👀' }], is_big: false }),
+          signal: AbortSignal.timeout(5000),
+        }).catch(() => {});
+      }
     }
   }
 
@@ -788,7 +827,7 @@ function webhookQueueWrite(update) {
   try {
     const mentionMatches = msg.text.match(/@([a-zA-Z0-9_-]+)/g);
     if (mentionMatches) {
-      const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+      const sessions = getCachedSessions();
       for (const mention of mentionMatches) {
         const mentionName = mention.slice(1); // strip '@'
         const targetSession = sessions.find(s =>
@@ -819,7 +858,7 @@ function webhookQueueWrite(update) {
     const ROUTING_FILE = process.env.ROUTING_FILE || '/relay/routing.json';
     if (fs.existsSync(ROUTING_FILE)) {
       const rules = JSON.parse(fs.readFileSync(ROUTING_FILE, 'utf8'));
-      const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+      const sessions = getCachedSessions();
       for (const rule of rules) {
         const regex = new RegExp(rule.pattern, 'i');
         if (!regex.test(msg.text)) continue;
@@ -850,7 +889,7 @@ function webhookQueueWrite(update) {
   // against all other sessions' skills arrays and forward to the best match.
   // Sends a "↪ forwarded" confirmation back in the originating thread.
   try {
-    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const sessions = getCachedSessions();
     const originSession = sessions.find(s => String(s.thread_id) === String(effectiveThreadId));
     if (originSession && originSession.skills_route) {
       const text = (msg.text || '').toLowerCase();
@@ -892,7 +931,7 @@ function webhookQueueWrite(update) {
   // sessions.json inline keyword routing: route_keywords: ["ha", "home assistant"]
   // Routes message to that session's queue when any keyword matches message text.
   try {
-    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const sessions = getCachedSessions();
     const textLower = (msg.text || '').toLowerCase();
     for (const s of sessions) {
       if (!s.route_keywords || !Array.isArray(s.route_keywords) || s.route_keywords.length === 0) continue;
@@ -923,7 +962,7 @@ function webhookQueueWrite(update) {
 // Virtual thread IDs are stored in /tmp/mt-map-{threadId}.json
 function resolveMultiTenantThread(threadId, userId, userName) {
   try {
-    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const sessions = getCachedSessions();
     const session = sessions.find(s => String(s.thread_id) === String(threadId));
     if (!session || !session.multi_tenant) return threadId;
 
@@ -1976,12 +2015,14 @@ app.post('/webhooks/github', express.raw({ type: 'application/json' }), (req, re
         .then(r => r.json())
         .then(files => {
           if (!Array.isArray(files)) return;
-          const fileList = files.slice(0, 10).map(f => {
+          const fileList = files.slice(0, 15).map(f => {
             const additions = f.additions || 0;
             const deletions = f.deletions || 0;
-            return `• ${f.filename} (+${additions}/-${deletions})`;
-          }).join('\n');
-          const reviewText = `📋 PR #${pr.number} by ${pr.user && pr.user.login}: ${pr.title}\n\nChanged files:\n${fileList}\n\nPlease review this PR and provide feedback.\nURL: ${pr.html_url || ''}`;
+            const patch = f.patch ? `\n${f.patch.split('\n').slice(0, 20).join('\n')}` : '';
+            return `• ${f.filename} (+${additions}/-${deletions})${patch}`;
+          }).join('\n\n');
+          const body = pr.body ? `\nDescription: ${pr.body.substring(0, 300)}\n` : '';
+          const reviewText = `📋 PR Review Request — #${pr.number} by ${pr.user && pr.user.login}\nTitle: ${pr.title}\nBranch: ${(pr.head && pr.head.ref)} → ${(pr.base && pr.base.ref)}${body}\nURL: ${pr.html_url || ''}\n\nChanged files (${files.length} total):\n${fileList}\n\nPlease review this PR: check for bugs, security issues, code quality, and suggest improvements.`;
           const reviewEntry = {
             message_id: -(Math.floor(Date.now() / 1000) % 2147483647),
             user: `github:pr-review`,
@@ -3479,11 +3520,20 @@ app.get('/agents', (req, res) => {
   catch (e) { res.status(500).send('Agents page not found'); }
 });
 
+// Agents-data response cache — expensive endpoint (docker inspect per session)
+let _agentsDataCache = null;
+let _agentsDataCacheTs = 0;
+const AGENTS_DATA_CACHE_TTL_MS = 5_000;  // 5s — dashboard auto-refreshes every 30s, so this cuts repeated fetches
+
 // GET /api/agents-data — returns all sessions enriched with memory, knowledge, tasks
 app.get('/api/agents-data', (req, res) => {
   if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  // Return cached response if fresh (avoids docker inspect on every load)
+  if (_agentsDataCache && Date.now() - _agentsDataCacheTs < AGENTS_DATA_CACHE_TTL_MS) {
+    return res.json(_agentsDataCache);
+  }
   try {
-    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const sessions = getCachedSessions();
     const now = Math.floor(Date.now() / 1000);
 
     const enriched = sessions.map(s => {
@@ -3509,21 +3559,23 @@ app.get('/api/agents-data', (req, res) => {
           data.last_seen = Math.floor(st.mtimeMs / 1000);
         }
       } catch (_) {}
-      // Token stats — last 5 minutes
+      // Token stats — last 5 minutes + cumulative today
       try {
         const sf = path.join(QUEUE_DIR, `token-stats-${tid}.jsonl`);
         if (fs.existsSync(sf)) {
           const lines = fs.readFileSync(sf, 'utf8').split('\n').filter(Boolean);
           const cutoff = now - 300; // last 5 min
-          let totalIn = 0, totalOut = 0, totalCost = 0, entryCount = 0;
-          for (const line of lines.slice(-50)) {
+          const todayStr = new Date().toISOString().split('T')[0];
+          let totalIn = 0, totalOut = 0, totalCost = 0, entryCount = 0, costToday = 0;
+          for (const line of lines) {
             try {
               const e = JSON.parse(line);
               const ts = e.ts ? Math.floor(new Date(e.ts).getTime() / 1000) : 0;
               if (ts > cutoff) { totalIn += e.input || 0; totalOut += e.output || 0; totalCost += e.cost_usd || 0; entryCount++; }
+              if (e.ts && e.ts.startsWith(todayStr)) costToday += e.cost_usd || 0;
             } catch (_) {}
           }
-          data.token_stats = { input: totalIn, output: totalOut, cost_usd: totalCost, entries: entryCount };
+          data.token_stats = { input: totalIn, output: totalOut, cost_usd: totalCost, entries: entryCount, cost_today: costToday };
         }
       } catch (_) {}
       // Health: online if last_seen within 10 min, offline > 30 min, degraded otherwise
@@ -3600,7 +3652,10 @@ app.get('/api/agents-data', (req, res) => {
       }
     } catch (_) {}
 
-    res.json({ sessions: enriched, knowledge, tasks });
+    const result = { sessions: enriched, knowledge, tasks };
+    _agentsDataCache = result;
+    _agentsDataCacheTs = Date.now();
+    res.json(result);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -4838,4 +4893,84 @@ app.delete('/api/schedules/:id', (req, res) => {
     fs.writeFileSync(SCHEDULES_FILE, JSON.stringify(filtered, null, 2));
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/session-logs/:session?lines=50 — fetch recent container logs (JSON snapshot, not SSE)
+// Note: /api/logs/:container is taken by the SSE streaming endpoint
+app.get('/api/session-logs/:session', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  const sessionName = req.params.session;
+  const lines = Math.min(parseInt(req.query.lines) || 50, 500);
+  const containerName = `relay-session-${sessionName}`;
+  try {
+    const output = execSync(`docker logs --tail=${lines} ${containerName} 2>&1`, { timeout: 10000 }).toString();
+    res.json({ ok: true, session: sessionName, lines: output.split('\n').filter(Boolean) });
+  } catch (e) {
+    // Try exact container name
+    try {
+      const output2 = execSync(`docker logs --tail=${lines} ${sessionName} 2>&1`, { timeout: 10000 }).toString();
+      res.json({ ok: true, session: sessionName, lines: output2.split('\n').filter(Boolean) });
+    } catch (e2) {
+      res.status(404).json({ ok: false, error: `Container not found: ${containerName}` });
+    }
+  }
+});
+
+// GET /api/ping/:session — check session liveness
+app.get('/api/ping/:session', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  const sessionName = req.params.session;
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const sess = sessions.find(s => s.session === sessionName);
+    if (!sess) return res.status(404).json({ ok: false, error: 'Session not found' });
+
+    const tid = sess.thread_id;
+    const now = Math.floor(Date.now() / 1000);
+
+    // Last response time
+    let lastSent = null;
+    let lastSentAgo = null;
+    const lastSentFile = path.join(QUEUE_DIR, `tg-last-sent-${tid}`);
+    if (fs.existsSync(lastSentFile)) {
+      lastSent = parseFloat(fs.readFileSync(lastSentFile, 'utf8').trim());
+      lastSentAgo = now - Math.floor(lastSent);
+    }
+
+    // Pending messages
+    let pendingCount = 0;
+    const queueFile = path.join(QUEUE_DIR, `tg-queue-${tid}.jsonl`);
+    const stateFile = path.join(QUEUE_DIR, `tg-queue-${tid}.state`);
+    if (fs.existsSync(queueFile) && fs.existsSync(stateFile)) {
+      try {
+        const lastId = JSON.parse(fs.readFileSync(stateFile, 'utf8')).lastId || 0;
+        const qlines = fs.readFileSync(queueFile, 'utf8').split('\n').filter(Boolean);
+        for (const line of qlines) {
+          try {
+            const m = JSON.parse(line);
+            if (m.message_id > 0 && m.message_id > lastId) pendingCount++;
+          } catch (_) {}
+        }
+      } catch (_) {}
+    }
+
+    // Agent state
+    let agentState = 'unknown';
+    const agentStateFile = path.join(QUEUE_DIR, `relay-agent-state-${tid}.json`);
+    if (fs.existsSync(agentStateFile)) {
+      try { agentState = JSON.parse(fs.readFileSync(agentStateFile, 'utf8')).state || 'unknown'; } catch (_) {}
+    }
+
+    const alive = lastSentAgo !== null && lastSentAgo < 600;  // responded in last 10 min
+    res.json({
+      ok: true,
+      session: sessionName,
+      alive,
+      last_sent_ago_secs: lastSentAgo,
+      pending_messages: pendingCount,
+      agent_state: agentState,
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });

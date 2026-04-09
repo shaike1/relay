@@ -381,11 +381,14 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'fetch_messages',
-      description: 'Get recent messages from this topic (up to last 50 stored).',
+      description: 'Get recent messages from this topic (up to last 50 stored). Optionally filter by user, keyword, or time range.',
       inputSchema: {
         type: 'object',
         properties: {
-          limit: { type: 'integer', default: 20, description: 'Max messages to return' },
+          limit:   { type: 'integer', default: 20, description: 'Max messages to return' },
+          user:    { type: 'string',  description: 'Filter by sender name (partial match)' },
+          keyword: { type: 'string',  description: 'Filter messages containing this keyword (case-insensitive)' },
+          since_secs: { type: 'integer', description: 'Only return messages newer than this many seconds ago (e.g. 3600 = last hour)' },
         },
       },
     },
@@ -569,18 +572,6 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
-      name: 'memory_write',
-      description: 'Write or update a key-value pair in the session memory store. Use this to persist structured data across conversations. Better than knowledge_write for simple key→value data.',
-      inputSchema: {
-        type: 'object',
-        required: ['key', 'value'],
-        properties: {
-          key:   { type: 'string', description: 'The key to store the value under' },
-          value: { type: 'string', description: 'The value to store (any string, including JSON)' },
-        },
-      },
-    },
-    {
       name: 'memory_read',
       description: 'Read from the session memory store. If key is given, returns that value. If no key, returns all keys as JSON.',
       inputSchema: {
@@ -598,6 +589,18 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['query'],
         properties: {
           query: { type: 'string', description: 'Search term to look for in any session\'s memory keys or values' },
+        },
+      },
+    },
+    {
+      name: 'read_peer_memory',
+      description: 'Read the memory store of another session by name. More targeted than memory_search — use when you know which session you want to read from.',
+      inputSchema: {
+        type: 'object',
+        required: ['session'],
+        properties: {
+          session: { type: 'string', description: 'Session name (e.g. "relay", "ha", "golem")' },
+          key:     { type: 'string', description: 'Optional: specific key to read. If omitted, returns all keys.' },
         },
       },
     },
@@ -775,6 +778,81 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
+    // ── New tools ─────────────────────────────────────────────────────────────
+    {
+      name: 'schedule_message',
+      description: 'Schedule a message or reminder to be delivered to yourself (Claude) after a delay. Useful for time-based reminders, follow-ups, or deferred tasks. The message will arrive as a system force notification.',
+      inputSchema: {
+        type: 'object',
+        required: ['text', 'delay_secs'],
+        properties: {
+          text:       { type: 'string',  description: 'Message text to deliver after the delay' },
+          delay_secs: { type: 'integer', description: 'Seconds from now to deliver the message (e.g. 300 = 5 minutes)' },
+          label:      { type: 'string',  description: 'Optional label shown in the delivered message (e.g. "reminder", "follow-up")' },
+        },
+      },
+    },
+    {
+      name: 'get_metrics',
+      description: 'Get runtime metrics for a session: token usage, cost, uptime, message counts, error log. Pulls from token-stats and relay-api data.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          session: { type: 'string', description: 'Session name to query (default: this session)' },
+          period:  { type: 'string', description: 'Time period: "today", "1h", "5m" (default: "today")', enum: ['today', '1h', '5m'] },
+        },
+      },
+    },
+    {
+      name: 'memory_write',
+      description: 'Write or update a key-value pair in the session memory store. Use this to persist structured data across conversations. Better than knowledge_write for simple key→value data. Supports optional TTL.',
+      inputSchema: {
+        type: 'object',
+        required: ['key', 'value'],
+        properties: {
+          key:      { type: 'string',  description: 'The key to store the value under' },
+          value:    { type: 'string',  description: 'The value to store (any string, including JSON)' },
+          ttl_secs: { type: 'integer', description: 'Optional TTL in seconds. After this time, the key is considered expired and will be omitted from reads. Default: no expiry.' },
+        },
+      },
+    },
+    {
+      name: 'ping_session',
+      description: 'Check if another session is alive by injecting a ping into its queue and checking for recent activity. Returns response time or "no response" if session appears stuck.',
+      inputSchema: {
+        type: 'object',
+        required: ['session'],
+        properties: {
+          session: { type: 'string', description: 'Session name to ping (e.g. "ha", "relay")' },
+          timeout_secs: { type: 'integer', description: 'Max seconds to wait for response (default: 20)', default: 20 },
+        },
+      },
+    },
+    {
+      name: 'get_logs',
+      description: 'Get recent logs from a Docker service or log file. Useful for debugging sessions and services.',
+      inputSchema: {
+        type: 'object',
+        required: ['service'],
+        properties: {
+          service: { type: 'string', description: 'Service/container name (e.g. "relay-api", "relay-session-ha") or log file path' },
+          lines:   { type: 'integer', description: 'Number of lines to return (default: 30)', default: 30 },
+        },
+      },
+    },
+    {
+      name: 'http_get',
+      description: 'Make an HTTP GET request and return the response. Useful for checking internal APIs, health endpoints, or external services.',
+      inputSchema: {
+        type: 'object',
+        required: ['url'],
+        properties: {
+          url:     { type: 'string', description: 'URL to fetch' },
+          headers: { type: 'object', description: 'Optional headers as key-value pairs', additionalProperties: { type: 'string' } },
+          timeout_secs: { type: 'integer', description: 'Timeout in seconds (default: 10)', default: 10 },
+        },
+      },
+    },
   ],
 }))
 
@@ -916,10 +994,23 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   }
 
   if (name === 'fetch_messages') {
-    const limit = Number(args?.limit ?? 20)
-    const recent = dbRecent(limit)
+    const limit     = Number(args?.limit ?? 20)
+    const userFilter    = args?.user    ? String(args.user).toLowerCase()    : null
+    const keywordFilter = args?.keyword ? String(args.keyword).toLowerCase() : null
+    const sinceSecs     = args?.since_secs ? Number(args.since_secs) : null
+
+    let recent = dbRecent(Math.min(limit * 5, 200))  // fetch extra to allow for filtering
+
+    if (userFilter)    recent = recent.filter(m => m.user.toLowerCase().includes(userFilter))
+    if (keywordFilter) recent = recent.filter(m => m.text.toLowerCase().includes(keywordFilter))
+    if (sinceSecs) {
+      const cutoffIso = new Date(Date.now() - sinceSecs * 1000).toISOString()
+      recent = recent.filter(m => m.ts >= cutoffIso)
+    }
+
+    recent = recent.slice(-limit)  // take most recent N after filtering
     const lines = recent.map(m => `[${m.ts}] ${m.user} (id:${m.message_id}): ${m.text}`)
-    return { content: [{ type: 'text', text: lines.join('\n') || 'No messages yet.' }] }
+    return { content: [{ type: 'text', text: lines.join('\n') || 'No messages matching filter.' }] }
   }
 
   if (name === 'list_peers') {
@@ -1672,23 +1763,49 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     return { content: [{ type: 'text', text: `Code block sent (message_id: ${ids.join(', ')})` }] }
   }
 
-  // ── Memory Store (key-value JSON) ──────────────────────────────────────────
+  // ── Memory Store (key-value JSON, with optional TTL) ──────────────────────
 
   const MEMORY_FILE = `/tmp/relay-memory-${THREAD_ID}.json`
 
+  // Internal helper: load memory store, strip expired keys, return clean store
+  async function loadMemoryStore(): Promise<Record<string, string>> {
+    let raw: Record<string, string | { v: string; exp: number }> = {}
+    try {
+      const f = Bun.file(MEMORY_FILE)
+      if (await f.exists()) raw = JSON.parse(await f.text())
+    } catch {}
+    const now = Date.now() / 1000
+    const clean: Record<string, string> = {}
+    for (const [k, entry] of Object.entries(raw)) {
+      if (typeof entry === 'string') {
+        clean[k] = entry  // legacy plain string
+      } else if (typeof entry === 'object' && entry !== null) {
+        if (!entry.exp || entry.exp > now) clean[k] = entry.v  // skip expired
+      }
+    }
+    return clean
+  }
+
   if (name === 'memory_write') {
-    const key   = String(args?.key ?? '')
-    const value = String(args?.value ?? '')
+    const key     = String(args?.key ?? '')
+    const value   = String(args?.value ?? '')
+    const ttlSecs = args?.ttl_secs ? Number(args.ttl_secs) : null
     if (!key) return { content: [{ type: 'text', text: 'Error: key is required.' }] }
     try {
-      let store: Record<string, string> = {}
+      // Load raw (to preserve TTL metadata on other keys)
+      let raw: Record<string, string | { v: string; exp: number }> = {}
       try {
         const f = Bun.file(MEMORY_FILE)
-        if (await f.exists()) store = JSON.parse(await f.text())
+        if (await f.exists()) raw = JSON.parse(await f.text())
       } catch {}
-      store[key] = value
-      await Bun.write(MEMORY_FILE, JSON.stringify(store, null, 2))
-      return { content: [{ type: 'text', text: 'Saved.' }] }
+      if (ttlSecs && ttlSecs > 0) {
+        raw[key] = { v: value, exp: Math.floor(Date.now() / 1000) + ttlSecs }
+      } else {
+        raw[key] = value
+      }
+      await Bun.write(MEMORY_FILE, JSON.stringify(raw, null, 2))
+      const expMsg = ttlSecs ? ` (expires in ${ttlSecs}s)` : ''
+      return { content: [{ type: 'text', text: `Saved.${expMsg}` }] }
     } catch (e) {
       return { content: [{ type: 'text', text: `Error writing memory: ${e}` }] }
     }
@@ -1697,11 +1814,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   if (name === 'memory_read') {
     const key = args?.key ? String(args.key) : undefined
     try {
-      let store: Record<string, string> = {}
-      try {
-        const f = Bun.file(MEMORY_FILE)
-        if (await f.exists()) store = JSON.parse(await f.text())
-      } catch {}
+      const store = await loadMemoryStore()
       if (key) {
         if (key in store) {
           return { content: [{ type: 'text', text: store[key] }] }
@@ -1726,13 +1839,16 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const results: Array<{ session: string; key: string; value: string }> = []
       // Find all relay-memory-*.json files (covers all sessions sharing /tmp)
       const glob = new Bun.Glob('/tmp/relay-memory-*.json')
+      const nowSecs = Date.now() / 1000
       for await (const filePath of glob.scan('/')) {
         const sessionName = filePath.replace('/tmp/relay-memory-', '').replace('.json', '')
         try {
           const f = Bun.file(filePath)
           if (!(await f.exists())) continue
-          const store: Record<string, string> = JSON.parse(await f.text())
-          for (const [k, v] of Object.entries(store)) {
+          const raw: Record<string, string | { v: string; exp: number }> = JSON.parse(await f.text())
+          for (const [k, entry] of Object.entries(raw)) {
+            const v = typeof entry === 'string' ? entry : (entry?.exp && entry.exp <= nowSecs ? null : entry?.v)
+            if (v === null) continue  // expired
             if (k.toLowerCase().includes(query) || String(v).toLowerCase().includes(query)) {
               results.push({ session: sessionName, key: k, value: String(v).substring(0, 200) })
             }
@@ -1744,6 +1860,45 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       return { content: [{ type: 'text', text: lines.join('\n---\n') }] }
     } catch (e) {
       return { content: [{ type: 'text', text: `Error searching memory: ${e}` }] }
+    }
+  }
+
+  if (name === 'read_peer_memory') {
+    const sessionName = String(args?.session ?? '')
+    const key = args?.key ? String(args.key) : undefined
+    if (!sessionName) return { content: [{ type: 'text', text: 'Error: session is required.' }] }
+    try {
+      // Resolve session name → thread_id via sessions.json
+      let targetThreadId: string | null = null
+      try {
+        const sessionsPath = new URL('../sessions.json', import.meta.url).pathname
+        const sessions: Array<{ session: string; thread_id: number }> = JSON.parse(readFileSync(sessionsPath, 'utf8'))
+        const target = sessions.find(s => s.session === sessionName)
+        if (target) targetThreadId = String(target.thread_id)
+      } catch {}
+
+      const memFile = targetThreadId
+        ? `/tmp/relay-memory-${targetThreadId}.json`
+        : `/tmp/relay-memory-${sessionName}.json`  // fallback: try by name
+
+      let store: Record<string, string> = {}
+      try {
+        const f = Bun.file(memFile)
+        if (await f.exists()) store = JSON.parse(await f.text())
+      } catch {}
+
+      if (Object.keys(store).length === 0) {
+        return { content: [{ type: 'text', text: `Session "${sessionName}" has no memory entries.` }] }
+      }
+
+      if (key) {
+        if (key in store) return { content: [{ type: 'text', text: store[key] }] }
+        return { content: [{ type: 'text', text: `Key '${key}' not found in ${sessionName}'s memory.` }] }
+      }
+      const lines = Object.entries(store).map(([k, v]) => `${k}: ${String(v).substring(0, 200)}`)
+      return { content: [{ type: 'text', text: `[${sessionName}] memory:\n${lines.join('\n')}` }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error reading peer memory: ${e}` }] }
     }
   }
 
@@ -2256,6 +2411,212 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
   }
 
+  // ── schedule_message ──────────────────────────────────────────────────────
+
+  if (name === 'schedule_message') {
+    const text      = String(args?.text ?? '')
+    const delaySecs = Number(args?.delay_secs ?? 0)
+    const label     = args?.label ? String(args.label) : 'scheduled'
+    if (!text) return { content: [{ type: 'text', text: 'Error: text is required.' }] }
+    if (delaySecs <= 0) return { content: [{ type: 'text', text: 'Error: delay_secs must be > 0.' }] }
+
+    const deliverAt = Math.floor(Date.now() / 1000) + delaySecs
+    const entry = JSON.stringify({
+      message_id: -(Date.now()),
+      user: `system:${label}`,
+      text: `⏰ [${label}] ${text}`,
+      ts: deliverAt,
+      via: 'scheduled',
+      force: true,
+    })
+
+    // Use a background sleep + append to inject the message at the right time
+    const queueFile = QUEUE_FILE
+    const { execSync } = await import('child_process')
+    const cmd = `(sleep ${delaySecs} && echo '${entry.replace(/'/g, "'\\''")}' >> ${queueFile}) &`
+    try {
+      execSync(cmd, { shell: '/bin/bash', timeout: 1000 })
+      const deliverTime = new Date(deliverAt * 1000).toISOString()
+      return { content: [{ type: 'text', text: `Scheduled. Will deliver at ${deliverTime} (in ${delaySecs}s).` }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error scheduling message: ${e}` }] }
+    }
+  }
+
+  // ── get_metrics ────────────────────────────────────────────────────────────
+
+  if (name === 'get_metrics') {
+    const targetSession = args?.session ? String(args.session) : (process.env.SESSION_NAME ?? `session-${THREAD_ID}`)
+    const period = String(args?.period ?? 'today')
+
+    // Resolve session → thread_id
+    let targetTid = THREAD_ID
+    try {
+      const sessionsPath = new URL('../sessions.json', import.meta.url).pathname
+      const sessions: Array<{ session: string; thread_id: number }> = JSON.parse(readFileSync(sessionsPath, 'utf8'))
+      const found = sessions.find(s => s.session === targetSession)
+      if (found) targetTid = found.thread_id
+    } catch {}
+
+    const statsFile = `/tmp/token-stats-${targetTid}.jsonl`
+    const lines: string[] = [`=== Metrics: ${targetSession} (${period}) ===`]
+
+    try {
+      const { existsSync, readFileSync: rfs } = await import('fs')
+      if (existsSync(statsFile)) {
+        const rawLines = rfs(statsFile, 'utf8').split('\n').filter(Boolean)
+        const now = Date.now() / 1000
+        const todayStr = new Date().toISOString().split('T')[0]
+        const periodSecs = period === '5m' ? 300 : period === '1h' ? 3600 : 86400
+
+        let totalIn = 0, totalOut = 0, totalCost = 0, count = 0
+        for (const l of rawLines) {
+          try {
+            const e = JSON.parse(l)
+            const ts = e.ts ? Math.floor(new Date(e.ts).getTime() / 1000) : 0
+            const inPeriod = period === 'today' ? e.ts?.startsWith(todayStr) : (now - ts) < periodSecs
+            if (inPeriod) {
+              totalIn  += e.input  || 0
+              totalOut += e.output || 0
+              totalCost += e.cost_usd || 0
+              count++
+            }
+          } catch {}
+        }
+        lines.push(`Turns: ${count}`)
+        lines.push(`Input tokens: ${totalIn.toLocaleString()}`)
+        lines.push(`Output tokens: ${totalOut.toLocaleString()}`)
+        lines.push(`Cost: $${totalCost.toFixed(4)}`)
+      } else {
+        lines.push('No token stats available.')
+      }
+
+      // Recent errors
+      const errFile = '/tmp/relay-errors.jsonl'
+      if (existsSync(errFile)) {
+        const errLines = rfs(errFile, 'utf8').split('\n').filter(Boolean).slice(-5)
+        if (errLines.length > 0) {
+          lines.push(`\nRecent errors (last 5):`)
+          for (const l of errLines) {
+            try {
+              const e = JSON.parse(l)
+              lines.push(`• [${e.t}] ${e.type}: ${e.message?.substring(0, 100)}`)
+            } catch {}
+          }
+        }
+      }
+
+      // Uptime from last-sent file
+      const lastSentFile = `/tmp/tg-last-sent-${targetTid}`
+      if (existsSync(lastSentFile)) {
+        const lastSent = parseFloat(rfs(lastSentFile, 'utf8').trim())
+        if (!isNaN(lastSent)) {
+          const agoMin = Math.round((Date.now() / 1000 - lastSent) / 60)
+          lines.push(`\nLast response: ${agoMin}m ago`)
+        }
+      }
+    } catch (e) {
+      lines.push(`Error reading metrics: ${e}`)
+    }
+
+    return { content: [{ type: 'text', text: lines.join('\n') }] }
+  }
+
+  if (name === 'ping_session') {
+    const targetSession = String(args?.session ?? '')
+    const timeoutSecs = Number(args?.timeout_secs ?? 20)
+    if (!targetSession) return { content: [{ type: 'text', text: 'Error: session is required.' }] }
+    try {
+      const sessionsPath = new URL('../sessions.json', import.meta.url).pathname
+      const sessions: Array<{ session: string; thread_id: number; host?: string }> = JSON.parse(readFileSync(sessionsPath, 'utf8'))
+      const target = sessions.find(s => s.session === targetSession)
+      if (!target) return { content: [{ type: 'text', text: `Session "${targetSession}" not found.` }] }
+
+      const lastSentFile = `/tmp/tg-last-sent-${target.thread_id}`
+      const { existsSync, readFileSync: rfs } = await import('fs')
+
+      // Check last activity before ping
+      const beforeTs = existsSync(lastSentFile) ? parseFloat(rfs(lastSentFile, 'utf8').trim()) : 0
+      const pingTs = Date.now() / 1000
+
+      // Inject ping message into target queue
+      const pingEntry = JSON.stringify({
+        message_id: -(Date.now()),
+        user: `system:ping`,
+        text: `[ping from ${process.env.SESSION_NAME ?? 'relay'}] Are you alive? Reply with pong.`,
+        ts: Math.floor(pingTs),
+        via: 'ping',
+        force: true,
+      })
+      const queueFile = `/tmp/tg-queue-${target.thread_id}.jsonl`
+      const { appendFileSync } = await import('fs')
+      appendFileSync(queueFile, pingEntry + '\n')
+
+      // Wait for new activity (last-sent file newer than before ping)
+      const deadline = Date.now() + timeoutSecs * 1000
+      while (Date.now() < deadline) {
+        await Bun.sleep(1000)
+        try {
+          const afterTs = existsSync(lastSentFile) ? parseFloat(rfs(lastSentFile, 'utf8').trim()) : 0
+          if (afterTs > pingTs) {
+            const rtt = Math.round(afterTs - pingTs)
+            return { content: [{ type: 'text', text: `✅ ${targetSession} responded in ~${rtt}s` }] }
+          }
+        } catch {}
+      }
+      return { content: [{ type: 'text', text: `⚠️ ${targetSession} did not respond within ${timeoutSecs}s` }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error pinging session: ${e}` }] }
+    }
+  }
+
+  if (name === 'get_logs') {
+    const service = String(args?.service ?? '')
+    const lines = Number(args?.lines ?? 30)
+    if (!service) return { content: [{ type: 'text', text: 'Error: service is required.' }] }
+    try {
+      const { execSync } = await import('child_process')
+      let output: string
+      if (service.startsWith('/')) {
+        // Log file path
+        const { readFileSync: rfs } = await import('fs')
+        const all = rfs(service, 'utf8').split('\n')
+        output = all.slice(-lines).join('\n')
+      } else {
+        // Docker container
+        const containerName = service.includes('relay-session-') ? service : `relay-session-${service}`
+        try {
+          output = execSync(`docker logs --tail=${lines} ${containerName} 2>&1`, { timeout: 10000 }).toString()
+        } catch {
+          // Try exact name
+          output = execSync(`docker logs --tail=${lines} ${service} 2>&1`, { timeout: 10000 }).toString()
+        }
+      }
+      const trimmed = output.substring(0, 3000)
+      return { content: [{ type: 'text', text: trimmed || '(no output)' }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error getting logs: ${e}` }] }
+    }
+  }
+
+  if (name === 'http_get') {
+    const url = String(args?.url ?? '')
+    const headers = (args?.headers ?? {}) as Record<string, string>
+    const timeoutSecs = Number(args?.timeout_secs ?? 10)
+    if (!url) return { content: [{ type: 'text', text: 'Error: url is required.' }] }
+    try {
+      const resp = await fetch(url, {
+        headers,
+        signal: AbortSignal.timeout(timeoutSecs * 1000),
+      })
+      const body = await resp.text()
+      const trimmed = body.substring(0, 3000)
+      return { content: [{ type: 'text', text: `HTTP ${resp.status} ${resp.statusText}\n${trimmed}` }] }
+    } catch (e) {
+      return { content: [{ type: 'text', text: `Error: ${e}` }] }
+    }
+  }
+
   return { content: [{ type: 'text', text: `Unknown tool: ${name}` }] }
 })
 
@@ -2381,7 +2742,16 @@ async function loadState(): Promise<State> {
 }
 
 async function saveState(lastId: number, ackedForce: number[]): Promise<void> {
-  try { await Bun.write(STATE_FILE, JSON.stringify({ lastId, ackedForce })) } catch {}
+  // Atomic write: write to temp file then rename to avoid partial-write corruption
+  const tmp = STATE_FILE + '.tmp'
+  try {
+    await Bun.write(tmp, JSON.stringify({ lastId, ackedForce }))
+    const { renameSync } = await import('fs')
+    renameSync(tmp, STATE_FILE)
+  } catch {
+    // fallback to direct write if rename fails (e.g. cross-device)
+    try { await Bun.write(STATE_FILE, JSON.stringify({ lastId, ackedForce })) } catch {}
+  }
 }
 
 // Keep backward-compat callers that only update lastId
@@ -2503,14 +2873,21 @@ async function poll(): Promise<void> {
   // Track Claude activity: updated whenever Claude calls any MCP tool.
   // Used to confirm notification delivery — we only advance lastId after Claude shows activity.
   let lastActivityTs = 0
-  let pendingDelivery: { message_id: number; sentAt: number; firstSentAt: number } | null = null
+  let pendingDelivery: { message_id: number; sentAt: number; firstSentAt: number; retryCount: number } | null = null
   _updateActivity = () => { lastActivityTs = Date.now() }
 
+  // Jitter: stagger first notification delivery after restart to avoid cascade re-delivery storms
+  // when multiple sessions all restart simultaneously (e.g. after docker restart).
+  const startupJitterMs = Math.floor(Math.random() * 500)  // 0–500ms per-instance jitter
+  if (startupJitterMs > 0) await Bun.sleep(startupJitterMs)
+
   let pollCount = 0
+  let lastQueueSize = 0     // bytes consumed so far — only read new bytes each cycle
+  let startupRead = true    // first poll reads full file to catch up on pending messages
   while (true) {
     pollCount++
-    // Trim queue every ~5 minutes (600 cycles × 500ms)
-    if (pollCount % 600 === 0) void trimQueue(lastId)
+    // Trim queue every ~5 minutes (600 cycles × 500ms); also trigger full rescan to catch any missed lines
+    if (pollCount % 600 === 0) { void trimQueue(lastId); lastQueueSize = 0 }
     // Re-read state file every 10s (20 cycles × 500ms) to pick up manual lastId advances
     if (pollCount % 20 === 0) {
       try {
@@ -2535,10 +2912,14 @@ async function poll(): Promise<void> {
         pendingDelivery = null
       }
 
-      // Re-send pending notification if Claude hasn't responded within 30s
+      // Re-send pending notification if Claude hasn't responded within retry window.
+      // Uses exponential backoff: 30s → 60s → 90s → 120s (capped) to avoid hammering.
       // (Claude may be in the middle of a long tool chain — Bash, Edit, etc. — and genuinely
       //  busy without calling any MCP tool. 3s was too aggressive and caused duplicate delivery.)
-      if (pendingDelivery && Date.now() - pendingDelivery.sentAt > 30_000) {
+      const retryWindowMs = pendingDelivery
+        ? Math.min(30_000 + (pendingDelivery.retryCount ?? 0) * 30_000, 120_000)
+        : 30_000
+      if (pendingDelivery && Date.now() - pendingDelivery.sentAt > retryWindowMs) {
         // Give up after 5 minutes — Claude may be busy with long-running tools (Bash, file ops)
         // which don't trigger lastActivityTs. Only skip if truly unresponsive for a long time.
         const totalAge = Date.now() - pendingDelivery.firstSentAt
@@ -2550,8 +2931,9 @@ async function poll(): Promise<void> {
           await Bun.sleep(500)
           continue
         }
-        process.stderr.write(`[telegram] no activity after 3s — retrying notification for msg ${pendingDelivery.message_id}\n`)
+        process.stderr.write(`[telegram] no activity after ${retryWindowMs/1000}s (retry #${(pendingDelivery.retryCount??0)+1}) — retrying notification for msg ${pendingDelivery.message_id}\n`)
         // Don't clear pendingDelivery — keep retrying until Claude responds or message expires
+        pendingDelivery.retryCount = (pendingDelivery.retryCount ?? 0) + 1
         pendingDelivery.sentAt = Date.now()  // reset timer for next retry
         // Re-read queue to find and re-send the message
         try {
@@ -2581,13 +2963,43 @@ async function poll(): Promise<void> {
       const file = Bun.file(QUEUE_FILE)
       if (!(await file.exists())) { await Bun.sleep(500); continue }
 
-      const text = await file.text()
-      let sentOne = false
+      // On first poll, force a full read to catch any pending messages from before startup
+      if (startupRead) {
+        lastQueueSize = 0
+        startupRead = false
+      }
 
-      for (const line of text.split('\n')) {
+      // Only read new bytes since last poll — avoids re-scanning whole file each cycle
+      let rawText: string
+      try {
+        const { statSync, openSync, readSync, closeSync } = await import('fs')
+        const currentSize = statSync(QUEUE_FILE).size
+        if (currentSize === lastQueueSize) { await Bun.sleep(500); continue }
+        // If file shrank (rotation/trim), reset position for a full re-read
+        if (currentSize < lastQueueSize) lastQueueSize = 0
+        const newBytes = currentSize - lastQueueSize
+        const buf = Buffer.allocUnsafe(newBytes)
+        const fd = openSync(QUEUE_FILE, 'r')
+        readSync(fd, buf, 0, newBytes, lastQueueSize)
+        closeSync(fd)
+        rawText = buf.toString('utf8')
+        lastQueueSize = currentSize
+      } catch { await Bun.sleep(500); continue }
+
+      // Validate and repair queue: skip malformed/truncated lines to prevent partial-line corruption
+      // from crashing the poll loop. Track corrupt line count for debugging.
+      let sentOne = false
+      let corruptLines = 0
+
+      for (const line of rawText.split('\n')) {
         if (!line.trim() || sentOne) continue
+        // Quick pre-validation: must start with '{' and end with '}'
+        const trimmed = line.trim()
+        if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) { corruptLines++; continue }
         try {
-          const entry = JSON.parse(line) as QueueEntry & { force?: boolean }
+          const entry = JSON.parse(trimmed) as QueueEntry & { force?: boolean }
+          // Sanity check required fields
+          if (typeof entry.message_id !== 'number' || typeof entry.text !== 'string') { corruptLines++; continue }
           const { text: msgText, user, message_id, ts, photo_path, force } = entry
 
           const ageMs = Date.now() - ts * 1000
@@ -2645,14 +3057,18 @@ async function poll(): Promise<void> {
             // Don't advance lastId until we confirm Claude received and acted on the notification.
             // This ensures that if Claude is busy (long tool chain) and misses the notification,
             // the message stays pending and will be re-delivered — not silently skipped.
-            pendingDelivery = { message_id, sentAt: Date.now(), firstSentAt: Date.now() }
+            pendingDelivery = { message_id, sentAt: Date.now(), firstSentAt: Date.now(), retryCount: 0 }
           }
           sentOne = true
 
           process.stderr.write(`[telegram] notification sent: ${user}: ${msgText}\n`)
         } catch (e) {
           process.stderr.write(`[telegram] parse error: ${e}\n`)
+          corruptLines++
         }
+      }
+      if (corruptLines > 0) {
+        process.stderr.write(`[telegram] queue: skipped ${corruptLines} corrupt/truncated line(s)\n`)
       }
     } catch (err) {
       process.stderr.write(`[telegram] poll error: ${err}\n`)

@@ -16,7 +16,7 @@ INTERVAL=5
 IDLE_GRACE=0           # 0 = disabled — rely on MCP notifications only (no token waste)
 RELAY_API_URL=""       # if set, pull queue from remote relay-api (for remote sessions)
 RELAY_API_TOKEN=""
-MCP_CHECK_INTERVAL=10  # seconds between MCP health checks (was 30, reduced for faster recovery)
+MCP_CHECK_INTERVAL=3   # seconds between MCP health checks (fast detection, watchdog loop is cheap)
 TOOL_NOTIFY_COOLDOWN=3 # min seconds between tool-use notifications
 CRASH_ALERT_MINUTES=${CRASH_ALERT_MINUTES:-30}  # alert if no response for N minutes
 TOOL_MONITOR=1         # set to 0 to disable per-session tool notifications
@@ -34,6 +34,8 @@ OVERRIDE_ENV="/tmp/relay-session-env-${THREAD_ID}"
 last_nudge=0
 last_nudged_id=0   # track highest message_id nudged — only nudge new messages once
 last_mcp_check=0
+mcp_restart_count=0     # consecutive MCP restart attempts (for backoff)
+last_mcp_restart=0      # timestamp of last MCP restart
 last_tool_hash=""
 last_tool_notify=0
 last_crash_check=0
@@ -85,9 +87,25 @@ while true; do
       claude_running=$(pgrep -f 'claude' > /dev/null 2>&1 && echo 1 || echo 0)
       mcp_running=$(pgrep -f 'bun.*mcp-telegram' > /dev/null 2>&1 && echo 1 || echo 0)
       if [ "$claude_running" = "1" ] && [ "$mcp_running" = "0" ]; then
-        echo "[watchdog:${SESSION}] MCP server missing — restarting container to reload .mcp.json" >&2
-        # Kill claude so s6 restarts the whole session (which reloads .mcp.json)
-        pkill -f 'claude' 2>/dev/null || true
+        # Backoff: 0s, 5s, 10s, 20s, 40s (cap at 60s) between consecutive restarts
+        _backoff=0
+        if [ "$mcp_restart_count" -gt 0 ]; then
+          _backoff=$(( mcp_restart_count * 10 ))
+          [ "$_backoff" -gt 60 ] && _backoff=60
+        fi
+        _now=$(date +%s)
+        _since_last=$(( _now - last_mcp_restart ))
+        if [ "$_since_last" -ge "$_backoff" ]; then
+          echo "[watchdog:${SESSION}] MCP server missing (restart #$((mcp_restart_count+1))) — restarting" >&2
+          mcp_restart_count=$((mcp_restart_count + 1))
+          last_mcp_restart=$_now
+          pkill -f 'claude' 2>/dev/null || true
+        else
+          echo "[watchdog:${SESSION}] MCP missing but in backoff (${_since_last}s < ${_backoff}s)" >&2
+        fi
+      else
+        # MCP is running — reset restart counter
+        mcp_restart_count=0
       fi
     fi
   fi
@@ -172,6 +190,21 @@ with open(queue_file, 'a') as f:
 " "$QUEUE" "$ALERT_TEXT" "${STATE:-/dev/null}" 2>/dev/null || true
         # Set alerted flag — don't repeat until Claude sends a real message (flag cleared by mcp-telegram on send)
         touch "$alerted_file"
+
+        # Persistent delivery DM — notify NOTIFY_USER_ID directly if configured
+        _notify_user_id=""
+        _bot_token=""
+        if [ -f /root/relay/.env ]; then
+          _notify_user_id=$(grep -E '^NOTIFY_USER_ID=' /root/relay/.env | cut -d= -f2- | tr -d '"'"'" | head -1 || true)
+          _bot_token=$(grep -E '^TELEGRAM_BOT_TOKEN=' /root/relay/.env | cut -d= -f2- | tr -d '"'"'" | head -1 || true)
+        fi
+        if [ -n "$_notify_user_id" ] && [ -n "$_bot_token" ]; then
+          _dm_text="📵 <b>${SESSION}</b> has not responded for ${mins} min — possible stuck or crashed."
+          curl -sf -X POST "https://api.telegram.org/bot${_bot_token}/sendMessage" \
+            -H 'Content-Type: application/json' \
+            -d "{\"chat_id\":\"${_notify_user_id}\",\"text\":\"${_dm_text}\",\"parse_mode\":\"HTML\"}" \
+            > /dev/null 2>&1 || true
+        fi
       fi
     fi
   fi
