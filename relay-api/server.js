@@ -888,6 +888,35 @@ function webhookQueueWrite(update) {
   } catch (e) {
     console.error('[skills-route] Routing error:', e.message);
   }
+
+  // sessions.json inline keyword routing: route_keywords: ["ha", "home assistant"]
+  // Routes message to that session's queue when any keyword matches message text.
+  try {
+    const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+    const textLower = (msg.text || '').toLowerCase();
+    for (const s of sessions) {
+      if (!s.route_keywords || !Array.isArray(s.route_keywords) || s.route_keywords.length === 0) continue;
+      if (String(s.thread_id) === String(effectiveThreadId)) continue;
+      if (s.host) continue;
+      if (mentionRoutedThreads.has(String(s.thread_id))) continue; // already routed
+      const matched = s.route_keywords.find(kw => textLower.includes(kw.toLowerCase()));
+      if (!matched) continue;
+      const targetQueue = path.join(QUEUE_DIR, `tg-queue-${s.thread_id}.jsonl`);
+      const kwEntry = {
+        ...baseEntry,
+        message_id: -(Math.floor(Date.now() / 1000) % 2147483647),
+        via: 'keyword-route',
+        force: true,
+        routed_from_thread: effectiveThreadId,
+        matched_keyword: matched,
+      };
+      fs.appendFileSync(targetQueue, JSON.stringify(kwEntry) + '\n');
+      console.log(`[keyword-route] "${matched}" → ${s.session} (thread ${s.thread_id})`);
+      break; // first matching session wins
+    }
+  } catch (e) {
+    console.error('[keyword-route] error:', e.message);
+  }
 }
 
 // Multi-tenant routing: maps (thread_id, user_id) → isolated virtual thread_id
@@ -3497,11 +3526,47 @@ app.get('/api/agents-data', (req, res) => {
           data.token_stats = { input: totalIn, output: totalOut, cost_usd: totalCost, entries: entryCount };
         }
       } catch (_) {}
-      // Health: online if last_seen within 10 min, offline if > 30 min, degraded otherwise
+      // Health: online if last_seen within 10 min, offline > 30 min, degraded otherwise
       if (data.last_seen) {
         const age = now - data.last_seen;
         data.health = age < 600 ? 'online' : age < 1800 ? 'degraded' : 'offline';
       }
+      // Container uptime
+      try {
+        const startedAt = execSync(
+          `docker inspect --format '{{.State.StartedAt}}' relay-session-${s.session} 2>/dev/null`,
+          { timeout: 3000 }
+        ).toString().trim();
+        if (startedAt) {
+          data.container_started = Math.floor(new Date(startedAt).getTime() / 1000);
+          data.uptime = now - data.container_started;
+        }
+      } catch (_) {}
+      // Message stats for today
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        const todayStart = Math.floor(new Date(today).getTime() / 1000);
+        const qf = path.join(QUEUE_DIR, `tg-queue-${tid}.jsonl`);
+        if (fs.existsSync(qf)) {
+          const qlines = fs.readFileSync(qf, 'utf8').split('\n').filter(Boolean);
+          let msgCount = 0;
+          for (const line of qlines) {
+            try {
+              const m = JSON.parse(line);
+              if ((m.message_id || 0) > 0 && (m.ts || 0) > todayStart) msgCount++;
+            } catch (_) {}
+          }
+          data.msg_count_today = msgCount;
+        }
+        // Responses today from token-stats
+        const sf = path.join(QUEUE_DIR, `token-stats-${tid}.jsonl`);
+        if (fs.existsSync(sf)) {
+          const slines = fs.readFileSync(sf, 'utf8').split('\n').filter(Boolean);
+          data.responses_today = slines.filter(l => {
+            try { return JSON.parse(l).ts?.startsWith(today); } catch (_) { return false; }
+          }).length;
+        }
+      } catch (_) {}
       return data;
     });
 

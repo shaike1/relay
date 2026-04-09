@@ -104,10 +104,41 @@ print(count)
         ALERT_TEXT="⚠️ Session ${SESSION} has not responded in ${mins} minutes — check if stuck."
         # Inject as a system force message directly into the queue (no tg-send to Telegram topic —
         # sending via bot caused the alert text to get merged into the next user message via webhook).
+        # Also include the oldest pending message preview (item 5: response SLA alert).
         python3 -c "
 import json, time, sys
 queue_file = sys.argv[1]
 alert_text = sys.argv[2]
+state_file = sys.argv[3]
+
+# Load lastId to find pending messages
+last_id = 0
+try:
+    d = json.load(open(state_file))
+    last_id = d.get('lastId', 0)
+except Exception:
+    pass
+
+# Find oldest pending user message for SLA context
+try:
+    pending = []
+    with open(queue_file) as f:
+        for line in f:
+            try:
+                m = json.loads(line)
+                mid = m.get('message_id', 0)
+                if mid > 0 and mid > last_id:
+                    pending.append(m)
+            except Exception:
+                pass
+    if pending:
+        oldest = pending[0]
+        user = oldest.get('user', 'user')
+        text = (oldest.get('text', '') or '')[:60].replace('\n', ' ')
+        alert_text += f' Waiting: [{user}] \"{text}\"'
+except Exception:
+    pass
+
 ts = int(time.time())
 entry = {
     'message_id': -ts,
@@ -119,7 +150,7 @@ entry = {
 }
 with open(queue_file, 'a') as f:
     f.write(json.dumps(entry) + '\n')
-" "$QUEUE" "$ALERT_TEXT" 2>/dev/null || true
+" "$QUEUE" "$ALERT_TEXT" "${STATE:-/dev/null}" 2>/dev/null || true
         # Set alerted flag — don't repeat until Claude sends a real message (flag cleared by mcp-telegram on send)
         touch "$alerted_file"
       fi
@@ -457,8 +488,38 @@ print(0)
     [ "$msg_wait" -lt 180 ] && continue
   fi
 
+  # Build nudge text: include message preview for terminal echo (item 1)
+  NUDGE_PREVIEW=$(python3 -c "
+import json
+last_id = $last_id
+queue_lines = []
+try:
+    with open('$QUEUE') as f:
+        queue_lines = f.readlines()
+except Exception:
+    pass
+for line in reversed(queue_lines):
+    try:
+        m = json.loads(line)
+        mid = m.get('message_id', 0)
+        if mid == $highest_pending_id:
+            user = m.get('user', 'user')
+            text = (m.get('text', '') or '')[:80].replace(chr(10), ' ')
+            print(f'{user}: {text}')
+            break
+    except Exception:
+        pass
+" 2>/dev/null || echo "")
+
+  NUDGE_TEXT="$NUDGE"
+  if [ -n "$NUDGE_PREVIEW" ]; then
+    NUDGE_TEXT="[Telegram] ${NUDGE_PREVIEW}"$'\n'"${NUDGE}"
+    # Brief overlay in tmux status bar so terminal-watchers see the message
+    tmux_s display-message -d 5000 "📨 ${NUDGE_PREVIEW}" 2>/dev/null || true
+  fi
+
   # Send via tmux — ccbot-style, reliable delivery
-  tmux_s send-keys -t "$SESSION" "$NUDGE"
+  tmux_s send-keys -t "$SESSION" "$NUDGE_TEXT"
   sleep 0.3
   tmux_s send-keys -t "$SESSION" "" Enter
   last_nudge=$now

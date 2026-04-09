@@ -127,8 +127,10 @@ try:
             pass
 
         if now - last_run >= 1800:
-            # Extract tool names and last assistant text from last 150 lines
+            # Extract tool names, files changed, bash commands, and last assistant text
             tool_names = []
+            files_changed = []
+            bash_cmds = []
             last_text = ""
             for line in reversed(lines[-150:]):
                 try:
@@ -136,10 +138,21 @@ try:
                     if d.get("type") == "assistant":
                         for block in d.get("message", {}).get("content", []):
                             if isinstance(block, dict):
-                                if block.get("type") == "tool_use" and len(tool_names) < 5:
+                                if block.get("type") == "tool_use":
                                     name = block.get("name", "")
-                                    if name and name not in tool_names:
+                                    inp = block.get("input", {}) or {}
+                                    if name and name not in tool_names and len(tool_names) < 5:
                                         tool_names.append(name)
+                                    # Track files changed
+                                    if name in ("Edit", "Write") and "file_path" in inp:
+                                        fname = inp["file_path"].split("/")[-1]
+                                        if fname and fname not in files_changed and len(files_changed) < 5:
+                                            files_changed.append(fname)
+                                    # Track bash commands
+                                    elif name == "Bash" and "command" in inp:
+                                        cmd = (inp.get("command") or "")[:50].split("\n")[0].strip()
+                                        if cmd and cmd not in bash_cmds and len(bash_cmds) < 3:
+                                            bash_cmds.append(cmd)
                                 if block.get("type") == "text" and not last_text:
                                     last_text = (block.get("text", "") or "")[:200]
                 except Exception:
@@ -160,7 +173,14 @@ try:
 
             if not recent:
                 tools_str = ", ".join(tool_names) if tool_names else "none"
-                content = f"Tools used: {tools_str}. Last response: {last_text}"
+                content_parts = [f"Tools: {tools_str}."]
+                if files_changed:
+                    content_parts.append(f"Files: {', '.join(files_changed)}.")
+                if bash_cmds:
+                    content_parts.append(f"Commands: {'; '.join(bash_cmds)}.")
+                if last_text:
+                    content_parts.append(f"Summary: {last_text}")
+                content = " ".join(content_parts)
                 new_entry = {
                     "id": secrets.token_hex(4),
                     "title": f"[{session}] session summary",
