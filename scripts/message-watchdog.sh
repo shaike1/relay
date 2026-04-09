@@ -101,14 +101,25 @@ print(count)
       fi
       if [ "$silence_secs" -gt "$threshold" ] && [ ! -f "$alerted_file" ] && [ "$_queue_pending" -gt 0 ]; then
         mins=$((silence_secs / 60))
-        ALERT_TEXT="⚠️ Session <b>${SESSION}</b> has not sent any message in ${mins} minutes — may be stuck or crashed."
-        tg-send "$ALERT_TEXT" 2>/dev/null || true
-        # Also send a direct DM notification if NOTIFY_USER_ID is set
-        RELAY_API_URL="${RELAY_API_URL:-http://relay-api:9100}"
-        curl -sf -X POST "${RELAY_API_URL}/api/notify" \
-          -H "Content-Type: application/json" \
-          -d "{\"text\":\"$ALERT_TEXT\",\"urgent\":true}" \
-          2>/dev/null || true
+        ALERT_TEXT="⚠️ Session ${SESSION} has not responded in ${mins} minutes — check if stuck."
+        # Inject as a system force message directly into the queue (no tg-send to Telegram topic —
+        # sending via bot caused the alert text to get merged into the next user message via webhook).
+        python3 -c "
+import json, time, sys
+queue_file = sys.argv[1]
+alert_text = sys.argv[2]
+ts = int(time.time())
+entry = {
+    'message_id': -ts,
+    'user': 'system',
+    'text': alert_text,
+    'ts': ts,
+    'via': 'watchdog',
+    'force': True
+}
+with open(queue_file, 'a') as f:
+    f.write(json.dumps(entry) + '\n')
+" "$QUEUE" "$ALERT_TEXT" 2>/dev/null || true
         # Set alerted flag — don't repeat until Claude sends a real message (flag cleared by mcp-telegram on send)
         touch "$alerted_file"
       fi
