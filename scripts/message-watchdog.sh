@@ -16,7 +16,7 @@ INTERVAL=5
 IDLE_GRACE=0           # 0 = disabled — rely on MCP notifications only (no token waste)
 RELAY_API_URL=""       # if set, pull queue from remote relay-api (for remote sessions)
 RELAY_API_TOKEN=""
-MCP_CHECK_INTERVAL=30  # seconds between MCP health checks
+MCP_CHECK_INTERVAL=10  # seconds between MCP health checks (was 30, reduced for faster recovery)
 TOOL_NOTIFY_COOLDOWN=3 # min seconds between tool-use notifications
 CRASH_ALERT_MINUTES=${CRASH_ALERT_MINUTES:-30}  # alert if no response for N minutes
 TOOL_MONITOR=1         # set to 0 to disable per-session tool notifications

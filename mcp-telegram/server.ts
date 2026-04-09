@@ -2088,6 +2088,30 @@ function dbRecent(limit: number): TgMessage[] {
   return (db.query('SELECT message_id, user, text, ts FROM messages ORDER BY rowid DESC LIMIT ?').all(limit) as TgMessage[]).reverse()
 }
 
+/** On startup: backfill DB from queue file so fetch_messages returns valid history immediately */
+async function dbWarmFromQueue(): Promise<void> {
+  try {
+    const file = Bun.file(QUEUE_FILE)
+    if (!(await file.exists())) return
+    const count = (db.query('SELECT COUNT(*) as n FROM messages').get() as { n: number }).n
+    // Only warm if DB is sparse (fresh start or DB was recreated)
+    if (count > 20) return
+    for (const line of (await file.text()).split('\n')) {
+      if (!line.trim()) continue
+      try {
+        const e = JSON.parse(line) as QueueEntry & { force?: boolean }
+        // Skip system/force messages — only real user messages are useful for history
+        if (e.force || !e.user || e.user.startsWith('system')) continue
+        if (e.message_id > 0) {
+          const isoTs = new Date(e.ts * 1000).toISOString()
+          dbInsert({ message_id: e.message_id, user: e.user, text: e.text, ts: isoTs })
+        }
+      } catch {}
+    }
+    process.stderr.write(`[telegram] DB warmed from queue (${count} existing rows)\n`)
+  } catch {}
+}
+
 // ── Queue file reader (routing bot writes here, we consume) ──────────────────
 // This avoids conflicts with the routing bot both polling getUpdates.
 
@@ -2163,19 +2187,26 @@ async function saveLastId(id: number, ackedForce?: number[]): Promise<void> {
   await saveState(id, cur)
 }
 
-/** Remove queue entries older than 24h that have already been delivered. */
+/** Remove queue entries older than 6h (force) or 24h (regular) that have already been delivered. */
 async function trimQueue(lastId: number): Promise<void> {
   try {
     const file = Bun.file(QUEUE_FILE)
     if (!(await file.exists())) return
-    const cutoff = Date.now() / 1000 - 24 * 60 * 60
+    const now = Date.now() / 1000
+    const cutoff24h = now - 24 * 60 * 60
+    const cutoff6h  = now - 6 * 60 * 60
     const lines = (await file.text()).split('\n').filter(line => {
       if (!line.trim()) return false
       try {
         const e = JSON.parse(line) as QueueEntry & { force?: boolean }
-        // Keep: recent entries OR undelivered regular messages
-        if (e.ts > cutoff) return true
+        // Always drop very old entries regardless of type
+        if (e.ts < cutoff24h) return false
+        // Drop force/system messages older than 6h (startup messages, reactions, etc.)
+        if (e.force && e.ts < cutoff6h) return false
+        // Keep undelivered regular messages
         if (!e.force && e.message_id > lastId) return true
+        // Keep recent entries
+        if (e.ts > cutoff6h) return true
         return false
       } catch { return false }
     })
@@ -2239,8 +2270,13 @@ async function poll(): Promise<void> {
     }
   } catch {}
 
-  // Brief pause to let the MCP handshake complete before first notification
-  await Bun.sleep(1000)
+  // Backfill history DB from queue file so fetch_messages works immediately
+  await dbWarmFromQueue()
+
+  // Wait for Claude to complete MCP handshake before sending first notification.
+  // 1s was too short — Claude needs ~3-5s to process list_tools, initialize session context,
+  // and become ready to handle notifications/claude/channel.
+  await Bun.sleep(4000)
 
   // Inject peer list as a system notification so Claude knows available sessions on startup
   try {
@@ -2356,8 +2392,11 @@ async function poll(): Promise<void> {
           if (message_id <= lastId && !force && !pendingDelivery) continue
           // Skip if this message is already pending confirmation
           if (pendingDelivery && message_id === pendingDelivery.message_id) continue
-          // Skip force messages that were recently delivered
-          if (force && deliveredForce.has(message_id) && Date.now() - deliveredForce.get(message_id)! < 15_000) continue
+          // Skip force messages already delivered (in ackedForceIds = Infinity, or recent delivery < 15s)
+          if (force && deliveredForce.has(message_id)) {
+            const deliveredAt = deliveredForce.get(message_id)!
+            if (deliveredAt === Infinity || Date.now() - deliveredAt < 15_000) continue
+          }
           // Skip old messages that are already behind lastId (not pending, not recent)
           if (message_id <= lastId && !force && !isRecent) continue
 
@@ -2385,7 +2424,17 @@ async function poll(): Promise<void> {
           if (force) {
             deliveredForce.set(message_id, Date.now())
             ackedForceIds.add(message_id)
-            const trimmed = [...ackedForceIds].slice(-200)
+            // Keep only recent ackedForce IDs to prevent state bloat.
+            // IDs are negative unix-ms timestamps — strip those older than 2 hours.
+            const twoHoursAgoMs = Date.now() - 2 * 60 * 60 * 1000
+            const trimmed = [...ackedForceIds].filter(id => {
+              // Negative IDs encode -(timestamp_ms) — keep if "recent" enough
+              // Positive force IDs (shouldn't exist) keep always
+              if (id >= 0) return true
+              return -id > twoHoursAgoMs
+            }).slice(-200)
+            ackedForceIds.clear()
+            for (const id of trimmed) ackedForceIds.add(id)
             await saveState(lastId, trimmed)
           } else if (message_id > lastId) {
             // Advance lastId immediately so restarts don't re-deliver this message.
