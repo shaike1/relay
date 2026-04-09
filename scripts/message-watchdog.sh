@@ -47,6 +47,25 @@ last_loop_hash=""       # last seen tool hash for loop detection
 # Helper: run tmux with this session's socket
 tmux_s() { tmux -S "$TMUX_SOCKET" "$@"; }
 
+# ── Real-time terminal echo ──────────────────────────────────────────────────
+# Starts tg-echo.sh in background — tails queue and prints incoming Telegram
+# messages to the tmux pane immediately, without waiting for nudge delay.
+RT_ECHO_SCRIPT="/relay/scripts/tg-echo.sh"
+RT_ECHO_PID_FILE="/tmp/tg-echo-${THREAD_ID}.pid"
+if [ -f "$RT_ECHO_SCRIPT" ]; then
+  # Only start if not already running
+  if [ -f "$RT_ECHO_PID_FILE" ]; then
+    _echo_pid=$(cat "$RT_ECHO_PID_FILE" 2>/dev/null)
+    if ! kill -0 "$_echo_pid" 2>/dev/null; then
+      rm -f "$RT_ECHO_PID_FILE"
+    fi
+  fi
+  if [ ! -f "$RT_ECHO_PID_FILE" ]; then
+    bash "$RT_ECHO_SCRIPT" "$THREAD_ID" "$QUEUE" "$TMUX_SOCKET" "$SESSION" &
+    echo $! > "$RT_ECHO_PID_FILE"
+  fi
+fi
+
 while true; do
   sleep "$INTERVAL"
 
