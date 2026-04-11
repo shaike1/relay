@@ -84,7 +84,7 @@ while true; do
     now=$(date +%s)
     if [ $((now - last_mcp_check)) -ge "$MCP_CHECK_INTERVAL" ]; then
       last_mcp_check=$now
-      claude_running=$(pgrep -f 'claude' > /dev/null 2>&1 && echo 1 || echo 0)
+      claude_running=$(pgrep -x 'claude' > /dev/null 2>&1 && echo 1 || echo 0)
       mcp_running=$(pgrep -f 'bun.*mcp-telegram' > /dev/null 2>&1 && echo 1 || echo 0)
       if [ "$claude_running" = "1" ] && [ "$mcp_running" = "0" ]; then
         # Backoff: 0s, 5s, 10s, 20s, 40s (cap at 60s) between consecutive restarts
