@@ -4376,6 +4376,45 @@ app.get('/api/costs', (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /api/cost-breakdown — daily per-session cost breakdown with token counts
+app.get('/api/cost-breakdown', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const sessions = getCachedSessions();
+    const today = new Date().toISOString().slice(0, 10);
+    const breakdown = [];
+    let totalCost = 0;
+    for (const session of sessions) {
+      const statsFile = path.join(QUEUE_DIR, `token-stats-${session.thread_id}.jsonl`);
+      if (!fs.existsSync(statsFile)) continue;
+      const lines = fs.readFileSync(statsFile, 'utf8').split('\n').filter(l => l.trim());
+      let inputTokens = 0, outputTokens = 0, costToday = 0;
+      for (const line of lines) {
+        try {
+          const e = JSON.parse(line);
+          if ((e.ts || '').startsWith(today)) {
+            inputTokens  += e.input     || 0;
+            outputTokens += e.output    || 0;
+            costToday    += e.cost_usd  || 0;
+          }
+        } catch (_) {}
+      }
+      if (costToday > 0 || inputTokens > 0) {
+        breakdown.push({
+          session_id:    String(session.thread_id),
+          name:          session.session,
+          input_tokens:  inputTokens,
+          output_tokens: outputTokens,
+          cost_today:    Math.round(costToday * 1e6) / 1e6,
+        });
+        totalCost += costToday;
+      }
+    }
+    breakdown.sort((a, b) => b.cost_today - a.cost_today);
+    res.json({ date: today, sessions: breakdown, total_cost: Math.round(totalCost * 1e6) / 1e6 });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 async function handleCostCommand(threadId, replyTo) {
   try {
     const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));

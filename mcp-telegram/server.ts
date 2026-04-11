@@ -2760,26 +2760,28 @@ async function saveLastId(id: number, ackedForce?: number[]): Promise<void> {
   await saveState(id, cur)
 }
 
-/** Remove queue entries older than 6h (force) or 24h (regular) that have already been delivered. */
+/** Remove queue entries older than 6h (force) or 2h (regular) that have already been delivered. */
 async function trimQueue(lastId: number): Promise<void> {
   try {
     const file = Bun.file(QUEUE_FILE)
     if (!(await file.exists())) return
     const now = Date.now() / 1000
-    const cutoff24h = now - 24 * 60 * 60
     const cutoff6h  = now - 6 * 60 * 60
+    const cutoff2h  = now - 2 * 60 * 60
     const lines = (await file.text()).split('\n').filter(line => {
       if (!line.trim()) return false
       try {
         const e = JSON.parse(line) as QueueEntry & { force?: boolean }
-        // Always drop very old entries regardless of type
-        if (e.ts < cutoff24h) return false
-        // Drop force/system messages older than 6h (startup messages, reactions, etc.)
+        // Always drop force/system messages older than 6h
         if (e.force && e.ts < cutoff6h) return false
-        // Keep undelivered regular messages
+        // Drop regular messages older than 2h (regardless of delivery status)
+        if (!e.force && e.ts < cutoff2h) return false
+        // Keep undelivered regular messages (within 2h window)
         if (!e.force && e.message_id > lastId) return true
-        // Keep recent entries
-        if (e.ts > cutoff6h) return true
+        // Keep recent force/system entries (within 6h)
+        if (e.force && e.ts > cutoff6h) return true
+        // Keep recent regular entries (within 2h)
+        if (!e.force && e.ts > cutoff2h) return true
         return false
       } catch { return false }
     })
