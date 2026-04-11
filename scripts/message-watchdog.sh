@@ -45,6 +45,7 @@ last_schedule_check=0   # last time schedule entries were checked
 last_health_check=0     # last time health/token alert check ran
 loop_hash_count=0       # count of consecutive identical tool call hashes
 last_loop_hash=""       # last seen tool hash for loop detection
+last_loop_alert=0       # timestamp of last loop alert (5min cooldown)
 
 # Helper: run tmux with this session's socket
 tmux_s() { tmux -S "$TMUX_SOCKET" "$@"; }
@@ -360,14 +361,20 @@ HEALTH_PY
 
     # --- Loop detection ---
     if [ "${LOOP_DETECT_ENABLED:-1}" = "1" ]; then
+      # Exclude MCP telegram tools (typing, send_message, fetch_messages) — these repeat normally
       current_tool_hash=$(tmux_s capture-pane -pt "${SESSION}:0" -l 20 2>/dev/null \
-        | grep -E '●|Tool:|Bash\(|Edit\(|Read\(' | tail -3 | md5sum | cut -c1-8 || echo "")
+        | grep -E '●|Tool:|Bash\(|Edit\(|Read\(' | grep -v 'telegram\|ToolSearch\|MCP' | tail -3 | md5sum | cut -c1-8 || echo "")
       if [ -n "$current_tool_hash" ]; then
         if [ "$current_tool_hash" = "$last_loop_hash" ]; then
           loop_hash_count=$((loop_hash_count + 1))
           if [ "$loop_hash_count" -ge "$LOOP_DETECT_WINDOW" ]; then
-            # Alert and reset counter
+            # Alert and reset counter (with 5min cooldown)
             loop_hash_count=0
+            _now=$(date +%s)
+            if [ $((_now - last_loop_alert)) -lt 300 ]; then
+              continue  # skip alert — cooldown active
+            fi
+            last_loop_alert=$_now
             BOT_TOKEN=""
             CHAT_ID=""
             [ -f /root/relay/.env ] && {
