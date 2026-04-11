@@ -362,9 +362,14 @@ HEALTH_PY
     # --- Loop detection ---
     if [ "${LOOP_DETECT_ENABLED:-1}" = "1" ]; then
       # Exclude MCP telegram tools (typing, send_message, fetch_messages) — these repeat normally
-      current_tool_hash=$(tmux_s capture-pane -pt "${SESSION}:0" -l 20 2>/dev/null \
-        | grep -E '●|Tool:|Bash\(|Edit\(|Read\(' | grep -v 'telegram\|ToolSearch\|MCP' | tail -3 | md5sum | cut -c1-8 || echo "")
-      if [ -n "$current_tool_hash" ]; then
+      _tool_lines=$(tmux_s capture-pane -pt "${SESSION}:0" -l 20 2>/dev/null \
+        | grep -E '●|Tool:|Bash\(|Edit\(|Read\(' | grep -v 'telegram\|ToolSearch\|MCP' | tail -3)
+      # Skip if no tool lines remain after filtering (avoids empty hash false positives)
+      if [ -z "$_tool_lines" ]; then
+        loop_hash_count=0
+        last_loop_hash=""
+      else
+        current_tool_hash=$(echo "$_tool_lines" | md5sum | cut -c1-8)
         if [ "$current_tool_hash" = "$last_loop_hash" ]; then
           loop_hash_count=$((loop_hash_count + 1))
           if [ "$loop_hash_count" -ge "$LOOP_DETECT_WINDOW" ]; then
