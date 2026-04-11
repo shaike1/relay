@@ -11,6 +11,12 @@
       "iot",
       "yaml",
       "lovelace"
+    ],
+    "route_keywords": [
+      "ha",
+      "home assistant",
+      "\u05d1\u05d9\u05ea \u05d7\u05db\u05dd",
+      "automation"
     ]
   },
   {
@@ -33,6 +39,8 @@
     "path": "/root/.openclaw/workspace",
     "host": null,
     "group": "openclaw",
+    "mem_limit": "768m",
+    "memswap_limit": "1g",
     "skills": [
       "typescript",
       "react",
@@ -46,6 +54,8 @@
     "path": "/root",
     "host": null,
     "group": "infra",
+    "mem_limit": "768m",
+    "memswap_limit": "1g",
     "skills": [
       "devops",
       "docker",
@@ -60,6 +70,8 @@
     "path": "/root/itops-agents",
     "host": null,
     "group": "infra",
+    "mem_limit": "1g",
+    "memswap_limit": "1536m",
     "skills": [
       "monitoring",
       "agents",
@@ -96,6 +108,8 @@
     "path": "/root/openclaw-3cx",
     "host": null,
     "group": "voice",
+    "mem_limit": "1536m",
+    "memswap_limit": "2g",
     "skills": [
       "voip",
       "3cx",
@@ -215,6 +229,8 @@
     "path": "/root/.openclaw",
     "host": null,
     "group": "openclaw",
+    "mem_limit": "768m",
+    "memswap_limit": "1g",
     "skills": [
       "openclaw",
       "core",
@@ -280,6 +296,8 @@
     "path": "/root/.relay-copilot/workspace",
     "host": null,
     "group": "infra",
+    "mem_limit": "768m",
+    "memswap_limit": "1g",
     "skills": [
       "general",
       "copilot",

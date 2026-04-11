@@ -18,6 +18,9 @@ services:
       SESSION_NAME: "ha"
       TELEGRAM_THREAD_ID: "11394"
       WORKDIR: "/root/ha-skill"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      OTEL_LOGS_EXPORTER: "console"
+      OTEL_LOG_TOOL_DETAILS: "1"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
@@ -57,6 +60,9 @@ services:
       SESSION_NAME: "files-config"
       TELEGRAM_THREAD_ID: "11351"
       WORKDIR: "/root/relay"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      OTEL_LOGS_EXPORTER: "console"
+      OTEL_LOG_TOOL_DETAILS: "1"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
@@ -96,6 +102,9 @@ services:
       SESSION_NAME: "openclaw"
       TELEGRAM_THREAD_ID: "202"
       WORKDIR: "/root/.openclaw/workspace"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      OTEL_LOGS_EXPORTER: "console"
+      OTEL_LOG_TOOL_DETAILS: "1"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
@@ -135,6 +144,9 @@ services:
       SESSION_NAME: "main"
       TELEGRAM_THREAD_ID: "213"
       WORKDIR: "/root"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      OTEL_LOGS_EXPORTER: "console"
+      OTEL_LOG_TOOL_DETAILS: "1"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
@@ -174,6 +186,9 @@ services:
       SESSION_NAME: "itops-dev"
       TELEGRAM_THREAD_ID: "185"
       WORKDIR: "/root/itops-agents"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      OTEL_LOGS_EXPORTER: "console"
+      OTEL_LOG_TOOL_DETAILS: "1"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
@@ -213,6 +228,9 @@ services:
       SESSION_NAME: "voice"
       TELEGRAM_THREAD_ID: "201"
       WORKDIR: "/root/openclaw-3cx"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      OTEL_LOGS_EXPORTER: "console"
+      OTEL_LOG_TOOL_DETAILS: "1"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
@@ -255,6 +273,9 @@ services:
       STREAM_MONITOR: "0"
       CRASH_ALERT_MINUTES: "120"
       CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING: "1"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      OTEL_LOGS_EXPORTER: "console"
+      OTEL_LOG_TOOL_DETAILS: "1"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
@@ -294,6 +315,9 @@ services:
       SESSION_NAME: "cliproxy"
       TELEGRAM_THREAD_ID: "187"
       WORKDIR: "/root/cliproxyapi"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      OTEL_LOGS_EXPORTER: "console"
+      OTEL_LOG_TOOL_DETAILS: "1"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
@@ -333,6 +357,9 @@ services:
       SESSION_NAME: "claude-runner"
       TELEGRAM_THREAD_ID: "189"
       WORKDIR: "/root/.openclaw/extensions/claude-runner"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      OTEL_LOGS_EXPORTER: "console"
+      OTEL_LOG_TOOL_DETAILS: "1"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
@@ -372,6 +399,9 @@ services:
       SESSION_NAME: "oref-native"
       TELEGRAM_THREAD_ID: "200"
       WORKDIR: "/root/.openclaw/workspace/skills/oref-native"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      OTEL_LOGS_EXPORTER: "console"
+      OTEL_LOG_TOOL_DETAILS: "1"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
@@ -411,6 +441,9 @@ services:
       SESSION_NAME: "clawdbot"
       TELEGRAM_THREAD_ID: "456"
       WORKDIR: "/root/clawdbot"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      OTEL_LOGS_EXPORTER: "console"
+      OTEL_LOG_TOOL_DETAILS: "1"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
@@ -450,6 +483,9 @@ services:
       SESSION_NAME: "openclaw-core"
       TELEGRAM_THREAD_ID: "495"
       WORKDIR: "/root/.openclaw"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      OTEL_LOGS_EXPORTER: "console"
+      OTEL_LOG_TOOL_DETAILS: "1"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
@@ -490,6 +526,9 @@ services:
       TELEGRAM_THREAD_ID: "2595"
       WORKDIR: "/root/mybill"
       ALLOWED_USERS: "6831389652"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      OTEL_LOGS_EXPORTER: "console"
+      OTEL_LOG_TOOL_DETAILS: "1"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
@@ -529,6 +568,9 @@ services:
       SESSION_NAME: "tala-planner"
       TELEGRAM_THREAD_ID: "4067"
       WORKDIR: "/root/tala-planner"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      OTEL_LOGS_EXPORTER: "console"
+      OTEL_LOG_TOOL_DETAILS: "1"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
@@ -568,6 +610,9 @@ services:
       SESSION_NAME: "mikrotik"
       TELEGRAM_THREAD_ID: "6252"
       WORKDIR: "/root/mikrotik"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      OTEL_LOGS_EXPORTER: "console"
+      OTEL_LOG_TOOL_DETAILS: "1"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
@@ -646,6 +691,9 @@ services:
       SESSION_NAME: "copilot"
       TELEGRAM_THREAD_ID: "8928"
       WORKDIR: "/root/.relay-copilot/workspace"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      OTEL_LOGS_EXPORTER: "console"
+      OTEL_LOG_TOOL_DETAILS: "1"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
@@ -685,6 +733,9 @@ services:
       SESSION_NAME: "remote-desktop"
       TELEGRAM_THREAD_ID: "10170"
       WORKDIR: "/root/meshcentral"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      OTEL_LOGS_EXPORTER: "console"
+      OTEL_LOG_TOOL_DETAILS: "1"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
@@ -724,6 +775,9 @@ services:
       SESSION_NAME: "chat"
       TELEGRAM_THREAD_ID: "12625"
       WORKDIR: "/root/.chat-workspace"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      OTEL_LOGS_EXPORTER: "console"
+      OTEL_LOG_TOOL_DETAILS: "1"
     volumes:
       # Shared queue between bot and session containers
       - relay-queue:/tmp
