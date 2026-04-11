@@ -4648,6 +4648,80 @@ app.delete('/api/routing/:index', (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// GET /api/otel-activity — parse OTel JSON log lines from session containers
+// Query params: ?session=name&limit=50
+app.get('/api/otel-activity', (req, res) => {
+  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
+  const sessionParam = req.query.session;
+  const limit = Math.min(parseInt(req.query.limit) || 50, 500);
+
+  // Collect session names to query
+  let sessionNames = [];
+  if (sessionParam) {
+    sessionNames = [sessionParam];
+  } else {
+    // All local sessions
+    try {
+      const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+      sessionNames = sessions
+        .filter(s => !s.host)
+        .map(s => s.session);
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: 'Failed to read sessions: ' + e.message });
+    }
+  }
+
+  const events = [];
+
+  for (const name of sessionNames) {
+    const containerName = `relay-session-${name}`;
+    let logOutput = '';
+    try {
+      logOutput = execSync(`docker logs ${containerName} --tail 200 2>&1`, { timeout: 10000 }).toString();
+    } catch (e) {
+      // Container not found or not running — skip silently
+      continue;
+    }
+
+    const lines = logOutput.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed[0] !== '{') continue;
+      let parsed;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch (_) {
+        continue;
+      }
+      // Filter for relevant OTel events: look for known Claude Code telemetry keys
+      const body = parsed.body || parsed.name || '';
+      const attrs = parsed.attributes || parsed.resource || {};
+      const isRelevant =
+        (typeof body === 'string' && (body.includes('tool_result') || body.includes('api_request'))) ||
+        Object.keys(attrs).some(k => k.startsWith('tool.') || k.startsWith('claude_code.') || k === 'bash.command');
+      if (!isRelevant) continue;
+
+      events.push({
+        session: name,
+        timestamp: parsed.timestamp || parsed.time || null,
+        traceId: parsed.traceId || null,
+        body,
+        attributes: attrs,
+      });
+    }
+  }
+
+  // Sort by timestamp descending (nulls last)
+  events.sort((a, b) => {
+    if (!a.timestamp && !b.timestamp) return 0;
+    if (!a.timestamp) return 1;
+    if (!b.timestamp) return -1;
+    return b.timestamp.localeCompare(a.timestamp);
+  });
+
+  res.json({ ok: true, count: events.length, events: events.slice(0, limit) });
+});
+
 // --- Proxy everything else to nomacode (web terminal) ---
 app.use('/', createProxyMiddleware({
   target: NOMACODE_URL,
@@ -4955,79 +5029,6 @@ app.get('/api/session-logs/:session', (req, res) => {
   }
 });
 
-// GET /api/otel-activity — parse OTel JSON log lines from session containers
-// Query params: ?session=name&limit=50
-app.get('/api/otel-activity', (req, res) => {
-  if (!checkAuth(req)) return res.status(401).json({ error: 'unauthorized' });
-  const sessionParam = req.query.session;
-  const limit = Math.min(parseInt(req.query.limit) || 50, 500);
-
-  // Collect session names to query
-  let sessionNames = [];
-  if (sessionParam) {
-    sessionNames = [sessionParam];
-  } else {
-    // All local sessions
-    try {
-      const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
-      sessionNames = sessions
-        .filter(s => !s.host)
-        .map(s => s.session);
-    } catch (e) {
-      return res.status(500).json({ ok: false, error: 'Failed to read sessions: ' + e.message });
-    }
-  }
-
-  const events = [];
-
-  for (const name of sessionNames) {
-    const containerName = `relay-session-${name}`;
-    let logOutput = '';
-    try {
-      logOutput = execSync(`docker logs ${containerName} --tail 200 2>&1`, { timeout: 10000 }).toString();
-    } catch (e) {
-      // Container not found or not running — skip silently
-      continue;
-    }
-
-    const lines = logOutput.split('\n');
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed[0] !== '{') continue;
-      let parsed;
-      try {
-        parsed = JSON.parse(trimmed);
-      } catch (_) {
-        continue;
-      }
-      // Filter for relevant OTel events: look for known Claude Code telemetry keys
-      const body = parsed.body || parsed.name || '';
-      const attrs = parsed.attributes || parsed.resource || {};
-      const isRelevant =
-        (typeof body === 'string' && (body.includes('tool_result') || body.includes('api_request'))) ||
-        Object.keys(attrs).some(k => k.startsWith('tool.') || k.startsWith('claude_code.') || k === 'bash.command');
-      if (!isRelevant) continue;
-
-      events.push({
-        session: name,
-        timestamp: parsed.timestamp || parsed.time || null,
-        traceId: parsed.traceId || null,
-        body,
-        attributes: attrs,
-      });
-    }
-  }
-
-  // Sort by timestamp descending (nulls last)
-  events.sort((a, b) => {
-    if (!a.timestamp && !b.timestamp) return 0;
-    if (!a.timestamp) return 1;
-    if (!b.timestamp) return -1;
-    return b.timestamp.localeCompare(a.timestamp);
-  });
-
-  res.json({ ok: true, count: events.length, events: events.slice(0, limit) });
-});
 
 // GET /api/ping/:session — check session liveness
 app.get('/api/ping/:session', (req, res) => {
