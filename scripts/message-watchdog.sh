@@ -16,6 +16,7 @@ INTERVAL=5
 IDLE_GRACE=0           # 0 = disabled — rely on MCP notifications only (no token waste)
 RELAY_API_URL=""       # if set, pull queue from remote relay-api (for remote sessions)
 RELAY_API_TOKEN=""
+AUTO_COMPACT_THRESHOLD=${AUTO_COMPACT_THRESHOLD:-80000}  # input tokens before auto /compact (0=disabled)
 MCP_CHECK_INTERVAL=3   # seconds between MCP health checks (fast detection, watchdog loop is cheap)
 TOOL_NOTIFY_COOLDOWN=3 # min seconds between tool-use notifications
 CRASH_ALERT_MINUTES=${CRASH_ALERT_MINUTES:-30}  # alert if no response for N minutes
@@ -290,6 +291,59 @@ SCHEDULE_PY
   if [ $((now - last_health_check)) -ge 60 ]; then
     last_health_check=$now
 
+    # --- Auto-accept resume/session prompt ---
+    # Claude shows "Enter to confirm · Esc to cancel" when resuming a session.
+    # Press Enter automatically so the session doesn't stay blocked.
+    _pane_check=$(tmux_s capture-pane -t "$SESSION" -p 2>/dev/null || echo "")
+    if echo "$_pane_check" | grep -q "Enter to confirm"; then
+      tmux_s send-keys -t "$SESSION" "" Enter 2>/dev/null || true
+      echo "[watchdog] Auto-accepted resume prompt for ${SESSION}" >&2
+    fi
+
+    # --- Queue deduplication + stale message cleanup ---
+    # Deduplicate by message_id, drop entries older than 7 days, cap file at 500 lines
+    python3 - "$QUEUE" <<'DEDUP_PY' 2>/dev/null || true
+import json, sys, os, time
+
+queue_file = sys.argv[1]
+if not os.path.exists(queue_file):
+    sys.exit(0)
+
+cutoff = time.time() - 7 * 86400  # 7 days ago
+seen_ids = set()
+kept = []
+try:
+    with open(queue_file) as f:
+        lines = f.readlines()
+except Exception:
+    sys.exit(0)
+
+if len(lines) <= 50:
+    sys.exit(0)  # small queue, skip work
+
+for line in lines:
+    try:
+        d = json.loads(line.strip())
+        mid = d.get("message_id")
+        ts = d.get("ts", 0)
+        if ts < cutoff:
+            continue  # drop stale
+        if mid is not None and mid in seen_ids:
+            continue  # drop duplicate
+        if mid is not None:
+            seen_ids.add(mid)
+        kept.append(line if line.endswith("\n") else line + "\n")
+    except Exception:
+        kept.append(line)  # keep unparseable lines as-is
+
+kept = kept[-500:]  # hard cap at 500 entries
+
+if len(kept) < len(lines):
+    with open(queue_file, "w") as f:
+        f.writelines(kept)
+    print(f"[dedup] {queue_file}: {len(lines)} → {len(kept)} entries", file=sys.stderr)
+DEDUP_PY
+
     # --- Token rate alert ---
     if [ "${TOKEN_ALERT_THRESHOLD:-0}" -gt 0 ]; then
       python3 - "$THREAD_ID" "$SESSION" "$TOKEN_ALERT_THRESHOLD" <<'HEALTH_PY' 2>/dev/null || true
@@ -357,6 +411,41 @@ if total_out > threshold:
         except Exception:
             pass
 HEALTH_PY
+    fi
+
+    # --- Auto-compact: trigger /compact when context window gets too large ---
+    # Re-read threshold from override env in case it was changed without restart
+    _compact_threshold="${AUTO_COMPACT_THRESHOLD:-80000}"
+    [ -f "$OVERRIDE_ENV" ] && _compact_threshold=$(grep -E '^AUTO_COMPACT_THRESHOLD=' "$OVERRIDE_ENV" | cut -d= -f2 | tr -d '[:space:]' || echo "$_compact_threshold")
+    if [ "${_compact_threshold:-0}" -gt 0 ]; then
+      ctx_file="/tmp/relay-ctx-tokens-${THREAD_ID}"
+      compact_flag="/tmp/relay-compact-active-${THREAD_ID}"
+      if [ -f "$ctx_file" ]; then
+        ctx_tokens=$(cat "$ctx_file" 2>/dev/null | tr -d '[:space:]' || echo "0")
+        if [ "${ctx_tokens:-0}" -ge "$_compact_threshold" ] && [ ! -f "$compact_flag" ]; then
+          touch "$compact_flag"
+          # Type /compact directly into the tmux session
+          tmux_s send-keys -t "${SESSION}" "/compact" Enter 2>/dev/null || true
+          # Notify via Telegram
+          _BOT_TOKEN="" _CHAT_ID=""
+          [ -f /root/relay/.env ] && {
+            _BOT_TOKEN=$(grep -E '^TELEGRAM_BOT_TOKEN=' /root/relay/.env | cut -d= -f2- | tr -d '"'"'" | head -1)
+            _CHAT_ID=$(grep -E '^GROUP_CHAT_ID=' /root/relay/.env | cut -d= -f2- | tr -d '"'"'" | head -1)
+          }
+          if [ -n "$_BOT_TOKEN" ] && [ -n "$_CHAT_ID" ]; then
+            _MSG="🗜️ <b>Auto-compact: ${SESSION}</b>
+Context reached ${ctx_tokens} tokens (threshold: ${_compact_threshold}). Running /compact to preserve quota."
+            curl -sf "https://api.telegram.org/bot${_BOT_TOKEN}/sendMessage" \
+              -d "chat_id=${_CHAT_ID}&message_thread_id=${THREAD_ID}&text=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$_MSG")&parse_mode=HTML" \
+              >/dev/null 2>&1 || true
+          fi
+          echo "[auto-compact] ${SESSION}: ctx=${ctx_tokens} >= threshold=${_compact_threshold}, /compact sent" >&2
+        fi
+        # Clear the flag once context drops back below 20k (compaction complete)
+        if [ -f "$compact_flag" ] && [ "${ctx_tokens:-99999}" -lt 20000 ]; then
+          rm -f "$compact_flag"
+        fi
+      fi
     fi
 
     # --- Loop detection ---
@@ -550,6 +639,10 @@ print(0)
     # Busy — check if message has been waiting too long (>3 min) and force-nudge anyway
     msg_wait=$((now - msg_arrived_ts))
     [ "$msg_wait" -lt 180 ] && continue
+  fi
+  # Never nudge while Claude is compacting — queued nudges cause a context-refill loop
+  if echo "$pane" | grep -q "Compacting conversation"; then
+    continue
   fi
 
   # Build nudge text: include message preview for terminal echo (item 1)

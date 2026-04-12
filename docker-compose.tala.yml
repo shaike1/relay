@@ -1,0 +1,65 @@
+# Tala Planner — app + redis
+# Start: docker compose -f docker-compose.yml -f docker-compose.tala.yml up -d
+# Or run standalone: docker compose -f docker-compose.tala.yml up -d
+
+services:
+  tala-redis:
+    image: redis:7-alpine
+    container_name: tala-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - tala-redis-data:/data
+    networks:
+      - tala-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  tala-planner-app:
+    build: /root/tala-planner-repo
+    image: tala-planner-app
+    container_name: tala-planner-app
+    restart: unless-stopped
+    depends_on:
+      tala-redis:
+        condition: service_healthy
+    env_file:
+      - /root/tala-planner-repo/.env
+    environment:
+      - REDIS_URL=redis://tala-redis:6379
+    ports:
+      - "4000:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /root/tala-planner-repo/skill-content:/app/skill-content:ro
+    networks:
+      - tala-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/skill-info"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  tala-net:
+    external: true
+
+volumes:
+  tala-redis-data:
+    external: true
+    name: tala-planner-repo_redis_data

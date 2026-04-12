@@ -26,6 +26,8 @@ services:
       - relay-queue:/tmp
       # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
       - /root/relay/.env:/root/relay/.env:ro
+      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)
+      - /root/relay/sessions.json:/relay/sessions.json:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -68,6 +70,8 @@ services:
       - relay-queue:/tmp
       # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
       - /root/relay/.env:/root/relay/.env:ro
+      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)
+      - /root/relay/sessions.json:/relay/sessions.json:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -110,6 +114,8 @@ services:
       - relay-queue:/tmp
       # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
       - /root/relay/.env:/root/relay/.env:ro
+      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)
+      - /root/relay/sessions.json:/relay/sessions.json:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -152,6 +158,8 @@ services:
       - relay-queue:/tmp
       # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
       - /root/relay/.env:/root/relay/.env:ro
+      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)
+      - /root/relay/sessions.json:/relay/sessions.json:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -194,6 +202,8 @@ services:
       - relay-queue:/tmp
       # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
       - /root/relay/.env:/root/relay/.env:ro
+      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)
+      - /root/relay/sessions.json:/relay/sessions.json:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -236,6 +246,8 @@ services:
       - relay-queue:/tmp
       # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
       - /root/relay/.env:/root/relay/.env:ro
+      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)
+      - /root/relay/sessions.json:/relay/sessions.json:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -281,6 +293,8 @@ services:
       - relay-queue:/tmp
       # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
       - /root/relay/.env:/root/relay/.env:ro
+      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)
+      - /root/relay/sessions.json:/relay/sessions.json:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -323,6 +337,8 @@ services:
       - relay-queue:/tmp
       # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
       - /root/relay/.env:/root/relay/.env:ro
+      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)
+      - /root/relay/sessions.json:/relay/sessions.json:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -365,6 +381,8 @@ services:
       - relay-queue:/tmp
       # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
       - /root/relay/.env:/root/relay/.env:ro
+      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)
+      - /root/relay/sessions.json:/relay/sessions.json:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -407,6 +425,8 @@ services:
       - relay-queue:/tmp
       # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
       - /root/relay/.env:/root/relay/.env:ro
+      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)
+      - /root/relay/sessions.json:/relay/sessions.json:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -449,6 +469,8 @@ services:
       - relay-queue:/tmp
       # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
       - /root/relay/.env:/root/relay/.env:ro
+      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)
+      - /root/relay/sessions.json:/relay/sessions.json:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -491,6 +513,8 @@ services:
       - relay-queue:/tmp
       # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
       - /root/relay/.env:/root/relay/.env:ro
+      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)
+      - /root/relay/sessions.json:/relay/sessions.json:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -534,6 +558,8 @@ services:
       - relay-queue:/tmp
       # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
       - /root/relay/.env:/root/relay/.env:ro
+      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)
+      - /root/relay/sessions.json:/relay/sessions.json:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -576,6 +602,8 @@ services:
       - relay-queue:/tmp
       # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
       - /root/relay/.env:/root/relay/.env:ro
+      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)
+      - /root/relay/sessions.json:/relay/sessions.json:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -618,6 +646,8 @@ services:
       - relay-queue:/tmp
       # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
       - /root/relay/.env:/root/relay/.env:ro
+      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)
+      - /root/relay/sessions.json:/relay/sessions.json:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -658,6 +688,8 @@ services:
       - relay-queue:/tmp
       # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
       - /root/relay/.env:/root/relay/.env:ro
+      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)
+      - /root/relay/sessions.json:/relay/sessions.json:ro
       # Codex credentials and config
       - /root/.codex:/root/.codex
       # Docker socket — allows session to manage containers
@@ -691,6 +723,10 @@ services:
       SESSION_NAME: "copilot"
       TELEGRAM_THREAD_ID: "8928"
       WORKDIR: "/root/.relay-copilot/workspace"
+      ANTHROPIC_BASE_URL: "http://100.64.0.7:20129"
+      ANTHROPIC_AUTH_TOKEN: "sk-221d3a4715adf2a9-8956c3-c6e96698"
+      ANTHROPIC_MODEL: "auto-route"
+      ANTHROPIC_SMALL_FAST_MODEL: "auto-route"
       CLAUDE_CODE_ENABLE_TELEMETRY: "1"
       OTEL_LOGS_EXPORTER: "console"
       OTEL_LOG_TOOL_DETAILS: "1"
@@ -699,6 +735,8 @@ services:
       - relay-queue:/tmp
       # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
       - /root/relay/.env:/root/relay/.env:ro
+      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)
+      - /root/relay/sessions.json:/relay/sessions.json:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -741,6 +779,8 @@ services:
       - relay-queue:/tmp
       # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
       - /root/relay/.env:/root/relay/.env:ro
+      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)
+      - /root/relay/sessions.json:/relay/sessions.json:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -783,6 +823,8 @@ services:
       - relay-queue:/tmp
       # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
       - /root/relay/.env:/root/relay/.env:ro
+      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)
+      - /root/relay/sessions.json:/relay/sessions.json:ro
       # Claude credentials and global state (directory + auth file)
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
@@ -790,6 +832,54 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/.chat-workspace:/root/.chat-workspace
+    depends_on:
+      - relay
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "claude"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  session-omniroute:
+    image: relay-session:latest
+    build:
+      context: .
+      dockerfile: session.Dockerfile
+    container_name: relay-session-omniroute
+    restart: always
+    mem_limit: 512m
+    memswap_limit: 768m
+    environment:
+      SESSION_NAME: "omniroute"
+      TELEGRAM_THREAD_ID: "14000"
+      WORKDIR: "/root/omniroute"
+      ANTHROPIC_BASE_URL: "http://100.64.0.7:20129"
+      ANTHROPIC_AUTH_TOKEN: "sk-221d3a4715adf2a9-8956c3-c6e96698"
+      ANTHROPIC_MODEL: "auto-route"
+      ANTHROPIC_SMALL_FAST_MODEL: "auto-route"
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1"
+      OTEL_LOGS_EXPORTER: "console"
+      OTEL_LOG_TOOL_DETAILS: "1"
+    volumes:
+      # Shared queue between bot and session containers
+      - relay-queue:/tmp
+      # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex
+      - /root/relay/.env:/root/relay/.env:ro
+      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)
+      - /root/relay/sessions.json:/relay/sessions.json:ro
+      # Claude credentials and global state (directory + auth file)
+      - /root/.claude:/root/.claude
+      - /root/.claude.json:/root/.claude.json
+      # Docker socket — allows session to manage containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Project working directory
+      - /root/omniroute:/root/omniroute
     depends_on:
       - relay
     logging:

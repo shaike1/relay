@@ -8,7 +8,6 @@ services:
       - .env
     environment:
       RELAY_BOT_ROLE: "primary"
-      WEBHOOK_MODE: "1"
     volumes:
       # Full home dir — covers all local Claude sessions and ~/.claude state.
       # If your sessions are all remote (SSH), replace this with targeted mounts:
@@ -36,39 +35,10 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  relay-nomacode:
-    image: node:22-slim
-    container_name: relay-nomacode
-    restart: always
-    working_dir: /nomacode
-    command: >
-      sh -c "npm install --omit=dev --quiet 2>/dev/null; node bin/nomacode.js"
-    environment:
-      PORT: "3000"
-      HOST: "0.0.0.0"
-      SHELL: "/root/relay/scripts/hub.sh"
-      NOMACODE_USER: "relay"
-      NOMACODE_PASS: "${RELAY_API_PASS:-PKNfwGoX4-8-LHsxhVphvQ}"
-    expose:
-      - "3000"
-    volumes:
-      - /root/nomacode:/nomacode
-      - /root:/root
-      - /var/run/docker.sock:/var/run/docker.sock
-      - relay-queue:/tmp/relay-sessions
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
   relay-api:
     build: ./relay-api
     container_name: relay-api
     restart: always
-    depends_on:
-      - relay-nomacode
-      - relay
     ports:
       - "7070:7070"
     environment:
@@ -80,12 +50,9 @@ services:
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
       GROUP_CHAT_ID: "${GROUP_CHAT_ID}"
       WEBHOOK_SECRET: "${WEBHOOK_SECRET:-codex-relay-wh-2026}"
-      MINIAPP_DOMAIN: "${MINIAPP_DOMAIN:-https://relay.right-api.com}"
-      MINIAPP_HTML: "/relay/miniapp/index.html"
     volumes:
       - /root/relay/relay-api/server.js:/relay-api/server.js:ro
       - /root/relay/sessions.json:/relay/sessions.json
-      - /root/relay/schedules.json:/relay/schedules.json
       - /root/relay/templates.json:/relay/templates.json
       - /root/relay/metrics.html:/relay/metrics.html:ro
       - /root/relay/config.html:/relay/config.html:ro
@@ -94,135 +61,34 @@ services:
       - /root/relay/tasks-dashboard.html:/relay/tasks-dashboard.html:ro
       - /root/relay/orchestrator.html:/relay/orchestrator.html:ro
       - /root/relay/pipeline.html:/relay/pipeline.html:ro
-      - /root/relay/miniapp:/relay/miniapp:ro
       - /root/relay/scripts:/relay/scripts:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - relay-queue:/tmp
-      - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - default
       - relay_default
+      - tala-net
     logging:
       driver: "json-file"
       options:
         max-size: "5m"
         max-file: "2"
 
-  # Dev-mode relay-api with hot reload via nodemon.
-  # Start with: docker compose --profile dev up relay-api-dev
-  relay-api-dev:
-    build: ./relay-api
-    container_name: relay-api-dev
-    restart: "no"
-    profiles:
-      - dev
-    command: npx nodemon server.js
+  caddy:
+    image: caddy:2.6.2
+    container_name: caddy
+    restart: always
     ports:
-      - "7070:7070"
-    environment:
-      PORT: "7070"
-      NOMACODE_URL: "http://relay-nomacode:3000"
-      SESSIONS_FILE: "/relay/sessions.json"
-      AUTH_USER: "relay"
-      AUTH_PASS: "${RELAY_API_PASS:-PKNfwGoX4-8-LHsxhVphvQ}"
-      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
-      GROUP_CHAT_ID: "${GROUP_CHAT_ID}"
-      WEBHOOK_SECRET: "${WEBHOOK_SECRET:-codex-relay-wh-2026}"
-      MINIAPP_DOMAIN: "${MINIAPP_DOMAIN:-https://relay.right-api.com}"
-      MINIAPP_HTML: "/relay/miniapp/index.html"
+      - "80:80"
+      - "443:443"
     volumes:
-      - /root/relay/relay-api/server.js:/relay-api/server.js
-      - /root/relay/relay-api/utils.js:/relay-api/utils.js
-      - /root/relay/relay-api/.nodemon.json:/relay-api/.nodemon.json
-      - /root/relay/sessions.json:/relay/sessions.json
-      - /root/relay/schedules.json:/relay/schedules.json
-      - /root/relay/templates.json:/relay/templates.json
-      - /root/relay/metrics.html:/relay/metrics.html:ro
-      - /root/relay/config.html:/relay/config.html:ro
-      - /root/relay/sessions-ui.html:/relay/sessions-ui.html:ro
-      - /root/relay/session-detail.html:/relay/session-detail.html:ro
-      - /root/relay/tasks-dashboard.html:/relay/tasks-dashboard.html:ro
-      - /root/relay/orchestrator.html:/relay/orchestrator.html:ro
-      - /root/relay/pipeline.html:/relay/pipeline.html:ro
-      - /root/relay/miniapp:/relay/miniapp:ro
-      - /root/relay/scripts:/relay/scripts:ro
-      - /var/run/docker.sock:/var/run/docker.sock
-      - relay-queue:/tmp
+      - /root/relay/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_conf:/config
     networks:
       - default
       - relay_default
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "5m"
-        max-file: "2"
-
-  whatsapp-bridge:
-    build: ./whatsapp-bridge
-    container_name: whatsapp-bridge
-    restart: always
-    profiles:
-      - whatsapp
-    environment:
-      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
-      TELEGRAM_CHAT_ID: "${GROUP_CHAT_ID}"
-      WA_QR_THREAD_ID: "${WA_QR_THREAD_ID:-183}"
-      WA_SESSION_DIR: "/wa-session"
-      WA_BRIDGE_PORT: "9103"
-      WA_DEFAULT_THREAD_ID: "${WA_DEFAULT_THREAD_ID:-}"
-      SESSIONS_FILE: "/relay/sessions.json"
-      QUEUE_DIR: "/tmp"
-    expose:
-      - "9103"
-    volumes:
-      - /root/relay/sessions.json:/relay/sessions.json:ro
-      - relay-queue:/tmp
-      - wa-session:/wa-session
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "5m"
-        max-file: "2"
-
-  slack-bridge:
-    build: ./slack-bridge
-    container_name: slack-bridge
-    restart: always
-    profiles:
-      - slack
-    environment:
-      SLACK_BOT_TOKEN: "${SLACK_BOT_TOKEN:-}"
-      SLACK_APP_TOKEN: "${SLACK_APP_TOKEN:-}"
-      SLACK_BRIDGE_PORT: "9104"
-      SESSIONS_FILE: "/relay/sessions.json"
-      QUEUE_DIR: "/tmp"
-    expose:
-      - "9104"
-    volumes:
-      - /root/relay/sessions.json:/relay/sessions.json:ro
-      - relay-queue:/tmp
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "5m"
-        max-file: "2"
-
-  discord-bridge:
-    build: ./discord-bridge
-    container_name: discord-bridge
-    restart: always
-    profiles:
-      - discord
-    environment:
-      DISCORD_BOT_TOKEN: "${DISCORD_BOT_TOKEN:-}"
-      DISCORD_BRIDGE_PORT: "9102"
-      SESSIONS_FILE: "/relay/sessions.json"
-      QUEUE_DIR: "/tmp"
-    expose:
-      - "9102"
-    volumes:
-      - /root/relay/sessions.json:/relay/sessions.json:ro
-      - relay-queue:/tmp
+      - tala-net
     logging:
       driver: "json-file"
       options:
@@ -232,8 +98,15 @@ services:
 networks:
   relay_default:
     external: true
+  tala-net:
+    external: true
 
 volumes:
   relay-queue:
     external: true
-  wa-session:
+  caddy_data:
+    external: true
+    name: root_caddy_data
+  caddy_conf:
+    external: true
+    name: root_caddy_conf

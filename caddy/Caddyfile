@@ -66,3 +66,32 @@ https://meshcentral.right-api.com {
 http://meshcentral.right-api.com {
 	redir https://meshcentral.right-api.com{uri} permanent
 }
+
+https://callme.right-api.com {
+	tls internal
+
+	@websocket {
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	reverse_proxy @websocket 172.31.0.1:3101 {
+		header_up -Sec-WebSocket-Extensions
+		transport http {
+			versions 1.1
+		}
+	}
+	reverse_proxy 172.31.0.1:3101
+}
+
+http://callme.right-api.com {
+	redir https://callme.right-api.com{uri} permanent
+}
+
+https://tala.right-api.com {
+	tls internal
+	reverse_proxy tala-planner-app:3000
+}
+
+http://tala.right-api.com {
+	redir https://tala.right-api.com{uri} permanent
+}

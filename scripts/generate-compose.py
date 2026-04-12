@@ -42,12 +42,14 @@ def _session_service_block(name: str, thread_id: int, workdir: str,
                            with_build: bool = False,
                            session_type: str = "claude",
                            driver: str = "",
-                           extra_env: dict | None = None) -> list[str]:
+                           extra_env: dict | None = None,
+                           mem_limit: str = "512m",
+                           memswap_limit: str = "768m") -> list[str]:
     """Return lines for a single session service block."""
     svc = sanitize_service_name(name)
     dockerfile = "codex-session.Dockerfile" if session_type == "codex" else "session.Dockerfile"
     # healthcheck pgrep target differs by session type
-    hc_process = "codex" if session_type == "codex" else "claude"
+    hc_process = "codex" if session_type == "codex" else ("copilot" if session_type == "copilot" else "claude")
     # codex sessions need OpenAI credentials mounted; claude sessions need Claude credentials
     lines = []
     lines.append(f"  {svc}:")
@@ -58,12 +60,14 @@ def _session_service_block(name: str, thread_id: int, workdir: str,
         lines.append(f"      dockerfile: {dockerfile}")
     lines.append(f"    container_name: relay-session-{name}")
     lines.append(f"    restart: always")
+    lines.append(f"    mem_limit: {mem_limit}")
+    lines.append(f"    memswap_limit: {memswap_limit}")
     lines.append(f"    environment:")
     lines.append(f"      SESSION_NAME: \"{name}\"")
     lines.append(f"      TELEGRAM_THREAD_ID: \"{thread_id}\"")
     lines.append(f"      WORKDIR: \"{workdir}\"")
-    if session_type == "codex":
-        lines.append(f"      SESSION_TYPE: \"codex\"")
+    if session_type in ("codex", "copilot"):
+        lines.append(f"      SESSION_TYPE: \"{session_type}\"")
     if driver:
         lines.append(f"      SESSION_DRIVER: \"{driver}\"")
     if allowed_users:
@@ -72,14 +76,25 @@ def _session_service_block(name: str, thread_id: int, workdir: str,
     if extra_env:
         for k, v in extra_env.items():
             lines.append(f"      {k}: \"{v}\"")
+    # OTel telemetry — enabled for all Claude sessions (not codex)
+    if session_type != "codex":
+        lines.append(f"      CLAUDE_CODE_ENABLE_TELEMETRY: \"1\"")
+        lines.append(f"      OTEL_LOGS_EXPORTER: \"console\"")
+        lines.append(f"      OTEL_LOG_TOOL_DETAILS: \"1\"")
     lines.append(f"    volumes:")
     lines.append(f"      # Shared queue between bot and session containers")
     lines.append(f"      - {tmp_volume}:/tmp")
     lines.append(f"      # Relay env file for the MCP bridge only; do not inject bot creds into Claude/Codex")
     lines.append(f"      - /root/relay/.env:/root/relay/.env:ro")
+    lines.append(f"      # Live sessions.json so the session loop can find thread_ids (overrides baked-in empty copy)")
+    lines.append(f"      - /root/relay/sessions.json:/relay/sessions.json:ro")
     if session_type == "codex":
         lines.append(f"      # Codex credentials and config")
         lines.append(f"      - /root/.codex:/root/.codex")
+    elif session_type == "copilot":
+        lines.append(f"      # Copilot CLI credentials and MCP config")
+        lines.append(f"      - /root/.copilot:/root/.copilot")
+        lines.append(f"      - /root/.config/gh:/root/.config/gh:ro")
     else:
         lines.append(f"      # Claude credentials and global state (directory + auth file)")
         lines.append(f"      - /root/.claude:/root/.claude")
@@ -124,7 +139,7 @@ def generate_compose(sessions: list, output_path: str) -> None:
     ]
 
     for session in local_sessions:
-        stype = session.get("type", "claude")
+        stype = session.get("type") or session.get("session_type", "claude")
         image = "relay-session-codex:latest" if stype == "codex" else "relay-session:latest"
         lines += _session_service_block(
             name=session["session"],
@@ -138,6 +153,8 @@ def generate_compose(sessions: list, output_path: str) -> None:
             session_type=stype,
             driver=session.get("driver", ""),
             extra_env=session.get("env"),
+            mem_limit=session.get("mem_limit", "512m"),
+            memswap_limit=session.get("memswap_limit", "768m"),
         )
 
     lines.append("volumes:")
