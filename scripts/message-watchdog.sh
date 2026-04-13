@@ -10,7 +10,7 @@ SESSION_TYPE="${SESSION_TYPE:-claude}"
 QUEUE="/tmp/tg-queue-${THREAD_ID}.jsonl"
 STATE="/tmp/tg-queue-${THREAD_ID}.state"
 TMUX_SOCKET="/tmp/tmux-${SESSION}.sock"
-NUDGE="You have a pending Telegram message. Call fetch_messages and respond."
+NUDGE="You have a pending Telegram message. Call mcp__telegram__fetch_messages and respond using Telegram MCP tools."
 
 INTERVAL=5
 IDLE_GRACE=0           # 0 = disabled — rely on MCP notifications only (no token waste)
@@ -86,10 +86,30 @@ while true; do
     now=$(date +%s)
     if [ $((now - last_mcp_check)) -ge "$MCP_CHECK_INTERVAL" ]; then
       last_mcp_check=$now
-      claude_running=$(pgrep -x 'claude' > /dev/null 2>&1 && echo 1 || echo 0)
-      mcp_running=$(pgrep -f 'bun.*mcp-telegram' > /dev/null 2>&1 && echo 1 || echo 0)
+      pane_pid=$(tmux_s display-message -p '#{pane_pid}' 2>/dev/null || true)
+      claude_pid=""
+      if [ -n "$pane_pid" ]; then
+        claude_pid=$(pgrep -P "$pane_pid" claude 2>/dev/null | head -1 || true)
+      fi
+      if [ -n "$claude_pid" ] && kill -0 "$claude_pid" 2>/dev/null; then
+        claude_running=1
+      else
+        claude_running=0
+      fi
+
+      mcp_pid=""
+      LOCK_FILE="/tmp/tg-queue-${THREAD_ID}.lock"
+      if [ -f "$LOCK_FILE" ]; then
+        mcp_pid=$(tr -d '[:space:]' < "$LOCK_FILE" 2>/dev/null || true)
+      fi
+      if [ -n "$mcp_pid" ] && kill -0 "$mcp_pid" 2>/dev/null; then
+        mcp_running=1
+      else
+        mcp_running=0
+      fi
+
       if [ "$claude_running" = "1" ] && [ "$mcp_running" = "0" ]; then
-        # Backoff: 0s, 5s, 10s, 20s, 40s (cap at 60s) between consecutive restarts
+        # Backoff: 0s, 10s, 20s, 30s, 40s (cap at 60s) between consecutive restarts
         _backoff=0
         if [ "$mcp_restart_count" -gt 0 ]; then
           _backoff=$(( mcp_restart_count * 10 ))
@@ -98,15 +118,19 @@ while true; do
         _now=$(date +%s)
         _since_last=$(( _now - last_mcp_restart ))
         if [ "$_since_last" -ge "$_backoff" ]; then
-          echo "[watchdog:${SESSION}] MCP server missing (restart #$((mcp_restart_count+1))) — restarting" >&2
+          echo "[watchdog:${SESSION}] MCP missing for this session/thread (restart #$((mcp_restart_count+1))) — restarting local Claude only" >&2
           mcp_restart_count=$((mcp_restart_count + 1))
           last_mcp_restart=$_now
-          pkill -f 'claude' 2>/dev/null || true
+          if [ -n "$claude_pid" ] && kill -0 "$claude_pid" 2>/dev/null; then
+            kill "$claude_pid" 2>/dev/null || true
+          elif tmux_s has-session -t "$SESSION" 2>/dev/null; then
+            tmux_s send-keys -t "$SESSION" q Enter 2>/dev/null || true
+          fi
         else
           echo "[watchdog:${SESSION}] MCP missing but in backoff (${_since_last}s < ${_backoff}s)" >&2
         fi
       else
-        # MCP is running — reset restart counter
+        # MCP is running for this session/thread — reset restart counter
         mcp_restart_count=0
       fi
     fi

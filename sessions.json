@@ -15,9 +15,12 @@
     "route_keywords": [
       "ha",
       "home assistant",
-      "\u05d1\u05d9\u05ea \u05d7\u05db\u05dd",
+      "בית חכם",
       "automation"
-    ]
+    ],
+    "env": {
+      "AUTO_COMPACT_THRESHOLD": "40000"
+    }
   },
   {
     "thread_id": 11351,
@@ -25,7 +28,7 @@
     "path": "/root/relay",
     "host": null,
     "group": "infra",
-    "description": "Files & Config topic \u2014 backups, exports, markdown reports auto-sent here",
+    "description": "Files & Config topic — backups, exports, markdown reports auto-sent here",
     "skills": [
       "files",
       "backup",
@@ -46,7 +49,11 @@
       "react",
       "openclaw",
       "frontend"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20130",
+      "ANTHROPIC_API_KEY": "sk-221d3a4715adf2a9-8956c3-c6e96698"
+    }
   },
   {
     "thread_id": 213,
@@ -139,7 +146,8 @@
     "env": {
       "STREAM_MONITOR": "0",
       "CRASH_ALERT_MINUTES": "120",
-      "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING": "1"
+      "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING": "1",
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129"
     },
     "skills": [
       "relay",
@@ -235,7 +243,11 @@
       "openclaw",
       "core",
       "typescript"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20130",
+      "ANTHROPIC_API_KEY": "sk-221d3a4715adf2a9-8956c3-c6e96698"
+    }
   },
   {
     "thread_id": 2595,
@@ -302,7 +314,13 @@
       "general",
       "copilot",
       "multi-project"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20130",
+      "ANTHROPIC_AUTH_TOKEN": "sk-221d3a4715adf2a9-8956c3-c6e96698",
+      "ANTHROPIC_MODEL": "auto-route",
+      "ANTHROPIC_SMALL_FAST_MODEL": "auto-route"
+    }
   },
   {
     "thread_id": 10170,
@@ -323,12 +341,32 @@
     "path": "/root/.chat-workspace",
     "host": null,
     "group": "general",
-    "description": "General chat topic \u2014 conversations, questions, brainstorming",
+    "description": "General chat topic — conversations, questions, brainstorming",
     "skills": [
       "general",
       "chat",
       "conversation"
     ],
     "skills_route": true
+  },
+  {
+    "thread_id": 14000,
+    "session": "omniroute",
+    "path": "/root/omniroute",
+    "host": null,
+    "group": "infra",
+    "description": "OmniRoute AI gateway admin — manage providers, check logs, test routing",
+    "skills": [
+      "docker",
+      "devops",
+      "admin",
+      "omniroute"
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20130",
+      "ANTHROPIC_AUTH_TOKEN": "sk-221d3a4715adf2a9-8956c3-c6e96698",
+      "ANTHROPIC_MODEL": "auto-route",
+      "ANTHROPIC_SMALL_FAST_MODEL": "auto-route"
+    }
   }
 ]

@@ -5,7 +5,7 @@ set -euo pipefail
 
 SESSIONS_JSON="${1:-/root/relay/sessions.json}"
 LOOP_SCRIPT="/root/relay/scripts/claude-session-loop.sh"
-NUDGE="You have telegram MCP tools available. Call fetch_messages to check for and respond to any pending messages from the user."
+NUDGE="You have telegram MCP tools available. Call mcp__telegram__fetch_messages to check for and respond to any pending messages from the user."
 
 python3 - "$SESSIONS_JSON" "$LOOP_SCRIPT" "$NUDGE" <<'PYEOF'
 import json, subprocess, sys, os

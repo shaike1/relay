@@ -2693,7 +2693,14 @@ try {
   }
 } catch {}
 await Bun.write(LOCK_FILE, String(process.pid))
-function cleanup() { try { require('fs').unlinkSync(LOCK_FILE) } catch {} }
+function cleanup() {
+  try {
+    const current = readFileSync(LOCK_FILE, 'utf8').trim()
+    if (current === String(process.pid)) {
+      Bun.file(LOCK_FILE).delete().catch(() => {})
+    }
+  } catch {}
+}
 process.on('exit', cleanup)
 process.on('SIGTERM', () => { cleanup(); process.exit(0) })
 process.on('SIGINT',  () => { cleanup(); process.exit(0) })

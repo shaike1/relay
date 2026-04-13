@@ -11,6 +11,7 @@ For **every** message you receive — whether via `notifications/claude/channel`
 1. Call `typing` immediately so the user sees you're working
 2. Do the work (run commands, edit files, check logs, etc.)
 3. Call `send_message` with your response
+4. Call `fetch_messages` — there may be more pending messages. If there are, handle them too before going idle.
 
 **Never write responses to this terminal.** The user cannot see them.
 

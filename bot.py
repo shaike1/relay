@@ -1729,6 +1729,37 @@ def queue_file(thread_id: int) -> str:
     return f"/tmp/tg-queue-{thread_id}.jsonl"
 
 
+def _bootstrap_state_files():
+    """On startup, create state files for any queue that has unprocessed messages
+    older than 24h — prevents stale queues from triggering endless restart loops."""
+    import glob as _glob
+    now = time.time()
+    for qf in _glob.glob("/tmp/tg-queue-*.jsonl"):
+        sf = qf.replace(".jsonl", ".state")
+        if os.path.exists(sf):
+            continue  # already has a state file
+        try:
+            max_id = 0
+            has_stale = False
+            for line in open(qf):
+                try:
+                    entry = json.loads(line.strip())
+                    mid = entry.get("message_id", 0)
+                    ts = entry.get("ts", now)
+                    if mid > 0:
+                        max_id = max(max_id, mid)
+                    if now - ts > 24 * 3600:
+                        has_stale = True
+                except Exception:
+                    pass
+            if has_stale and max_id > 0:
+                with open(sf, "w") as f:
+                    json.dump({"lastId": max_id, "ackedForce": []}, f)
+                logger.info(f"[bootstrap] Created state file {sf} with lastId={max_id}")
+        except Exception as e:
+            logger.warning(f"[bootstrap] Failed to bootstrap {qf}: {e}")
+
+
 def write_queue(thread_id: int, message: dict, host: str | None = None):
     """Write incoming message to queue file for MCP server to consume."""
     import time
@@ -2078,6 +2109,8 @@ async def check_no_reply(context) -> None:
                 if entry.get("message_id", 0) <= last_id:
                     continue  # already processed
                 ts = entry.get("ts", now)
+                if now - ts > 24 * 3600:
+                    continue  # stale message (>24h) — never trigger a restart
                 if oldest_unread_ts is None or ts < oldest_unread_ts:
                     oldest_unread_ts = ts
         except Exception:
@@ -2211,6 +2244,7 @@ async def check_task_timeouts(context: ContextTypes.DEFAULT_TYPE):
 
 async def post_init(app: Application):
     load_sessions()
+    _bootstrap_state_files()
     app.job_queue.run_repeating(poll_output, interval=POLL_INTERVAL, first=2)
     app.job_queue.run_repeating(poll_output_remote, interval=20, first=10)
     app.job_queue.run_repeating(keepalive_ping, interval=6 * 3600, first=3600)

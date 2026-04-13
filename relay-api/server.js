@@ -438,7 +438,24 @@ function webhookQueueWrite(update) {
       force: true,  // required: bypasses message_id <= lastId check in fetch_messages
     };
     try {
-      fs.appendFileSync(queueFile, JSON.stringify(entry) + '\n');
+      // Check if this thread belongs to a remote session
+      let cbRemoteHost = null;
+      try {
+        const cbSessions = getCachedSessions();
+        const cbSess = cbSessions.find(s => String(s.thread_id) === String(threadId));
+        if (cbSess && cbSess.host) cbRemoteHost = cbSess.host;
+      } catch (_) {}
+
+      if (cbRemoteHost) {
+        const pushPort = process.env.REMOTE_PUSH_PORT || '7099';
+        const host = cbRemoteHost.includes('@') ? cbRemoteHost.split('@')[1] : cbRemoteHost;
+        const pushSecret = process.env.PUSH_SECRET || '';
+        const secretFlag = pushSecret ? `-H "x-push-secret: ${pushSecret}"` : '';
+        execSync(`curl -sf --connect-timeout 5 -X POST ${secretFlag} -H "Content-Type: application/json" -d '${JSON.stringify(entry).replace(/'/g, "'\\''")}' http://${host}:${pushPort}/push`, { timeout: 8000 });
+        console.log(`[webhook] ${threadId} (remote:${host}): button click: ${label}`);
+      } else {
+        fs.appendFileSync(queueFile, JSON.stringify(entry) + '\n');
+      }
       console.log(`[webhook] ${threadId}: ${cb.from.first_name} clicked: ${label} (cb.id=${cb.id})`);
       // Answer the callback and visually update the button
       const botToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -1079,9 +1096,13 @@ async function handleRestartCommand(threadId, replyTo) {
     const containerName = `relay-session-${session.session}`;
     await tgSendMessage(threadId, `🔄 מפעיל מחדש את <code>${session.session}</code>...`, replyTo, null);
     try {
-      execSync(`docker restart ${containerName}`, { timeout: 30000 });
+      const host = session.host;
+      const cmd = host
+        ? `ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no ${host} docker restart ${containerName}`
+        : `docker restart ${containerName}`;
+      execSync(cmd, { timeout: 30000 });
       await tgSendMessage(threadId, `✅ Container <code>${session.session}</code> הופעל מחדש`, null, null);
-      console.log(`[restart] Restarted container ${containerName}`);
+      console.log(`[restart] Restarted container ${containerName} ${host ? `on ${host}` : 'locally'}`);
     } catch (e) {
       await tgSendMessage(threadId, `⚠️ שגיאה בהפעלה מחדש: ${e.message}`, null, null);
     }

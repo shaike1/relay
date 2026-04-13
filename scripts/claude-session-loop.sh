@@ -64,6 +64,16 @@ prepare_claude_env() {
   # Do not leak the Telegram bot token into Claude itself, or the official
   # Telegram plugin can start polling and steal getUpdates from relay.
   unset TELEGRAM_BOT_TOKEN GROUP_CHAT_ID OWNER_ID
+  # Containers currently have DNS answers with IPv6 first/available for model APIs,
+  # but no working IPv6 route. Force Node-based clients (Claude Code) to prefer IPv4.
+  export NODE_OPTIONS="--dns-result-order=ipv4first"
+  if [ "${SESSION_NAME:-}" = "relay" ]; then
+    export ANTHROPIC_BASE_URL="http://100.64.0.7:20129"
+    export ANTHROPIC_AUTH_TOKEN="sk-221d3a4715adf2a9-8956c3-c6e96698"
+    export ANTHROPIC_MODEL="auto-route"
+    export ANTHROPIC_SMALL_FAST_MODEL="auto-route"
+    unset CLAUDE_CODE_OAUTH_TOKEN
+  fi
 }
 
 # Helper: run tmux with this session's socket
