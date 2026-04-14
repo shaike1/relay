@@ -67,6 +67,24 @@ prepare_claude_env() {
   # Containers currently have DNS answers with IPv6 first/available for model APIs,
   # but no working IPv6 route. Force Node-based clients (Claude Code) to prefer IPv4.
   export NODE_OPTIONS="--dns-result-order=ipv4first"
+
+  # Load per-session environment overrides from sessions.json on every Claude launch
+  # so config changes take effect without recreating the container.
+  eval "$(python3 - <<'PY'
+import json, os, shlex
+session_name = os.environ.get('SESSION_NAME', '')
+try:
+    sessions = json.load(open('/root/relay/sessions.json'))
+    sess = next((s for s in sessions if s.get('session') == session_name), None)
+    env = (sess or {}).get('env') or {}
+    for key, value in env.items():
+        if isinstance(key, str) and isinstance(value, str):
+            print(f'export {key}={shlex.quote(value)}')
+except Exception:
+    pass
+PY
+)"
+
   if [ "${SESSION_NAME:-}" = "relay" ]; then
     export ANTHROPIC_BASE_URL="http://100.64.0.7:20129"
     export ANTHROPIC_AUTH_TOKEN="sk-221d3a4715adf2a9-8956c3-c6e96698"

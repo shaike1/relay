@@ -15,11 +15,13 @@
     "route_keywords": [
       "ha",
       "home assistant",
-      "בית חכם",
+      "\u05d1\u05d9\u05ea \u05d7\u05db\u05dd",
       "automation"
     ],
     "env": {
-      "AUTO_COMPACT_THRESHOLD": "40000"
+      "AUTO_COMPACT_THRESHOLD": "40000",
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
     }
   },
   {
@@ -28,13 +30,17 @@
     "path": "/root/relay",
     "host": null,
     "group": "infra",
-    "description": "Files & Config topic — backups, exports, markdown reports auto-sent here",
+    "description": "Files & Config topic \u2014 backups, exports, markdown reports auto-sent here",
     "skills": [
       "files",
       "backup",
       "config",
       "export"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+    }
   },
   {
     "thread_id": 202,
@@ -51,8 +57,8 @@
       "frontend"
     ],
     "env": {
-      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20130",
-      "ANTHROPIC_API_KEY": "sk-221d3a4715adf2a9-8956c3-c6e96698"
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
     }
   },
   {
@@ -69,7 +75,11 @@
       "git",
       "general",
       "admin"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+    }
   },
   {
     "thread_id": 185,
@@ -84,7 +94,11 @@
       "agents",
       "python",
       "itops"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+    }
   },
   {
     "thread_id": 12,
@@ -96,7 +110,11 @@
       "education",
       "frontend",
       "react"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+    }
   },
   {
     "thread_id": 14,
@@ -107,7 +125,11 @@
     "skills": [
       "teams",
       "collaboration"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+    }
   },
   {
     "thread_id": 201,
@@ -122,7 +144,11 @@
       "3cx",
       "telephony",
       "node"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+    }
   },
   {
     "thread_id": 138,
@@ -134,7 +160,11 @@
       "web",
       "frontend",
       "api"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+    }
   },
   {
     "thread_id": 183,
@@ -147,7 +177,8 @@
       "STREAM_MONITOR": "0",
       "CRASH_ALERT_MINUTES": "120",
       "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING": "1",
-      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129"
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
     },
     "skills": [
       "relay",
@@ -168,7 +199,11 @@
       "proxy",
       "api",
       "node"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+    }
   },
   {
     "thread_id": 189,
@@ -180,7 +215,11 @@
       "extensions",
       "runner",
       "typescript"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+    }
   },
   {
     "thread_id": 200,
@@ -192,7 +231,11 @@
       "oref",
       "alerts",
       "native"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+    }
   },
   {
     "thread_id": 210,
@@ -205,7 +248,11 @@
       "vpn",
       "headscale",
       "tailscale"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+    }
   },
   {
     "thread_id": 236,
@@ -217,7 +264,11 @@
       "backup",
       "storage",
       "duplicacy"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+    }
   },
   {
     "thread_id": 456,
@@ -229,7 +280,11 @@
       "bot",
       "telegram",
       "python"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+    }
   },
   {
     "thread_id": 495,
@@ -245,8 +300,8 @@
       "typescript"
     ],
     "env": {
-      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20130",
-      "ANTHROPIC_API_KEY": "sk-221d3a4715adf2a9-8956c3-c6e96698"
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
     }
   },
   {
@@ -262,7 +317,11 @@
       "billing",
       "web",
       "react"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+    }
   },
   {
     "thread_id": 4067,
@@ -274,7 +333,11 @@
       "planning",
       "calendar",
       "web"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+    }
   },
   {
     "thread_id": 6252,
@@ -286,7 +349,11 @@
       "mikrotik",
       "router",
       "firewall"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+    }
   },
   {
     "thread_id": 8542,
@@ -300,7 +367,11 @@
       "general",
       "codex",
       "multi-project"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+    }
   },
   {
     "thread_id": 8928,
@@ -316,10 +387,10 @@
       "multi-project"
     ],
     "env": {
-      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20130",
-      "ANTHROPIC_AUTH_TOKEN": "sk-221d3a4715adf2a9-8956c3-c6e96698",
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
       "ANTHROPIC_MODEL": "auto-route",
-      "ANTHROPIC_SMALL_FAST_MODEL": "auto-route"
+      "ANTHROPIC_SMALL_FAST_MODEL": "auto-route",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
     }
   },
   {
@@ -333,7 +404,11 @@
       "remote-desktop",
       "docker",
       "networking"
-    ]
+    ],
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+    }
   },
   {
     "thread_id": 12625,
@@ -341,13 +416,17 @@
     "path": "/root/.chat-workspace",
     "host": null,
     "group": "general",
-    "description": "General chat topic — conversations, questions, brainstorming",
+    "description": "General chat topic \u2014 conversations, questions, brainstorming",
     "skills": [
       "general",
       "chat",
       "conversation"
     ],
-    "skills_route": true
+    "skills_route": true,
+    "env": {
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+    }
   },
   {
     "thread_id": 14000,
@@ -355,7 +434,7 @@
     "path": "/root/omniroute",
     "host": null,
     "group": "infra",
-    "description": "OmniRoute AI gateway admin — manage providers, check logs, test routing",
+    "description": "OmniRoute AI gateway admin \u2014 manage providers, check logs, test routing",
     "skills": [
       "docker",
       "devops",
@@ -363,10 +442,10 @@
       "omniroute"
     ],
     "env": {
-      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20130",
-      "ANTHROPIC_AUTH_TOKEN": "sk-221d3a4715adf2a9-8956c3-c6e96698",
+      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
       "ANTHROPIC_MODEL": "auto-route",
-      "ANTHROPIC_SMALL_FAST_MODEL": "auto-route"
+      "ANTHROPIC_SMALL_FAST_MODEL": "auto-route",
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
     }
   }
 ]
