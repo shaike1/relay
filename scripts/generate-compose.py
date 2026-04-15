@@ -15,6 +15,7 @@ import json
 import sys
 import os
 import argparse
+from typing import Optional, List, Dict
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RELAY_DIR = os.path.dirname(SCRIPT_DIR)
@@ -36,15 +37,16 @@ def path_to_volume_name(path: str) -> str:
 
 
 def _session_service_block(name: str, thread_id: int, workdir: str,
-                           allowed_users: list | None,
+                           allowed_users: Optional[List],
                            image: str, tmp_volume: str,
                            depends_on_relay: bool,
                            with_build: bool = False,
                            session_type: str = "claude",
                            driver: str = "",
-                           extra_env: dict | None = None,
+                           extra_env: Optional[Dict] = None,
                            mem_limit: str = "512m",
-                           memswap_limit: str = "768m") -> list[str]:
+                           memswap_limit: str = "768m",
+                           session_ports: Optional[List[str]] = None) -> List[str]:
     """Return lines for a single session service block."""
     svc = sanitize_service_name(name)
     dockerfile = "codex-session.Dockerfile" if session_type == "codex" else "session.Dockerfile"
@@ -103,6 +105,10 @@ def _session_service_block(name: str, thread_id: int, workdir: str,
     lines.append(f"      - /var/run/docker.sock:/var/run/docker.sock")
     lines.append(f"      # Project working directory")
     lines.append(f"      - {workdir}:{workdir}")
+    if session_ports:
+        lines.append(f"    ports:")
+        for port in session_ports:
+            lines.append(f"      - \"{port}\"")
     if depends_on_relay:
         lines.append(f"    depends_on:")
         lines.append(f"      - relay")
@@ -135,6 +141,8 @@ def generate_compose(sessions: list, output_path: str) -> None:
         "# Starts one container per local session (Claude or Codex).",
         "# Each container runs mcp-server + session-loop under s6-overlay.",
         "",
+        "name: relay-local",
+        "",
         "services:",
     ]
 
@@ -148,13 +156,14 @@ def generate_compose(sessions: list, output_path: str) -> None:
             allowed_users=session.get("allowed_users"),
             image=image,
             tmp_volume="relay-queue",
-            depends_on_relay=True,
+            depends_on_relay=False,
             with_build=True,
             session_type=stype,
             driver=session.get("driver", ""),
             extra_env=session.get("env"),
             mem_limit=session.get("mem_limit", "512m"),
             memswap_limit=session.get("memswap_limit", "768m"),
+            session_ports=session.get("ports"),
         )
 
     lines.append("volumes:")
@@ -193,10 +202,13 @@ def generate_remote_compose(sessions: list, host: str, output_path: str) -> None
         f"# Deploy: scp this file + .env to {host}, then: docker compose -f <file> up -d",
         f"# /tmp is bind-mounted from the host so the relay bot can write queue files via SSH.",
         f"",
+        f"name: relay-{short_host}",
+        f"",
         f"services:",
     ]
 
     for session in remote_sessions:
+        stype = session.get("type") or session.get("session_type", "claude")
         lines += _session_service_block(
             name=session["session"],
             thread_id=session["thread_id"],
@@ -205,6 +217,12 @@ def generate_remote_compose(sessions: list, host: str, output_path: str) -> None
             image=REMOTE_IMAGE,
             tmp_volume="/tmp",   # bind mount — SSH writes from relay bot land here
             depends_on_relay=False,
+            session_type=stype,
+            driver=session.get("driver", ""),
+            extra_env=session.get("env"),
+            mem_limit=session.get("mem_limit", "512m"),
+            memswap_limit=session.get("memswap_limit", "768m"),
+            session_ports=session.get("ports"),
         )
 
     content = "\n".join(lines)

@@ -4,6 +4,8 @@
 # Starts one container per local session (Claude or Codex).
 # Each container runs mcp-server + session-loop under s6-overlay.
 
+name: relay-local
+
 services:
   session-ha:
     image: relay-session:latest
@@ -38,8 +40,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/ha-skill:/root/ha-skill
-    depends_on:
-      - relay
     logging:
       driver: "json-file"
       options:
@@ -84,8 +84,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/relay:/root/relay
-    depends_on:
-      - relay
     logging:
       driver: "json-file"
       options:
@@ -130,8 +128,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/.openclaw/workspace:/root/.openclaw/workspace
-    depends_on:
-      - relay
     logging:
       driver: "json-file"
       options:
@@ -176,8 +172,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root:/root
-    depends_on:
-      - relay
     logging:
       driver: "json-file"
       options:
@@ -222,8 +216,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/itops-agents:/root/itops-agents
-    depends_on:
-      - relay
     logging:
       driver: "json-file"
       options:
@@ -251,6 +243,10 @@ services:
       WORKDIR: "/root/openclaw-3cx"
       ANTHROPIC_BASE_URL: "http://100.64.0.7:20129"
       ANTHROPIC_API_KEY: "sk-075c45108b54e7a0-152db1-4238d735"
+      ANTHROPIC_MODEL: "auto-route"
+      ANTHROPIC_SMALL_FAST_MODEL: "auto-route"
+      HOST: "0.0.0.0"
+      PORT: "8787"
       CLAUDE_CODE_ENABLE_TELEMETRY: "1"
       OTEL_LOGS_EXPORTER: "console"
       OTEL_LOG_TOOL_DETAILS: "1"
@@ -268,8 +264,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/openclaw-3cx:/root/openclaw-3cx
-    depends_on:
-      - relay
+    ports:
+      - "8787:8787"
     logging:
       driver: "json-file"
       options:
@@ -317,8 +313,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/relay:/root/relay
-    depends_on:
-      - relay
     logging:
       driver: "json-file"
       options:
@@ -363,8 +357,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/cliproxyapi:/root/cliproxyapi
-    depends_on:
-      - relay
     logging:
       driver: "json-file"
       options:
@@ -409,8 +401,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/.openclaw/extensions/claude-runner:/root/.openclaw/extensions/claude-runner
-    depends_on:
-      - relay
     logging:
       driver: "json-file"
       options:
@@ -455,8 +445,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/.openclaw/workspace/skills/oref-native:/root/.openclaw/workspace/skills/oref-native
-    depends_on:
-      - relay
     logging:
       driver: "json-file"
       options:
@@ -501,8 +489,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/clawdbot:/root/clawdbot
-    depends_on:
-      - relay
     logging:
       driver: "json-file"
       options:
@@ -547,8 +533,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/.openclaw:/root/.openclaw
-    depends_on:
-      - relay
     logging:
       driver: "json-file"
       options:
@@ -594,8 +578,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/mybill:/root/mybill
-    depends_on:
-      - relay
     logging:
       driver: "json-file"
       options:
@@ -640,8 +622,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/tala-planner:/root/tala-planner
-    depends_on:
-      - relay
     logging:
       driver: "json-file"
       options:
@@ -686,8 +666,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/mikrotik:/root/mikrotik
-    depends_on:
-      - relay
     logging:
       driver: "json-file"
       options:
@@ -729,8 +707,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root:/root
-    depends_on:
-      - relay
     logging:
       driver: "json-file"
       options:
@@ -777,8 +753,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/.relay-copilot/workspace:/root/.relay-copilot/workspace
-    depends_on:
-      - relay
     logging:
       driver: "json-file"
       options:
@@ -823,8 +797,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/meshcentral:/root/meshcentral
-    depends_on:
-      - relay
     logging:
       driver: "json-file"
       options:
@@ -869,8 +841,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/.chat-workspace:/root/.chat-workspace
-    depends_on:
-      - relay
     logging:
       driver: "json-file"
       options:
@@ -917,8 +887,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Project working directory
       - /root/omniroute:/root/omniroute
-    depends_on:
-      - relay
     logging:
       driver: "json-file"
       options:

@@ -113,7 +113,9 @@
     ],
     "env": {
       "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
-      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735",
+      "ANTHROPIC_MODEL": "auto-route",
+      "ANTHROPIC_SMALL_FAST_MODEL": "auto-route"
     }
   },
   {
@@ -145,9 +147,16 @@
       "telephony",
       "node"
     ],
+    "ports": [
+      "8787:8787"
+    ],
     "env": {
       "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
-      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
+      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735",
+      "ANTHROPIC_MODEL": "auto-route",
+      "ANTHROPIC_SMALL_FAST_MODEL": "auto-route",
+      "HOST": "0.0.0.0",
+      "PORT": "8787"
     }
   },
   {
