@@ -116,6 +116,8 @@ That means:
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the concrete policy.
 
+For the next implementation steps, see [RELAY_ROADMAP.md](./RELAY_ROADMAP.md).
+
 ---
 
 ## How it works
