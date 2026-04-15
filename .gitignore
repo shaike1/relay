@@ -5,6 +5,7 @@ bot.log
 __pycache__/
 *.pyc
 mcp-telegram/node_modules/
+node_modules/
 mcp-telegram/bun.lock
 REDDIT_POST.md
 VIRAL_POST.md
