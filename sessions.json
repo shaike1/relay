@@ -105,6 +105,7 @@
     "session": "edushare",
     "path": "/root/.openclaw/workspace/edushare",
     "host": "root@100.64.0.12",
+    "driver": "oauth",
     "group": "openclaw",
     "skills": [
       "education",
@@ -123,6 +124,7 @@
     "session": "teamy",
     "path": "/root/teamy",
     "host": "root@100.64.0.12",
+    "driver": "oauth",
     "group": "tools",
     "skills": [
       "teams",
@@ -164,6 +166,7 @@
     "session": "right-api-web",
     "path": "/root/right-api-com",
     "host": "root@100.64.0.12",
+    "driver": "oauth",
     "group": "web",
     "skills": [
       "web",
@@ -251,6 +254,7 @@
     "session": "headscale",
     "path": "/root/headscale",
     "host": "root@100.64.0.12",
+    "driver": "oauth",
     "group": "infra",
     "skills": [
       "networking",
@@ -268,6 +272,7 @@
     "session": "duplicacy",
     "path": "/root/duplicacy",
     "host": "root@100.64.0.12",
+    "driver": "oauth",
     "group": "infra",
     "skills": [
       "backup",
