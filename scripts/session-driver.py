@@ -728,15 +728,7 @@ def main():
                 cleaned_response = _clean_model_response(response, prompt)
 
                 if not cleaned_response and response:
-                    log.warning(f"Dirty/empty response for message {mid}; attempting one repair pass")
-                    repair_prompt = _repair_response_prompt(prompt, response)
-                    repaired = ask_claude(repair_prompt, user=user)
-                    cleaned_response = _clean_model_response(repaired, repair_prompt)
-                    if cleaned_response:
-                        response = repaired
-                        log.info(f"Repair pass succeeded for message {mid}")
-                    else:
-                        log.warning(f"Repair pass still produced no clean response for message {mid}")
+                    log.warning(f"Dirty/empty response for message {mid} — dropping (repair pass disabled to prevent noise leak)")
 
                 # Track assistant response
                 if cleaned_response:
