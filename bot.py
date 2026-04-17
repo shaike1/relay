@@ -2048,17 +2048,8 @@ async def check_stuck_force(context) -> None:
             text = entry.get("text", "?")
             chat_id = thread_to_chat.get(thread_id, GROUP_CHAT_ID)
             logger.warning(f"Stuck force msg: thread={thread_id} msg_id={msg_id} age={age_min}m text={text!r}")
-            try:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    message_thread_id=thread_id,
-                    text=f"⚠️ כפתור תקוע — סשן <b>{session_name}</b>\n"
-                         f"לחיצה על <b>{text}</b> לפני {age_min} דקות לא נמסרה ל-Claude.\n"
-                         f"נסה /restart בטופיק הזה.",
-                    parse_mode="HTML",
-                )
-            except Exception as e:
-                logger.error(f"Failed to send stuck-force alert: {e}")
+            # Log only — no Telegram alert for stuck button
+            logger.warning(f"[stuck-force] {session_name}: button stuck {age_min}m")
 
 
 async def check_no_reply(context) -> None:
