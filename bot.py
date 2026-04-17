@@ -2148,19 +2148,7 @@ async def check_no_reply(context) -> None:
             )
             if now - _rate_limited_alerted.get(session_name, 0) >= RATE_LIMIT_ALERT_COOLDOWN:
                 _rate_limited_alerted[session_name] = now
-                try:
-                    await context.bot.send_message(
-                        chat_id=chat_id_for_session,
-                        message_thread_id=thread_id,
-                        text=(
-                            f"⚠️ <b>{_esc(session_name)}</b> הגיע למגבלת שימוש, אז אני לא מפעיל אותו מחדש.\n"
-                            f"<code>{_esc(rate_limit_detail)}</code>\n"
-                            f"המשך אפשרי: להמתין לאיפוס המגבלה או לבחור <b>extra usage</b> / שדרוג מתוך הסשן."
-                        ),
-                        parse_mode="HTML",
-                    )
-                except Exception as e:
-                    logger.error(f"[no-reply] rate-limit alert send failed: {e}")
+                logger.warning(f"[no-reply] {session_name}: rate-limited, skipping restart.")
             continue
 
         logger.warning(f"[no-reply] {session_name}: unread msg {age_min}m old — restarting {container}")
@@ -2182,17 +2170,9 @@ async def check_no_reply(context) -> None:
 
         _no_reply_restarted[session_name] = now
 
-        # Send alert to the session's Telegram topic
-        status = "✓ הופעל מחדש" if restart_ok else "✗ הפעלה מחדש נכשלה"
-        try:
-            await context.bot.send_message(
-                chat_id=chat_id_for_session,
-                message_thread_id=thread_id,
-                text=f"⚠️ <b>{_esc(session_name)}</b> לא הגיב {age_min} דק׳ — מפעיל מחדש\n{status}",
-                parse_mode="HTML",
-            )
-        except Exception as e:
-            logger.error(f"[no-reply] alert send failed: {e}")
+        # Log only — no Telegram alert (reduces noise in user topics)
+        status = "restarted" if restart_ok else "restart failed"
+        logger.warning(f"[no-reply] {session_name}: no-reply watchdog {status} after {age_min}m")
 
 
 AGENT_TASKS_FILE = '/tmp/agent-tasks.json'
