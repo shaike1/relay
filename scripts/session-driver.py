@@ -393,11 +393,12 @@ def _clean_model_response(response: str, prompt: str = "") -> str:
         "ctrl+o to expand", "Recent activity", "Session shutting down", "Captured at",
         "Messages preserved", "Trigger: session-end", "Reason: Session shutting down",
         "Called telegram", "Calling telegram", "Searching for ", "Reading ", "recalling ",
+        "Original user prompt:", "Raw model output to clean:", "Return ONLY the final",
     )
     progress_re = re.compile(
         r"^(Called telegram(?: \d+ times)?|Calling telegram(?: \d+ times)?|"
         r"Searching for \d+ patterns?|Reading \d+ files?|recalling \d+ memory|"
-        r"✻ (?:Worked|Churned|Cooked|Sautéed|Sauteed|Baked|Brewed|Cogitated) for .*|"
+        r"✻ (?:Worked|Churned|Cooked|Sautéed|Sauteed|Baked|Brewed|Cogitated|Crunched) for .*|"
         r"[▘▝]+\s+[▘▝]+\s+.+)$"
     )
 
@@ -432,6 +433,7 @@ def _clean_model_response(response: str, prompt: str = "") -> str:
     noisy_tokens = [
         "Claude Code v", "API Usage Billing", "❯", "root@", "auto-route", "checkpoint",
         "### Assistant", "ctrl+o to expand", "Called telegram", "Calling telegram", "Recent activity",
+        "Original user prompt:", "Raw model output to clean:", "✻ Crunched",
     ]
     if result and sum(token in result for token in noisy_tokens) >= 2:
         return ""
