@@ -20,6 +20,7 @@ services:
       SESSION_NAME: "ha"
       TELEGRAM_THREAD_ID: "11394"
       WORKDIR: "/root/ha-skill"
+      SESSION_DRIVER: "oauth"
       AUTO_COMPACT_THRESHOLD: "40000"
       ANTHROPIC_BASE_URL: "http://100.64.0.7:20129"
       ANTHROPIC_API_KEY: "sk-075c45108b54e7a0-152db1-4238d735"
