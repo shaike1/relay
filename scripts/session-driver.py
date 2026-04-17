@@ -749,8 +749,6 @@ def main():
 
                 if not cleaned_response:
                     log.warning(f"No clean response for message {mid} — model output was empty or UI-only")
-                    send_message("קיבלתי — ריליי מגיב דרך Cody_Code_bot, אבל עדיין מנקה את פורמט התשובה.",
-                                reply_to=mid if mid and mid > 0 else None)
 
                 # Run waste check after each message
                 _check_waste_patterns()
