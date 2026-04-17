@@ -255,6 +255,11 @@ def read_pending_messages() -> list:
                         "Crunched for", "✻ Crunched", "הפעלה מחדש נכשלה",
                         "לא הגיב", "מפעיל מחדש",
                     )
+                    # Also skip scheduled system messages (via=scheduled)
+                    _via = msg.get("via", "")
+                    if _via == "scheduled":
+                        log.debug(f"Skipping scheduled system message mid={mid}: {msg.get('text','')[:60]!r}")
+                        continue
                     _txt = msg.get("text", "")
                     if any(t in _txt for t in _noise_tokens):
                         log.debug(f"Skipping noise message mid={mid}: {_txt[:60]!r}")
