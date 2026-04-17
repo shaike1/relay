@@ -93,13 +93,16 @@ def _load_relay_env_file(path: str = RELAY_ENV_FILE) -> dict[str, str]:
 
 def load_env_fallbacks():
     global BOT_TOKEN, CHAT_ID
-    if BOT_TOKEN and CHAT_ID:
-        return
     env = _load_relay_env_file()
     if not BOT_TOKEN:
         BOT_TOKEN = env.get("TELEGRAM_BOT_TOKEN", "")
     if not CHAT_ID:
         CHAT_ID = env.get("GROUP_CHAT_ID", "")
+    # Inject oauth token so Claude can authenticate
+    if not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        token = env.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+        if token:
+            os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = token
 
 load_env_fallbacks()
 
