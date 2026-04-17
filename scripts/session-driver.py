@@ -245,6 +245,17 @@ def read_pending_messages() -> list:
                         seen_ids.add(mid)
 
                     # Only real user messages should enter the pending queue.
+                    # Skip internal noise that leaked into the queue
+                    _noise_tokens = (
+                        "כפתור תקוע", "API Error", "Tool names must be unique",
+                        "Raw model output to clean", "Original user prompt:",
+                        "Crunched for", "✻ Crunched", "הפעלה מחדש נכשלה",
+                        "לא הגיב", "מפעיל מחדש",
+                    )
+                    _txt = msg.get("text", "")
+                    if any(t in _txt for t in _noise_tokens):
+                        log.debug(f"Skipping noise message mid={mid}: {_txt[:60]!r}")
+                        continue
                     if mid > 0 and mid > last_id:
                         pending.append(msg)
                     elif mid <= 0 and ts > last_ts:
