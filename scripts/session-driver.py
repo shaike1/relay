@@ -447,6 +447,15 @@ def _clean_model_response(response: str, prompt: str = "") -> str:
     ):
         return ""
 
+    # Hard block: if result IS the repair prompt or starts with it, discard
+    repair_markers = ("Original user prompt:", "Raw model output to clean:", "Return ONLY the final")
+    stripped = result.strip()
+    if any(stripped.startswith(m) for m in repair_markers):
+        return ""
+    # Also discard if result contains these markers (means repair prompt leaked)
+    if sum(m in result for m in repair_markers) >= 2:
+        return ""
+
     return result
 
 
