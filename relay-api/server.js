@@ -2206,6 +2206,31 @@ app.post('/webhooks/generic', (req, res) => {
   }
 });
 
+// Health dashboard — public (no auth needed for monitoring)
+app.get('/health/dashboard', (req, res) => {
+  const now = Math.floor(Date.now() / 1000);
+  let sessions;
+  try { sessions = buildSessionHealthData(); } catch(e) { sessions = []; }
+  const rows = sessions.map(s => {
+    const age = s.last_seen ? Math.floor((now - s.last_seen) / 60) : null;
+    const ageStr = age === null ? '—' : age < 60 ? age + 'm ago' : Math.floor(age/60) + 'h ago';
+    const icon = s.status === 'running' ? '✅' : s.status === 'degraded' ? '⚠️' : '❓';
+    return '<tr><td>' + icon + '</td><td><b>' + s.name + '</b></td><td>' + s.status + '</td><td>' + ageStr + '</td><td>' + (s.thread_id||'—') + '</td></tr>';
+  }).join('');
+  res.setHeader('Content-Type','text/html');
+  res.send('<!DOCTYPE html><html><head><meta charset=utf-8><title>Relay Health</title>' +
+    '<meta http-equiv="refresh" content="30">' +
+    '<style>body{font-family:monospace;padding:20px;background:#111;color:#eee}' +
+    'table{border-collapse:collapse;width:100%}th,td{padding:8px 12px;text-align:left;border-bottom:1px solid #333}' +
+    'th{background:#222}</style></head>' +
+    '<body><h2>📡 Relay Session Health</h2>' +
+    '<p style="color:#888">Auto-refresh 30s</p>' +
+    '<table><tr><th></th><th>Session</th><th>Status</th><th>Last seen</th><th>Thread</th></tr>' +
+    rows + '</table>' +
+    '<p><a href="/health/sessions" style="color:#4a9eff">Raw JSON</a></p>' +
+    '</body></html>');
+});
+
 // Apply auth to all routes below
 app.use(authMiddleware);
 
