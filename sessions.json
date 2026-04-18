@@ -16,7 +16,7 @@
     "route_keywords": [
       "ha",
       "home assistant",
-      "\u05d1\u05d9\u05ea \u05d7\u05db\u05dd",
+      "בית חכם",
       "automation"
     ],
     "env": {
@@ -31,7 +31,7 @@
     "path": "/root/relay",
     "host": null,
     "group": "infra",
-    "description": "Files & Config topic \u2014 backups, exports, markdown reports auto-sent here",
+    "description": "Files & Config topic — backups, exports, markdown reports auto-sent here",
     "skills": [
       "files",
       "backup",
@@ -118,7 +118,8 @@
       "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735",
       "ANTHROPIC_MODEL": "auto-route",
       "ANTHROPIC_SMALL_FAST_MODEL": "auto-route",
-      "TMATE_DEBUG": "1"
+      "TMATE_DEBUG": "1",
+      "ANTHROPIC_AUTH_TOKEN": "sk-075c45108b54e7a0-152db1-4238d735"
     }
   },
   {
@@ -432,7 +433,7 @@
     "path": "/root/.chat-workspace",
     "host": null,
     "group": "general",
-    "description": "General chat topic \u2014 conversations, questions, brainstorming",
+    "description": "General chat topic — conversations, questions, brainstorming",
     "skills": [
       "general",
       "chat",
@@ -450,7 +451,7 @@
     "path": "/root/omniroute",
     "host": null,
     "group": "infra",
-    "description": "OmniRoute AI gateway admin \u2014 manage providers, check logs, test routing",
+    "description": "OmniRoute AI gateway admin — manage providers, check logs, test routing",
     "skills": [
       "docker",
       "devops",

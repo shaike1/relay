@@ -93,16 +93,13 @@ def _load_relay_env_file(path: str = RELAY_ENV_FILE) -> dict[str, str]:
 
 def load_env_fallbacks():
     global BOT_TOKEN, CHAT_ID
+    if BOT_TOKEN and CHAT_ID:
+        return
     env = _load_relay_env_file()
     if not BOT_TOKEN:
         BOT_TOKEN = env.get("TELEGRAM_BOT_TOKEN", "")
     if not CHAT_ID:
         CHAT_ID = env.get("GROUP_CHAT_ID", "")
-    # Inject oauth token so Claude can authenticate
-    if not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
-        token = env.get("CLAUDE_CODE_OAUTH_TOKEN", "")
-        if token:
-            os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = token
 
 load_env_fallbacks()
 
@@ -248,16 +245,6 @@ def read_pending_messages() -> list:
                         seen_ids.add(mid)
 
                     # Only real user messages should enter the pending queue.
-                    # Skip internal noise that leaked into the queue
-                    # Skip scheduled system messages (via=scheduled)
-                    if msg.get("via") == "scheduled":
-                        log.debug(f"Skipping scheduled system message mid={mid}: {msg.get('text','')[:60]!r}")
-                        continue
-                    # Skip noise messages using unified filter
-                    _txt = msg.get("text", "")
-                    if is_noise(_txt):
-                        log.debug(f"Skipping noise message mid={mid}: {_txt[:60]!r}")
-                        continue
                     if mid > 0 and mid > last_id:
                         pending.append(msg)
                     elif mid <= 0 and ts > last_ts:
@@ -387,28 +374,6 @@ def get_provider():
     return _provider
 
 
-# ─── Unified noise filter ────────────────────────────────────────────────────
-NOISE_TOKENS: tuple[str, ...] = (
-    # Queue-level noise (also filtered in read_pending_messages)
-    "כפתור תקוע", "API Error", "Tool names must be unique",
-    "Raw model output to clean", "Original user prompt:",
-    "Crunched for", "✻ Crunched", "הפעלה מחדש נכשלה",
-    "לא הגיב", "מפעיל מחדש",
-    # Response-level noise
-    "Claude Code v", "API Usage Billing", "auto-route",
-    "checkpoint", "Session Checkpoint", "ctrl+o to expand",
-    "Called telegram", "Calling telegram", "Recent activity",
-    "You just started.", "You just restarted.",
-    "Return ONLY the final",
-)
-
-def is_noise(text: str) -> bool:
-    """Return True if text is internal noise that should never be sent to Telegram."""
-    if not text or not text.strip():
-        return True
-    return any(t in text for t in NOISE_TOKENS)
-
-
 def _clean_model_response(response: str, prompt: str = "") -> str:
     """Best-effort cleanup for tmux/UI dumps returned by oauth_cli_coder."""
     if not response:
@@ -428,12 +393,11 @@ def _clean_model_response(response: str, prompt: str = "") -> str:
         "ctrl+o to expand", "Recent activity", "Session shutting down", "Captured at",
         "Messages preserved", "Trigger: session-end", "Reason: Session shutting down",
         "Called telegram", "Calling telegram", "Searching for ", "Reading ", "recalling ",
-        "Original user prompt:", "Raw model output to clean:", "Return ONLY the final",
     )
     progress_re = re.compile(
         r"^(Called telegram(?: \d+ times)?|Calling telegram(?: \d+ times)?|"
         r"Searching for \d+ patterns?|Reading \d+ files?|recalling \d+ memory|"
-        r"✻ (?:Worked|Churned|Cooked|Sautéed|Sauteed|Baked|Brewed|Cogitated|Crunched) for .*|"
+        r"✻ (?:Worked|Churned|Cooked|Sautéed|Sauteed|Baked|Brewed|Cogitated) for .*|"
         r"[▘▝]+\s+[▘▝]+\s+.+)$"
     )
 
@@ -468,7 +432,6 @@ def _clean_model_response(response: str, prompt: str = "") -> str:
     noisy_tokens = [
         "Claude Code v", "API Usage Billing", "❯", "root@", "auto-route", "checkpoint",
         "### Assistant", "ctrl+o to expand", "Called telegram", "Calling telegram", "Recent activity",
-        "Original user prompt:", "Raw model output to clean:", "✻ Crunched",
     ]
     if result and sum(token in result for token in noisy_tokens) >= 2:
         return ""
@@ -480,15 +443,6 @@ def _clean_model_response(response: str, prompt: str = "") -> str:
         or ln in {"▘▘ ▝▝", "▘▘ ▝▝    /root", "▘▘ ▝▝    ~/openclaw-3cx"}
         for ln in meaningful
     ):
-        return ""
-
-    # Hard block: if result IS the repair prompt or starts with it, discard
-    repair_markers = ("Original user prompt:", "Raw model output to clean:", "Return ONLY the final")
-    stripped = result.strip()
-    if any(stripped.startswith(m) for m in repair_markers):
-        return ""
-    # Also discard if result contains these markers (means repair prompt leaked)
-    if sum(m in result for m in repair_markers) >= 2:
         return ""
 
     return result
@@ -749,7 +703,15 @@ def main():
                 cleaned_response = _clean_model_response(response, prompt)
 
                 if not cleaned_response and response:
-                    log.warning(f"Dirty/empty response for message {mid} — dropping (repair pass disabled to prevent noise leak)")
+                    log.warning(f"Dirty/empty response for message {mid}; attempting one repair pass")
+                    repair_prompt = _repair_response_prompt(prompt, response)
+                    repaired = ask_claude(repair_prompt, user=user)
+                    cleaned_response = _clean_model_response(repaired, repair_prompt)
+                    if cleaned_response:
+                        response = repaired
+                        log.info(f"Repair pass succeeded for message {mid}")
+                    else:
+                        log.warning(f"Repair pass still produced no clean response for message {mid}")
 
                 # Track assistant response
                 if cleaned_response:
@@ -760,15 +722,13 @@ def main():
                     })
                     log.info(f"Claude response len={len(response)} preview={response[:120]!r}")
                     log.info(f"Cleaned response len={len(cleaned_response)} preview={cleaned_response[:120]!r}")
-                    # Final noise guard before sending
-                    if is_noise(cleaned_response):
-                        log.warning(f"Blocked noise from send_message mid={mid}: {cleaned_response[:60]!r}")
-                    else:
-                        log.info(f"Calling send_message for mid={mid}")
-                        send_message(cleaned_response, reply_to=mid if mid and mid > 0 else None)
+                    log.info(f"Calling send_message for mid={mid}")
+                    send_message(cleaned_response, reply_to=mid if mid and mid > 0 else None)
 
                 if not cleaned_response:
                     log.warning(f"No clean response for message {mid} — model output was empty or UI-only")
+                    send_message("קיבלתי — ריליי מגיב דרך Cody_Code_bot, אבל עדיין מנקה את פורמט התשובה.",
+                                reply_to=mid if mid and mid > 0 else None)
 
                 # Run waste check after each message
                 _check_waste_patterns()

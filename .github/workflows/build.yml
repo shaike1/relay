@@ -50,3 +50,17 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Deploy to relay host
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.RELAY_HOST }}
+          username: root
+          key: ${{ secrets.RELAY_SSH_KEY }}
+          script: |
+            cd /root/relay
+            git pull origin main
+            docker build -f session.Dockerfile -t relay-session:latest .
+            docker compose -f docker-compose.sessions.yml up -d
+            echo "Deploy complete: $(date)"

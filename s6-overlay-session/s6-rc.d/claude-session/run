@@ -1,15 +1,41 @@
 #!/command/with-contenv sh
 # Session loop service — supervised by s6
-# SESSION_NAME, WORKDIR, and SESSION_TYPE are injected via docker-compose environment
 
-# Skip if using oauth-cli-coder driver
 if [ "${SESSION_DRIVER}" = "oauth" ]; then
-  echo "[claude-session] Skipping — SESSION_DRIVER=oauth (using session-driver instead)"
+  echo "[claude-session] Skipping — SESSION_DRIVER=oauth"
   exec sleep infinity
 fi
 
-# Ensure scripts are executable (bind mounts can strip permissions)
 chmod +x /relay/scripts/claude-session-loop.sh /relay/scripts/copilot-session-loop.sh /relay/scripts/mcp-server-wrapper.sh /relay/scripts/message-watchdog.sh 2>/dev/null || true
+
+# Voice session: start 3CX HTTP API sidecar from /tmp to avoid overlay issues
+if [ "${SESSION_NAME}" = "voice" ]; then
+  echo "[claude-session] setting up voice-api"
+  mkdir -p /tmp/3cx/src/lib /tmp/3cx/public
+
+  # Copy source files from bind-mount to /tmp (works around overlay whiteout)
+  BSRC="/root/openclaw-3cx"
+  if [ -f "${BSRC}/src/server.js" ]; then
+    cp "${BSRC}/src/server.js" /tmp/3cx/src/
+    cp "${BSRC}/src/index.js"  /tmp/3cx/src/
+    cp "${BSRC}/src/lib/env.js"      /tmp/3cx/src/lib/
+    cp "${BSRC}/src/lib/threecx.js"  /tmp/3cx/src/lib/
+    cp "${BSRC}/public/index.html"   /tmp/3cx/public/
+    echo "[claude-session] source copied from bind-mount"
+  else
+    echo "[claude-session] WARNING: bind-mount source not found at ${BSRC}/src"
+  fi
+
+  HOST="${HOST:-0.0.0.0}" PORT="${PORT:-8787}" \
+    THREECX_HOST="${THREECX_HOST:-1664.3cx.cloud}" \
+    THREECX_USER="${THREECX_USER:-12610}" \
+    THREECX_PASSWORD="${THREECX_PASSWORD:-3cx!3Cx!3CX}" \
+    THREECX_EXTENSION="${THREECX_EXTENSION:-9000}" \
+    VOICE_PUBLIC_DIR="/tmp/3cx/public" \
+    nohup node /tmp/3cx/src/index.js server >/tmp/voice-api.log 2>&1 &
+  echo "[claude-session] voice-api PID=$!"
+fi
+
 export S6_SUPERVISED=1
 if [ "${SESSION_TYPE}" = "copilot" ]; then
   exec /relay/scripts/copilot-session-loop.sh "${SESSION_NAME}" "${WORKDIR}"
