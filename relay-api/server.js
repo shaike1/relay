@@ -4861,17 +4861,9 @@ function tickScheduler() {
   }
 }
 
-// Daily digest — fire at 22:00 every day to all sessions
+// Daily digest — disabled
 function tickDailyDigest(now) {
-  if (now.getHours() === 22 && now.getMinutes() === 0) {
-    try {
-      const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
-      for (const session of sessions) {
-        handleDigestCommand(session.thread_id, null).catch(() => {});
-      }
-      console.log('[digest] Daily digest fired for all sessions');
-    } catch (e) { console.error('[digest] Error:', e.message); }
-  }
+  // disabled
 }
 
 // Tick every minute, aligned to the minute boundary
