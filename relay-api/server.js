@@ -4798,7 +4798,7 @@ app.use((req, res) => {
 });
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Relay API server listening on port ${PORT}, proxying to ${NOMACODE_URL}`);
+  console.log(`Relay API server listening on port ${PORT}`);
 
   // Set the bot's menu button to open the Mini App
   const MINIAPP_DOMAIN = process.env.MINIAPP_DOMAIN || (() => {
@@ -4825,7 +4825,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 
 // WebSocket upgrade for terminal
 server.on('upgrade', (req, socket, head) => {
-  const proxy = createProxyMiddleware({ target: NOMACODE_URL, ws: true });
+  // nomacode removed — WebSocket handled by getTerminalProxy per session
   proxy.upgrade(req, socket, head);
 });
 
