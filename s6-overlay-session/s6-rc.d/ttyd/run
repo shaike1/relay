@@ -1,0 +1,21 @@
+#!/command/with-contenv sh
+# ttyd — web terminal for this session's tmux
+# Port: 7681 (standard ttyd port)
+# Accessible via relay-api reverse proxy at /terminal/<session>
+
+SESSION="${SESSION_NAME:-unknown}"
+PORT="${TTYD_PORT:-7681}"
+
+echo "[ttyd:${SESSION}] Starting web terminal on port ${PORT}"
+
+# Ensure tmux session exists first
+if ! tmux has-session -t "${SESSION}" 2>/dev/null; then
+  tmux new-session -d -s "${SESSION}"
+fi
+
+exec ttyd \
+  --port "${PORT}" \
+  --interface 0.0.0.0 \
+  --writable \
+  --terminal-type xterm-256color \
+  tmux attach-session -t "${SESSION}"

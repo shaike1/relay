@@ -2215,7 +2215,7 @@ app.get('/health/dashboard', (req, res) => {
     const age = s.last_seen ? Math.floor((now - s.last_seen) / 60) : null;
     const ageStr = age === null ? '—' : age < 60 ? age + 'm ago' : Math.floor(age/60) + 'h ago';
     const icon = s.status === 'running' ? '✅' : s.status === 'degraded' ? '⚠️' : '❓';
-    return '<tr><td>' + icon + '</td><td><b>' + s.name + '</b></td><td>' + s.status + '</td><td>' + ageStr + '</td><td>' + (s.thread_id||'—') + '</td></tr>';
+    return '<tr><td>' + icon + '</td><td><b>' + s.name + '</b></td><td>' + s.status + '</td><td>' + ageStr + '</td><td>' + (s.thread_id||'—') + '</td><td><a href="/terminal/' + s.name + '" target="_blank" style="color:#4a9eff;text-decoration:none">⊞ terminal</a></td></tr>';
   }).join('');
   res.setHeader('Content-Type','text/html');
   res.send('<!DOCTYPE html><html><head><meta charset=utf-8><title>Relay Health</title>' +
@@ -2225,7 +2225,7 @@ app.get('/health/dashboard', (req, res) => {
     'th{background:#222}</style></head>' +
     '<body><h2>📡 Relay Session Health</h2>' +
     '<p style="color:#888">Auto-refresh 30s</p>' +
-    '<table><tr><th></th><th>Session</th><th>Status</th><th>Last seen</th><th>Thread</th></tr>' +
+    '<table><tr><th></th><th>Session</th><th>Status</th><th>Last seen</th><th>Thread</th><th></th></tr>' +
     rows + '</table>' +
     '<p><a href="/health/sessions" style="color:#4a9eff">Raw JSON</a></p>' +
     '</body></html>');
@@ -4766,6 +4766,24 @@ app.get('/api/otel-activity', (req, res) => {
   });
 
   res.json({ ok: true, count: events.length, events: events.slice(0, limit) });
+});
+
+// --- Terminal proxy: /terminal/<session> → ttyd in session container ---
+// ttyd runs on port 7681 inside each relay-session-<name> container
+app.use('/terminal/:session', (req, res, next) => {
+  const session = req.params.session.replace(/[^a-zA-Z0-9_-]/g, '');
+  const containerHost = 'relay-session-' + session;
+  const target = 'http://' + containerHost + ':7681';
+  createProxyMiddleware({
+    target,
+    changeOrigin: true,
+    ws: true,
+    pathRewrite: { ['^/terminal/' + session]: '' },
+    on: { error: (err, req, res) => {
+      if (res.writeHead) res.writeHead(502);
+      res.end('Terminal unavailable for session: ' + session);
+    }}
+  })(req, res, next);
 });
 
 // --- Proxy everything else to nomacode (web terminal) ---

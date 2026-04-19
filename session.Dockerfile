@@ -15,7 +15,20 @@ RUN apt-get update && apt-get install -y \
     jq ca-certificates \
     xz-utils \
     docker.io \
+    # ttyd deps
+    libjson-c5 libwebsockets19t64 \
     && rm -rf /var/lib/apt/lists/* \
+    # Install ttyd (web terminal) — arm64 + amd64 supported
+    && ARCH=$(uname -m) \
+    && case "$ARCH" in \
+         aarch64) TTYD_ARCH=aarch64 ;; \
+         x86_64)  TTYD_ARCH=x86_64 ;; \
+         *)       TTYD_ARCH=x86_64 ;; \
+       esac \
+    && curl -fsSL "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.${TTYD_ARCH}" \
+       -o /usr/local/bin/ttyd \
+    && chmod +x /usr/local/bin/ttyd \
+    && ttyd --version 2>&1 | head -1 || true \
     && ARCH=$(uname -m) \
     && case "$ARCH" in \
          x86_64)  S6_ARCH=x86_64 ;; \
