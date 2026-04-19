@@ -900,6 +900,9 @@ services:
       retries: 3
       start_period: 30s
 
+volumes:
+  relay-queue:
+    external: true
 
   session-callme:
     image: relay-session:latest
@@ -910,7 +913,7 @@ services:
     environment:
       SESSION_NAME: "callme"
       TELEGRAM_THREAD_ID: "19747"
-      WORKDIR: "/root/callme-dev"
+      WORKDIR: "/root/ocplatform-3cx"
       ANTHROPIC_BASE_URL: "http://100.64.0.7:20129"
       ANTHROPIC_API_KEY: "sk-075c45108b54e7a0-152db1-4238d735"
       ANTHROPIC_MODEL: "auto-route"
@@ -925,7 +928,6 @@ services:
       - /root/.claude:/root/.claude
       - /root/.claude.json:/root/.claude.json
       - /var/run/docker.sock:/var/run/docker.sock
-      - /root/callme-dev:/root/callme-dev
       - /root/ocplatform-3cx:/root/ocplatform-3cx
     logging:
       driver: "json-file"
@@ -938,7 +940,3 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-
-volumes:
-  relay-queue:
-    external: true

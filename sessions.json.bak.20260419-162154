@@ -464,28 +464,5 @@
       "ANTHROPIC_SMALL_FAST_MODEL": "auto-route",
       "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735"
     }
-  },
-  {
-    "thread_id": 19747,
-    "session": "callme",
-    "path": "/root/callme-dev",
-    "host": null,
-    "group": "voice",
-    "skills": [
-      "voip",
-      "3cx",
-      "telephony",
-      "node",
-      "whisper",
-      "tts",
-      "websocket"
-    ],
-    "description": "CallMe voice bot development — building on top of ocplatform-3cx",
-    "env": {
-      "ANTHROPIC_BASE_URL": "http://100.64.0.7:20129",
-      "ANTHROPIC_API_KEY": "sk-075c45108b54e7a0-152db1-4238d735",
-      "ANTHROPIC_MODEL": "auto-route",
-      "ANTHROPIC_SMALL_FAST_MODEL": "auto-route"
-    }
   }
 ]
