@@ -2233,20 +2233,26 @@ app.get('/health/dashboard', (req, res) => {
 
 // --- Terminal proxy: /terminal/<session> → ttyd in session container ---
 // ttyd runs on port 7681 inside each relay-session-<name> container
+// WebSocket upgrade handled via server.on('upgrade') below
+const terminalProxies = new Map();
+function getTerminalProxy(session) {
+  if (!terminalProxies.has(session)) {
+    const target = 'http://relay-session-' + session + ':7681';
+    terminalProxies.set(session, createProxyMiddleware({
+      target,
+      changeOrigin: true,
+      ws: true,
+      on: { error: (err, req, res) => {
+        if (res && res.writeHead) { res.writeHead(502); res.end('Terminal unavailable: ' + session); }
+      }}
+    }));
+  }
+  return terminalProxies.get(session);
+}
 app.use('/terminal/:session', (req, res, next) => {
   const session = req.params.session.replace(/[^a-zA-Z0-9_-]/g, '');
-  const containerHost = 'relay-session-' + session;
-  const target = 'http://' + containerHost + ':7681';
-  createProxyMiddleware({
-    target,
-    changeOrigin: true,
-    ws: true,
-    pathRewrite: { ['^/terminal/' + session]: '' },
-    on: { error: (err, req, res) => {
-      if (res.writeHead) res.writeHead(502);
-      res.end('Terminal unavailable for session: ' + session);
-    }}
-  })(req, res, next);
+  req.url = req.url.replace(new RegExp('^/terminal/' + session), '') || '/';
+  getTerminalProxy(session)(req, res, next);
 });
 
 // Apply auth to all routes below
@@ -4909,6 +4915,16 @@ function startScheduler() {
   console.log('[scheduler] Started — first tick in', Math.round(msToNextMinute / 1000), 's');
 }
 startScheduler();
+
+// WebSocket upgrade for /terminal/<session> → ttyd
+server.on('upgrade', (req, socket, head) => {
+  const match = req.url.match(/^\/terminal\/([a-zA-Z0-9_-]+)/);
+  if (match) {
+    const session = match[1];
+    const proxy = getTerminalProxy(session);
+    if (proxy.upgrade) proxy.upgrade(req, socket, head);
+  }
+});
 
 // Live logs — Server-Sent Events stream of docker container logs
 app.get('/api/logs/:container', (req, res) => {
