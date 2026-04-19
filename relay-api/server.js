@@ -694,7 +694,21 @@ function webhookQueueWrite(update) {
     return;
   }
 
-  // /digest — daily digest for this session
+  // /cmd <session> <text> — send keys to tmux session
+  const cmdMatch = msg.text && msg.text.trim().match(/^\/cmd(@\S+)?\s+(\S+)\s+(.+)$/i);
+  if (cmdMatch) {
+    handleSendKeysCommand(threadId, cmdMatch[2], cmdMatch[3], msg.message_id).catch(e => console.error('[cmd] error:', e.message));
+    return;
+  }
+
+    // /relay <session> <text> — send message to another session and wait for reply
+  const relayMatch = msg.text && msg.text.trim().match(/^\/relay(@\S+)?\s+(\S+)\s+(.+)$/i);
+  if (relayMatch) {
+    handleRelayCommand(threadId, relayMatch[2], relayMatch[3], msg.message_id).catch(e => console.error('[relay] error:', e.message));
+    return;
+  }
+
+    // /digest — daily digest for this session
   if (msg.text && /^\/digest(@\S+)?$/i.test(msg.text.trim())) {
     handleDigestCommand(threadId, msg.message_id).catch(e => console.error('[digest] error:', e.message));
     return;
