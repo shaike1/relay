@@ -4895,8 +4895,11 @@ function tickScheduler() {
 }
 
 // Daily digest — fire at 22:00 every day to all sessions
+let _lastDigestDate = '';
 function tickDailyDigest(now) {
-  if (now.getHours() === 22 && now.getMinutes() === 0) {
+  const todayStr = now.toISOString().slice(0, 10);
+  if (now.getUTCHours() === 22 && now.getUTCMinutes() === 0 && _lastDigestDate !== todayStr) {
+    _lastDigestDate = todayStr;
     try {
       const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
       for (const session of sessions) {
