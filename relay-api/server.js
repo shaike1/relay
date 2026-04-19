@@ -92,7 +92,7 @@ process.on('unhandledRejection', (reason) => {
 
 const app = express();
 const PORT = process.env.PORT || 9100;
-// NOMACODE removed — using ttyd in session containers instead
+// NOMACODE removed
 
 const SESSIONS_FILE = process.env.SESSIONS_FILE || '/relay/sessions.json';
 const METRICS_SCRIPT = 'bash /relay/scripts/metrics.sh';
@@ -2206,46 +2206,12 @@ app.post('/webhooks/generic', (req, res) => {
   }
 });
 
-// Health dashboard — public (no auth needed for monitoring)
-app.get('/health/dashboard', (req, res) => {
-  const now = Math.floor(Date.now() / 1000);
-  let sessions;
-  try { sessions = buildSessionHealthData(); } catch(e) { sessions = []; }
-  const rows = sessions.map(s => {
-    const age = s.last_seen ? Math.floor((now - s.last_seen) / 60) : null;
-    const ageStr = age === null ? '—' : age < 60 ? age + 'm ago' : Math.floor(age/60) + 'h ago';
-    const icon = s.status === 'running' ? '✅' : s.status === 'degraded' ? '⚠️' : '❓';
-    return '<tr><td>' + icon + '</td><td><b>' + s.name + '</b></td><td>' + s.status + '</td><td>' + ageStr + '</td><td>' + (s.thread_id||'—') + '</td><td><a href="/terminal/' + s.name + '" target="_blank" style="color:#4a9eff;text-decoration:none">⊞ terminal</a></td></tr>';
-  }).join('');
-  res.setHeader('Content-Type','text/html');
-  res.send('<!DOCTYPE html><html><head><meta charset=utf-8><title>Relay Health</title>' +
-    '<meta http-equiv="refresh" content="30">' +
-    '<style>body{font-family:monospace;padding:20px;background:#111;color:#eee}' +
-    'table{border-collapse:collapse;width:100%}th,td{padding:8px 12px;text-align:left;border-bottom:1px solid #333}' +
-    'th{background:#222}</style></head>' +
-    '<body><h2>📡 Relay Session Health</h2>' +
-    '<p style="color:#888">Auto-refresh 30s</p>' +
-    '<table><tr><th></th><th>Session</th><th>Status</th><th>Last seen</th><th>Thread</th><th></th></tr>' +
-    rows + '</table>' +
-    '<p><a href="/health/sessions" style="color:#4a9eff">Raw JSON</a></p>' +
-    '</body></html>');
-});
-
-// --- Terminal proxy: /terminal/<session> → ttyd in session container ---
-// ttyd runs on port 7681 inside each relay-session-<name> container
-// WebSocket upgrade handled via server.on('upgrade') below
+// --- Terminal proxy: /terminal/<session> → ttyd ---
 const terminalProxies = new Map();
 function getTerminalProxy(session) {
   if (!terminalProxies.has(session)) {
     const target = 'http://relay-session-' + session + ':7681';
-    terminalProxies.set(session, createProxyMiddleware({
-      target,
-      changeOrigin: true,
-      ws: true,
-      on: { error: (err, req, res) => {
-        if (res && res.writeHead) { res.writeHead(502); res.end('Terminal unavailable: ' + session); }
-      }}
-    }));
+    terminalProxies.set(session, createProxyMiddleware({ target, changeOrigin: true, ws: true }));
   }
   return terminalProxies.get(session);
 }
@@ -4792,9 +4758,9 @@ app.get('/api/otel-activity', (req, res) => {
   res.json({ ok: true, count: events.length, events: events.slice(0, limit) });
 });
 
-// --- 404 for all other routes ---
+// --- 404 for unknown routes ---
 app.use((req, res) => {
-  res.status(404).send('Not found — available: /health/dashboard, /terminal/<session>');
+  res.status(404).json({ error: 'not found', available: ['/health/dashboard', '/terminal/<session>'] });
 });
 
 const server = app.listen(PORT, '0.0.0.0', () => {
@@ -4823,10 +4789,25 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   }
 });
 
-// WebSocket upgrade for terminal
+// WebSocket upgrade for /terminal/<session> → ttyd
+const net = require('net');
 server.on('upgrade', (req, socket, head) => {
-  // nomacode removed — WebSocket handled by getTerminalProxy per session
-  proxy.upgrade(req, socket, head);
+  const match = req.url.match(/^\/terminal\/([a-zA-Z0-9_-]+)/);
+  if (!match) return socket.destroy();
+  const session = match[1];
+  const targetHost = 'relay-session-' + session;
+  const upstream = net.connect(7681, targetHost, () => {
+    const path = (req.url.replace('/terminal/' + session, '') || '/');
+    const key = req.headers['sec-websocket-key'] || '';
+    const ver = req.headers['sec-websocket-version'] || '13';
+    const handshake = 'GET ' + path + ' HTTP/1.1\r\nHost: ' + targetHost + ':7681\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ' + key + '\r\nSec-WebSocket-Version: ' + ver + '\r\n\r\n';
+    upstream.write(handshake);
+    if (head && head.length) upstream.write(head);
+    upstream.pipe(socket);
+    socket.pipe(upstream);
+  });
+  upstream.on('error', () => socket.destroy());
+  socket.on('error', () => upstream.destroy());
 });
 
 // ── Scheduled Tasks ───────────────────────────────────────────────────────────
@@ -4899,9 +4880,17 @@ function tickScheduler() {
   }
 }
 
-// Daily digest — disabled
+// Daily digest — fire at 22:00 every day to all sessions
 function tickDailyDigest(now) {
-  // disabled
+  if (now.getHours() === 22 && now.getMinutes() === 0) {
+    try {
+      const sessions = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+      for (const session of sessions) {
+        handleDigestCommand(session.thread_id, null).catch(() => {});
+      }
+      console.log('[digest] Daily digest fired for all sessions');
+    } catch (e) { console.error('[digest] Error:', e.message); }
+  }
 }
 
 // Tick every minute, aligned to the minute boundary
@@ -4915,16 +4904,6 @@ function startScheduler() {
   console.log('[scheduler] Started — first tick in', Math.round(msToNextMinute / 1000), 's');
 }
 startScheduler();
-
-// WebSocket upgrade for /terminal/<session> → ttyd
-server.on('upgrade', (req, socket, head) => {
-  const match = req.url.match(/^\/terminal\/([a-zA-Z0-9_-]+)/);
-  if (match) {
-    const session = match[1];
-    const proxy = getTerminalProxy(session);
-    if (proxy.upgrade) proxy.upgrade(req, socket, head);
-  }
-});
 
 // Live logs — Server-Sent Events stream of docker container logs
 app.get('/api/logs/:container', (req, res) => {
