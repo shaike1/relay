@@ -43,7 +43,6 @@ services:
       - "7070:7070"
     environment:
       PORT: "7070"
-      NOMACODE_URL: "http://relay-nomacode:3000"
       SESSIONS_FILE: "/relay/sessions.json"
       AUTH_USER: "relay"
       AUTH_PASS: "${RELAY_API_PASS:-PKNfwGoX4-8-LHsxhVphvQ}"
@@ -135,6 +134,7 @@ services:
       - /root/tala-planner-repo/skill-content:/app/skill-content:ro
     networks:
       - tala-net
+      - relay_default
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/skill-info"]
       interval: 30s

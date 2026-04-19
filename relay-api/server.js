@@ -92,7 +92,7 @@ process.on('unhandledRejection', (reason) => {
 
 const app = express();
 const PORT = process.env.PORT || 9100;
-const NOMACODE_URL = process.env.NOMACODE_URL || 'http://relay-nomacode:3000';
+// NOMACODE removed — using ttyd in session containers instead
 
 const SESSIONS_FILE = process.env.SESSIONS_FILE || '/relay/sessions.json';
 const METRICS_SCRIPT = 'bash /relay/scripts/metrics.sh';
@@ -2229,6 +2229,24 @@ app.get('/health/dashboard', (req, res) => {
     rows + '</table>' +
     '<p><a href="/health/sessions" style="color:#4a9eff">Raw JSON</a></p>' +
     '</body></html>');
+});
+
+// --- Terminal proxy: /terminal/<session> → ttyd in session container ---
+// ttyd runs on port 7681 inside each relay-session-<name> container
+app.use('/terminal/:session', (req, res, next) => {
+  const session = req.params.session.replace(/[^a-zA-Z0-9_-]/g, '');
+  const containerHost = 'relay-session-' + session;
+  const target = 'http://' + containerHost + ':7681';
+  createProxyMiddleware({
+    target,
+    changeOrigin: true,
+    ws: true,
+    pathRewrite: { ['^/terminal/' + session]: '' },
+    on: { error: (err, req, res) => {
+      if (res.writeHead) res.writeHead(502);
+      res.end('Terminal unavailable for session: ' + session);
+    }}
+  })(req, res, next);
 });
 
 // Apply auth to all routes below
@@ -4768,39 +4786,10 @@ app.get('/api/otel-activity', (req, res) => {
   res.json({ ok: true, count: events.length, events: events.slice(0, limit) });
 });
 
-// --- Terminal proxy: /terminal/<session> → ttyd in session container ---
-// ttyd runs on port 7681 inside each relay-session-<name> container
-app.use('/terminal/:session', (req, res, next) => {
-  const session = req.params.session.replace(/[^a-zA-Z0-9_-]/g, '');
-  const containerHost = 'relay-session-' + session;
-  const target = 'http://' + containerHost + ':7681';
-  createProxyMiddleware({
-    target,
-    changeOrigin: true,
-    ws: true,
-    pathRewrite: { ['^/terminal/' + session]: '' },
-    on: { error: (err, req, res) => {
-      if (res.writeHead) res.writeHead(502);
-      res.end('Terminal unavailable for session: ' + session);
-    }}
-  })(req, res, next);
+// --- 404 for all other routes ---
+app.use((req, res) => {
+  res.status(404).send('Not found — available: /health/dashboard, /terminal/<session>');
 });
-
-// --- Proxy everything else to nomacode (web terminal) ---
-app.use('/', createProxyMiddleware({
-  target: NOMACODE_URL,
-  changeOrigin: true,
-  ws: true,
-  // Re-stream JSON body that express.json() already consumed
-  onProxyReq: (proxyReq, req) => {
-    if (req.body && Object.keys(req.body).length > 0) {
-      const body = JSON.stringify(req.body);
-      proxyReq.setHeader('Content-Type', 'application/json');
-      proxyReq.setHeader('Content-Length', Buffer.byteLength(body));
-      proxyReq.write(body);
-    }
-  },
-}));
 
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Relay API server listening on port ${PORT}, proxying to ${NOMACODE_URL}`);
