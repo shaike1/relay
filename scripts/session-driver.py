@@ -400,6 +400,12 @@ NOISE_TOKENS: tuple[str, ...] = (
     "Called telegram", "Calling telegram", "Recent activity",
     "You just started.", "You just restarted.",
     "Return ONLY the final",
+    # Legacy hardcoded messages that must never be replayed
+    "ריליי מגיב דרך Cody_Code_bot",
+    "relay is responding via Cody_Code_bot",
+    "Got it — relay",
+    # Daily digest headers
+    "📊 Daily Digest", "Daily Summary", "סיכום יומי",
 )
 
 def is_noise(text: str) -> bool:
